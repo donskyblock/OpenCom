@@ -82,6 +82,7 @@ export function App() {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [status, setStatus] = useState("");
   const [themeCss, setThemeCss] = useThemeCss();
   const messagesRef = useRef(null);
@@ -113,19 +114,11 @@ export function App() {
     return (activeServer.roles || []).includes("owner") || (activeServer.roles || []).includes("platform_admin");
   }, [activeServer]);
 
-  const sortedChannels = useMemo(
-    () => [...channels].sort((a, b) => (a.position ?? 0) - (b.position ?? 0)),
-    [channels]
-  );
-
-  const categoryChannels = useMemo(
-    () => sortedChannels.filter((channel) => channel.type === "category"),
-    [sortedChannels]
-  );
+  const sortedChannels = useMemo(() => [...channels].sort((a, b) => (a.position ?? 0) - (b.position ?? 0)), [channels]);
+  const categoryChannels = useMemo(() => sortedChannels.filter((channel) => channel.type === "category"), [sortedChannels]);
 
   const groupedChannelSections = useMemo(() => {
     const categories = categoryChannels.map((category) => ({
-      type: "category",
       category,
       channels: sortedChannels.filter((channel) => channel.parent_id === category.id && channel.type !== "category")
     }));
@@ -134,9 +127,7 @@ export function App() {
 
     return [
       ...categories,
-      ...(uncategorized.length
-        ? [{ type: "category", category: { id: "uncategorized", name: "Text & Voice Channels" }, channels: uncategorized }]
-        : [])
+      ...(uncategorized.length ? [{ category: { id: "uncategorized", name: "Channels" }, channels: uncategorized }] : [])
     ];
   }, [categoryChannels, sortedChannels]);
 
@@ -171,20 +162,12 @@ export function App() {
   async function handleAuthSubmit(event) {
     event.preventDefault();
     setStatus("Authenticating...");
-
     try {
       if (authMode === "register") {
-        await api("/v1/auth/register", {
-          method: "POST",
-          body: JSON.stringify({ email, username, password })
-        });
+        await api("/v1/auth/register", { method: "POST", body: JSON.stringify({ email, username, password }) });
       }
 
-      const loginData = await api("/v1/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ email, password })
-      });
-
+      const loginData = await api("/v1/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
       setAccessToken(loginData.accessToken);
       setMe(loginData.user);
       setStatus("Authenticated.");
@@ -245,10 +228,7 @@ export function App() {
     if (!code) return;
     setStatus("Joining via invite...");
     try {
-      await api(`/v1/invites/${code}/join`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` }
-      });
+      await api(`/v1/invites/${code}/join`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } });
       await loadSession();
       setJoinInviteCode("");
       setInvitePreview(null);
@@ -298,10 +278,7 @@ export function App() {
           setActiveGuildId("");
           return;
         }
-
-        if (!items.some((guild) => guild.id === activeGuildId)) {
-          setActiveGuildId(items[0].id);
-        }
+        if (!items.some((guild) => guild.id === activeGuildId)) setActiveGuildId(items[0].id);
       })
       .catch((error) => {
         setGuilds([]);
@@ -344,7 +321,6 @@ export function App() {
     try {
       const payload = { name: newChannelName.trim(), type: newChannelType };
       if (newChannelType !== "category" && newChannelParentId) payload.parentId = newChannelParentId;
-
       await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/channels`, activeServer.membershipToken, {
         method: "POST",
         body: JSON.stringify(payload)
@@ -356,19 +332,6 @@ export function App() {
     } catch (error) {
       setStatus(`Create channel failed: ${error.message}`);
     }
-  }
-
-  async function onUploadTheme(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const css = await file.text();
-    setThemeCss(css);
-    setStatus(`Theme loaded: ${file.name}`);
-  }
-
-  function clearTheme() {
-    setThemeCss("");
-    setStatus("Theme reset to default.");
   }
 
   function toggleCategory(categoryId) {
@@ -386,6 +349,14 @@ export function App() {
     setStatus("Disconnected from voice.");
   }
 
+  async function onUploadTheme(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const css = await file.text();
+    setThemeCss(css);
+    setStatus(`Theme loaded: ${file.name}`);
+  }
+
   if (!accessToken) {
     return (
       <div className="auth-shell">
@@ -395,11 +366,9 @@ export function App() {
           <p>Frontend URL: <code>{FRONTEND_URL}</code></p>
           <p>API URL: <code>{CORE_API}</code></p>
           <form onSubmit={handleAuthSubmit}>
-            <label>Email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="you@example.com" required /></label>
-            {authMode === "register" && (
-              <label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="choose a handle" required /></label>
-            )}
-            <label>Password<input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="••••••••" required /></label>
+            <label>Email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required /></label>
+            {authMode === "register" && <label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} required /></label>}
+            <label>Password<input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required /></label>
             <button type="submit">{authMode === "login" ? "Login" : "Register + Login"}</button>
           </form>
           <button className="link-btn" onClick={() => setAuthMode(authMode === "login" ? "register" : "login")}>
@@ -455,9 +424,8 @@ export function App() {
             const isCollapsed = collapsedCategories[category.id];
             return (
               <div className="category-block" key={category.id}>
-                <button type="button" className="category-header" onClick={() => toggleCategory(category.id)}>
-                  <span className="chevron">{isCollapsed ? "▸" : "▾"}</span>
-                  {category.name}
+                <button className="category-header" onClick={() => toggleCategory(category.id)}>
+                  <span className="chevron">{isCollapsed ? "▸" : "▾"}</span>{category.name}
                 </button>
                 {!isCollapsed && (
                   <div className="category-items">
@@ -481,28 +449,38 @@ export function App() {
         </section>
 
         <footer className="self-card">
-          <div>
-            <strong>{me?.username}</strong>
-            <span>{canManageServer ? "Owner tools enabled" : "Member"}</span>
+          {voiceConnectedChannelId && (
+            <div className="voice-widget">
+              <div className="voice-top">
+                <strong>Voice Connected</strong>
+                <span>{voiceConnectedChannelId}</span>
+              </div>
+              <div className="voice-actions">
+                <button className="ghost" onClick={() => setIsScreenSharing((v) => !v)}>{isScreenSharing ? "Stop Share" : "Share Screen"}</button>
+                <button className="danger" onClick={handleDisconnectVoice}>Disconnect</button>
+              </div>
+            </div>
+          )}
+          <div className="user-row">
+            <div className="avatar">{(me?.username || "U").slice(0, 1).toUpperCase()}</div>
+            <div className="user-meta">
+              <strong>{me?.username}</strong>
+              <span>{canManageServer ? "Owner" : "Member"}</span>
+            </div>
+            <div className="user-controls">
+              <button className={`icon-btn ${isMuted ? "danger" : "ghost"}`} title="Mute" onClick={() => setIsMuted((v) => !v)}>{isMuted ? "🎙️" : "🎤"}</button>
+              <button className={`icon-btn ${isDeafened ? "danger" : "ghost"}`} title="Deafen" onClick={() => setIsDeafened((v) => !v)}>{isDeafened ? "🔇" : "🎧"}</button>
+              <button className="icon-btn ghost" title="Tools" onClick={() => setToolsOpen((v) => !v)}>⚙️</button>
+              <button className="icon-btn danger" title="Logout" onClick={() => { setAccessToken(""); setServers([]); setGuildState(null); setMessages([]); }}>⎋</button>
+            </div>
           </div>
-          <button
-            className="danger ghost"
-            onClick={() => {
-              setAccessToken("");
-              setServers([]);
-              setGuildState(null);
-              setMessages([]);
-            }}
-          >
-            Logout
-          </button>
         </footer>
       </aside>
 
       <main className="chat-pane">
         <header className="chat-header">
           <h3><span className="channel-hash">#</span> {activeChannel?.name || "general"}</h3>
-          <span>{activeGuild?.name || "No guild selected"}</span>
+          <button className="ghost" onClick={() => setToolsOpen((v) => !v)}>Server Tools</button>
         </header>
 
         <div className="messages" ref={messagesRef}>
@@ -528,104 +506,63 @@ export function App() {
         </footer>
       </main>
 
-      <aside className="control-pane">
-        <section className="card voice-card">
-          <h4>Voice & Screen Share</h4>
-          <p className="hint">{voiceConnectedChannelId ? `Connected to ${voiceConnectedChannelId}` : "Join any voice channel to start."}</p>
-          <div className="row-actions">
-            <button className={isMuted ? "danger" : "ghost"} onClick={() => setIsMuted((v) => !v)}>{isMuted ? "Unmute" : "Mute"}</button>
-            <button className={isDeafened ? "danger" : "ghost"} onClick={() => setIsDeafened((v) => !v)}>{isDeafened ? "Undeafen" : "Deafen"}</button>
-          </div>
-          <button
-            onClick={() => setIsScreenSharing((v) => !v)}
-            disabled={!voiceConnectedChannelId}
-          >
-            {isScreenSharing ? "Stop Screen Share" : "Start Screen Share"}
-          </button>
-          <button className="danger" onClick={handleDisconnectVoice} disabled={!voiceConnectedChannelId}>Disconnect Voice</button>
-        </section>
-
-        <section className="card">
-          <h4>Join Server (Metadata Flow)</h4>
-          <input
-            placeholder="Paste invite code"
-            value={joinInviteCode}
-            onChange={(e) => setJoinInviteCode(e.target.value)}
-          />
-          <div className="row-actions">
-            <button className="ghost" onClick={previewInvite}>Preview</button>
-            <button onClick={joinInvite}>Join</button>
-          </div>
-          {invitePreview && (
-            <div className="preview">
-              <p><strong>Server ID:</strong> <code>{invitePreview.serverId}</code></p>
-              <p><strong>Invite:</strong> {invitePreview.code}</p>
-              <p><strong>Uses:</strong> {invitePreview.uses}{invitePreview.maxUses ? ` / ${invitePreview.maxUses}` : ""}</p>
-              <p><strong>Expires:</strong> {invitePreview.expiresAt || "Never"}</p>
-            </div>
-          )}
-        </section>
-
-        <section className="card">
-          <h4>Add Server Provider</h4>
-          <input placeholder="Server name" value={newServerName} onChange={(e) => setNewServerName(e.target.value)} />
-          <input placeholder="https://node.provider.tld" value={newServerBaseUrl} onChange={(e) => setNewServerBaseUrl(e.target.value)} />
-          <button onClick={createServer}>Add Server</button>
-          <p className="hint">For explicit owner assignment, use <code>scripts/create-server.sh</code>.</p>
-        </section>
-
-        <section className="card">
-          <h4>Server Invites</h4>
-          <select value={inviteServerId} onChange={(e) => setInviteServerId(e.target.value)}>
-            <option value="">Select server</option>
-            {servers.map((server) => (
-              <option key={server.id} value={server.id}>{server.name}</option>
-            ))}
-          </select>
-          <button onClick={createInvite}>Generate Invite</button>
-          {inviteCode && <p>Invite code: <code>{inviteCode}</code></p>}
-        </section>
-
-        {canManageServer && (
+      {toolsOpen && (
+        <div className="tools-drawer">
           <section className="card">
-            <h4>Owner Actions</h4>
-            <p className="hint">Create categories, text channels, and voice channels.</p>
-            <input
-              placeholder="New channel/category name"
-              value={newChannelName}
-              onChange={(e) => setNewChannelName(e.target.value)}
-            />
-            <select value={newChannelType} onChange={(e) => setNewChannelType(e.target.value)}>
-              <option value="text">Text Channel</option>
-              <option value="voice">Voice Channel</option>
-              <option value="category">Category</option>
-            </select>
-            {newChannelType !== "category" && (
-              <select value={newChannelParentId} onChange={(e) => setNewChannelParentId(e.target.value)}>
-                <option value="">No category</option>
-                {categoryChannels.map((category) => (
-                  <option key={category.id} value={category.id}>{category.name}</option>
-                ))}
-              </select>
-            )}
-            <button onClick={createChannel}>Create Channel</button>
+            <h4>Join Server</h4>
+            <input placeholder="Paste invite code" value={joinInviteCode} onChange={(e) => setJoinInviteCode(e.target.value)} />
+            <div className="row-actions">
+              <button className="ghost" onClick={previewInvite}>Preview</button>
+              <button onClick={joinInvite}>Join</button>
+            </div>
+            {invitePreview && <p className="hint">Invite: {invitePreview.code} · Uses: {invitePreview.uses}</p>}
           </section>
-        )}
 
-        <section className="card">
-          <h4>Custom CSS Theme</h4>
-          <input type="file" accept="text/css,.css" onChange={onUploadTheme} />
-          <button className="ghost" onClick={clearTheme}>Reset Theme</button>
-          <textarea
-            value={themeCss}
-            onChange={(e) => setThemeCss(e.target.value)}
-            rows={8}
-            placeholder="Paste custom CSS"
-          />
-        </section>
+          <section className="card">
+            <h4>Add Server Provider</h4>
+            <input placeholder="Server name" value={newServerName} onChange={(e) => setNewServerName(e.target.value)} />
+            <input placeholder="https://node.provider.tld" value={newServerBaseUrl} onChange={(e) => setNewServerBaseUrl(e.target.value)} />
+            <button onClick={createServer}>Add Server</button>
+          </section>
 
-        <p className="status">{status}</p>
-      </aside>
+          <section className="card">
+            <h4>Server Invites</h4>
+            <select value={inviteServerId} onChange={(e) => setInviteServerId(e.target.value)}>
+              <option value="">Select server</option>
+              {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
+            </select>
+            <button onClick={createInvite}>Generate Invite</button>
+            {inviteCode && <p className="hint">Code: <code>{inviteCode}</code></p>}
+          </section>
+
+          {canManageServer && (
+            <section className="card">
+              <h4>Owner Actions</h4>
+              <input placeholder="New channel/category" value={newChannelName} onChange={(e) => setNewChannelName(e.target.value)} />
+              <select value={newChannelType} onChange={(e) => setNewChannelType(e.target.value)}>
+                <option value="text">Text Channel</option>
+                <option value="voice">Voice Channel</option>
+                <option value="category">Category</option>
+              </select>
+              {newChannelType !== "category" && (
+                <select value={newChannelParentId} onChange={(e) => setNewChannelParentId(e.target.value)}>
+                  <option value="">No category</option>
+                  {categoryChannels.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                </select>
+              )}
+              <button onClick={createChannel}>Create Channel</button>
+            </section>
+          )}
+
+          <section className="card">
+            <h4>Custom CSS Theme</h4>
+            <input type="file" accept="text/css,.css" onChange={onUploadTheme} />
+            <textarea value={themeCss} onChange={(e) => setThemeCss(e.target.value)} rows={6} placeholder="Paste custom CSS" />
+          </section>
+
+          <p className="status">{status}</p>
+        </div>
+      )}
     </div>
   );
 }
