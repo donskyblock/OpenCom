@@ -8,7 +8,8 @@ const Env = z.object({
 
   CORE_MEMBERSHIP_PRIVATE_JWK: z.string().min(1),
   CORE_MEMBERSHIP_PUBLIC_JWK: z.string().min(1),
-  CORE_ISSUER: z.string().min(1)
+  CORE_ISSUER: z.string().min(1),
+  ADMIN_PANEL_PASSWORD: z.string().min(8)
 });
 
 export const env = Env.parse(process.env);
