@@ -1,0 +1,54 @@
+import { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { q } from "../db.js";
+import { requireGuildMember } from "../auth/requireGuildMember.js";
+
+export async function guildStateRoutes(app: FastifyInstance) {
+  app.get("/v1/guilds/:guildId/state", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { guildId } = z.object({ guildId: z.string().min(3) }).parse(req.params);
+    const userId = req.auth.userId as string;
+
+    try {
+      await requireGuildMember(guildId, userId);
+    } catch {
+      return rep.code(403).send({ error: "NOT_GUILD_MEMBER" });
+    }
+
+    const guild = (await q<any>(`SELECT id,name,owner_user_id,created_at FROM guilds WHERE id=:guildId`, { guildId }))[0];
+    if (!guild) return rep.code(404).send({ error: "GUILD_NOT_FOUND" });
+
+    const channels = await q<any>(
+      `SELECT id,guild_id,name,type,position,parent_id,created_at
+       FROM channels WHERE guild_id=:guildId
+       ORDER BY position ASC, created_at ASC`,
+      { guildId }
+    );
+
+    const roles = await q<any>(
+      `SELECT id,guild_id,name,color,position,permissions,is_everyone,created_at
+       FROM roles WHERE guild_id=:guildId
+       ORDER BY position DESC`,
+      { guildId }
+    );
+
+    const overwrites = await q<any>(
+      `SELECT channel_id,target_type,target_id,allow,deny
+       FROM channel_overwrites
+       WHERE channel_id IN (SELECT id FROM channels WHERE guild_id=:guildId)`,
+      { guildId }
+    );
+
+    const myRoleIds = await q<{ role_id: string }>(
+      `SELECT role_id FROM member_roles WHERE guild_id=:guildId AND user_id=:userId`,
+      { guildId, userId }
+    );
+
+    return rep.send({
+      guild,
+      channels,
+      roles,
+      overwrites,
+      me: { userId, roleIds: myRoleIds.map(r => r.role_id) }
+    });
+  });
+}

@@ -1,24 +1,40 @@
 services:
-  postgres-core:
-    image: postgres:16
+  mariadb-core:
+    image: mariadb:11
     environment:
-      POSTGRES_USER: ods
-      POSTGRES_PASSWORD: ods
-      POSTGRES_DB: ods_core
-    ports: ["5433:5432"]
-    volumes:
-      - pg_core:/var/lib/postgresql/data
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: ods_core
+      MARIADB_USER: ods
+      MARIADB_PASSWORD: ods
+    ports: ["3307:3306"]
+    volumes: [mariadb_core:/var/lib/mysql]
 
-  postgres-node:
-    image: postgres:16
+  mariadb-node:
+    image: mariadb:11
     environment:
-      POSTGRES_USER: ods
-      POSTGRES_PASSWORD: ods
-      POSTGRES_DB: ods_node
-    ports: ["5434:5432"]
-    volumes:
-      - pg_node:/var/lib/postgresql/data
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: ods_node
+      MARIADB_USER: ods
+      MARIADB_PASSWORD: ods
+    ports: ["3308:3306"]
+    volumes: [mariadb_node:/var/lib/mysql]
+
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123456
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes: [minio_data:/data]
 
 volumes:
-  pg_core:
-  pg_node:
+  mariadb_core:
+  mariadb_node:
+  minio_data:

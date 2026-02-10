@@ -1,0 +1,31 @@
+import { FastifyInstance } from "fastify";
+import { verifyMembershipToken } from "./verifyMembership.js";
+import { env } from "../env.js";
+
+export async function registerRestAuth(app: FastifyInstance) {
+  app.decorateRequest("auth", null);
+
+  app.decorate("authenticate", async (req: any, rep: any) => {
+    const h = req.headers["authorization"];
+    const token = typeof h === "string" && h.startsWith("Bearer ") ? h.slice(7) : null;
+    if (!token) return rep.code(401).send({ error: "UNAUTHORIZED" });
+
+    try {
+      const claims = await verifyMembershipToken(token);
+
+      // Critical: bind token to THIS node
+      if (claims.server_id !== env.NODE_SERVER_ID) {
+        return rep.code(401).send({ error: "UNAUTHORIZED" });
+      }
+
+      req.auth = {
+        userId: claims.sub,
+        serverId: claims.server_id,
+        roles: Array.isArray((claims as any).roles) ? (claims as any).roles : [],
+        token
+      };
+    } catch {
+      return rep.code(401).send({ error: "UNAUTHORIZED" });
+    }
+  });
+}

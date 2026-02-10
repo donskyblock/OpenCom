@@ -46,7 +46,8 @@ export async function dmRoutes(app: FastifyInstance, broadcastDM: (recipientDevi
     );
 
     // Realtime push to recipient device if connected
-    broadcastDM(body.recipientDeviceId, {
+    // inside send route:
+    await broadcastDM(body.recipientDeviceId, {
       messageId: msgId,
       threadId: body.threadId,
       senderDeviceId: body.senderDeviceId,
@@ -55,6 +56,7 @@ export async function dmRoutes(app: FastifyInstance, broadcastDM: (recipientDevi
       ciphertext: body.ciphertext,
       sentAt
     });
+
 
     return rep.send({ ok: true, messageId: msgId, sentAt });
   });

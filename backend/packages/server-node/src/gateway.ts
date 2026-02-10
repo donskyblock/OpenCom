@@ -54,6 +54,12 @@ export function attachNodeGateway(app: FastifyInstance) {
         const d = msg.d as NodeIdentify;
         try {
           const claims = await verifyMembershipToken(d.membershipToken);
+          if (claims.server_id !== (await import("./env.js")).env.NODE_SERVER_ID) {
+            send(ws, { op: "ERROR", d: { error: "INVALID_MEMBERSHIP" } });
+            ws.close();
+            return;
+           }
+
 
           conn = {
             ws,

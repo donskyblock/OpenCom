@@ -1,9 +1,17 @@
-import pg from "pg";
+import mysql from "mysql2/promise";
 import { env } from "./env.js";
 
-export const pool = new pg.Pool({ connectionString: env.CORE_DATABASE_URL });
+export const pool = mysql.createPool({
+  uri: env.CORE_DATABASE_URL,
+  connectionLimit: 10,
+  namedPlaceholders: true
+});
 
-export async function q<T = any>(text: string, params: any[] = []): Promise<T[]> {
-  const r = await pool.query(text, params);
-  return r.rows as T[];
+export async function q<T = any>(sql: string, params: Record<string, any> = {}): Promise<T[]> {
+  const [rows] = await pool.query(sql, params);
+  return rows as T[];
+}
+
+export async function exec(sql: string, params: Record<string, any> = {}): Promise<void> {
+  await pool.execute(sql, params);
 }

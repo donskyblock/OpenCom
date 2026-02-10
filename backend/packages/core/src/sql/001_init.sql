@@ -1,63 +1,111 @@
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id VARCHAR(64) PRIMARY KEY,
+  ran_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS users (
-  id TEXT PRIMARY KEY,
-  email TEXT UNIQUE NOT NULL,
-  username TEXT NOT NULL,
+  id VARCHAR(64) PRIMARY KEY,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  username VARCHAR(32) NOT NULL,
   password_hash TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  display_name VARCHAR(64),
+  bio VARCHAR(400),
+  pfp_url TEXT,
+  banner_url TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_badges (
+  user_id VARCHAR(64) NOT NULL,
+  badge VARCHAR(64) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, badge),
+  CONSTRAINT fk_badges_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS devices (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  name TEXT,
+  id VARCHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  name VARCHAR(64),
   identity_pubkey TEXT NOT NULL,
-  prekey_bundle JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  prekey_bundle JSON NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_devices_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS refresh_tokens (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
-  token_hash TEXT NOT NULL,
-  expires_at TIMESTAMPTZ NOT NULL,
-  revoked_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  id VARCHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  device_id VARCHAR(64),
+  token_hash VARCHAR(64) NOT NULL,
+  expires_at TIMESTAMP NOT NULL,
+  revoked_at TIMESTAMP NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_rt_hash (token_hash),
+  CONSTRAINT fk_rt_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_rt_device FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS servers (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
+  id VARCHAR(64) PRIMARY KEY,
+  name VARCHAR(64) NOT NULL,
   base_url TEXT NOT NULL,
-  owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  owner_user_id VARCHAR(64) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_servers_owner FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS memberships (
-  server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  roles TEXT[] NOT NULL DEFAULT '{}',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY(server_id, user_id)
+  server_id VARCHAR(64) NOT NULL,
+  user_id VARCHAR(64) NOT NULL,
+  roles JSON NOT NULL, -- ["owner","member",...]
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (server_id, user_id),
+  CONSTRAINT fk_mem_server FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE,
+  CONSTRAINT fk_mem_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS invites (
+  code VARCHAR(32) PRIMARY KEY,
+  server_id VARCHAR(64) NOT NULL,
+  created_by VARCHAR(64) NOT NULL,
+  max_uses INT NULL,
+  uses INT NOT NULL DEFAULT 0,
+  expires_at TIMESTAMP NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_inv_server FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE,
+  CONSTRAINT fk_inv_user FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS presence (
+  user_id VARCHAR(64) PRIMARY KEY,
+  status VARCHAR(16) NOT NULL,
+  custom_status VARCHAR(128),
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_presence_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS dm_threads (
-  id TEXT PRIMARY KEY,
-  user_a TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  user_b TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(user_a, user_b)
+  id VARCHAR(64) PRIMARY KEY,
+  user_a VARCHAR(64) NOT NULL,
+  user_b VARCHAR(64) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_dm_pair (user_a, user_b),
+  CONSTRAINT fk_dm_a FOREIGN KEY (user_a) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_dm_b FOREIGN KEY (user_b) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS dm_messages (
-  id TEXT PRIMARY KEY,
-  thread_id TEXT NOT NULL REFERENCES dm_threads(id) ON DELETE CASCADE,
-  sender_device_id TEXT NOT NULL,
-  recipient_device_id TEXT NOT NULL,
-  header JSONB NOT NULL,
-  ciphertext TEXT NOT NULL,
-  sent_at TIMESTAMPTZ NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  delivered_at TIMESTAMPTZ,
-  read_at TIMESTAMPTZ
+  id VARCHAR(64) PRIMARY KEY,
+  thread_id VARCHAR(64) NOT NULL,
+  sender_device_id VARCHAR(64) NOT NULL,
+  recipient_device_id VARCHAR(64) NOT NULL,
+  header JSON NOT NULL,
+  ciphertext MEDIUMTEXT NOT NULL,
+  sent_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  delivered_at TIMESTAMP NULL,
+  read_at TIMESTAMP NULL,
+  INDEX idx_dm_thread_time (thread_id, sent_at),
+  CONSTRAINT fk_dm_thread FOREIGN KEY (thread_id) REFERENCES dm_threads(id) ON DELETE CASCADE
 );
