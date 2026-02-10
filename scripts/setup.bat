@@ -8,7 +8,6 @@ if /I "%MODE%"=="help" goto :usage
 if /I "%MODE%"=="-h" goto :usage
 if /I "%MODE%"=="--help" goto :usage
 
-if /I "%MODE%"=="env" goto :setup_env
 if /I "%MODE%"=="backend" goto :setup_backend
 if /I "%MODE%"=="frontend" goto :setup_frontend
 if /I "%MODE%"=="all" goto :setup_all
@@ -17,16 +16,9 @@ echo Unknown mode: %MODE%
 goto :usage
 
 :setup_all
-call :setup_env || exit /b 1
 call :setup_backend || exit /b 1
 call :setup_frontend || exit /b 1
 goto :done
-
-:setup_env
-echo [setup] Generating env files
-cd /d "%~dp0.."
-call scripts\init-env.bat || exit /b 1
-exit /b 0
 
 :setup_backend
 echo [setup] Backend dependencies
@@ -48,7 +40,7 @@ call npm install || exit /b 1
 exit /b 0
 
 :usage
-echo Usage: scripts\setup.bat [env^|backend^|frontend^|all]
+echo Usage: scripts\setup.bat [backend^|frontend^|all]
 exit /b 1
 
 :done
