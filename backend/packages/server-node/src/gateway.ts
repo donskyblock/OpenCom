@@ -24,6 +24,7 @@ type Conn = {
   seq: number;
   channels: Set<string>;
   guilds: Set<string>;
+  roles: string[];
   voice?: { guildId: string; channelId: string };
 };
 
@@ -115,7 +116,8 @@ export function attachNodeGateway(app: FastifyInstance) {
             serverId: claims.server_id,
             seq: 0,
             channels: new Set(),
-            guilds: new Set()
+            guilds: new Set(),
+            roles: Array.isArray((claims as any).roles) ? (claims as any).roles : []
           };
           conns.add(conn);
 
