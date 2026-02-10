@@ -71,14 +71,7 @@ export function App() {
   const [newServerBaseUrl, setNewServerBaseUrl] = useState("https://");
   const [inviteServerId, setInviteServerId] = useState("");
   const [inviteCode, setInviteCode] = useState("");
-  const [inviteCustomCode, setInviteCustomCode] = useState("");
   const [joinInviteCode, setJoinInviteCode] = useState("");
-  const [adminStatus, setAdminStatus] = useState({ isPlatformAdmin: false, isPlatformOwner: false, platformRole: "user" });
-  const [adminOverview, setAdminOverview] = useState({ founder: null, admins: [] });
-  const [adminQuery, setAdminQuery] = useState("");
-  const [adminUsers, setAdminUsers] = useState([]);
-  const [badgeUserId, setBadgeUserId] = useState("");
-  const [badgeName, setBadgeName] = useState("");
   const [status, setStatus] = useState("");
   const [themeCss, setThemeCss] = useThemeCss();
 
@@ -99,8 +92,6 @@ export function App() {
       setMe(meData);
       const serverData = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
       setServers(serverData.servers || []);
-      const admin = await api("/v1/me/admin-status", { headers: { Authorization: `Bearer ${accessToken}` } });
-      setAdminStatus(admin);
       if (!activeServerId && serverData.servers?.length) {
         setActiveServerId(serverData.servers[0].id);
       }
@@ -162,7 +153,7 @@ export function App() {
       const data = await api("/v1/invites", {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ serverId: inviteServerId, code: inviteCustomCode || undefined })
+        body: JSON.stringify({ serverId: inviteServerId })
       });
       setInviteCode(data.code);
       setStatus("Invite created.");
@@ -223,10 +214,6 @@ export function App() {
   }, [activeGuildId, activeServerId]);
 
   useEffect(() => {
-    if (accessToken && adminStatus.isPlatformAdmin) loadAdminOverview();
-  }, [accessToken, adminStatus.isPlatformAdmin]);
-
-  useEffect(() => {
     if (!activeServer || !activeChannelId) return;
     loadMessages(activeServer, activeChannelId);
   }, [activeChannelId, activeServerId]);
@@ -256,71 +243,6 @@ export function App() {
   function clearTheme() {
     setThemeCss("");
     setStatus("Theme reset to default.");
-  }
-
-  async function loadAdminOverview() {
-    try {
-      const data = await api("/v1/admin/overview", { headers: { Authorization: `Bearer ${accessToken}` } });
-      setAdminOverview(data);
-    } catch (error) {
-      setStatus(`Admin overview failed: ${error.message}`);
-    }
-  }
-
-  async function searchAdminUsers() {
-    if (!adminQuery.trim()) return;
-    try {
-      const data = await api(`/v1/admin/users?query=${encodeURIComponent(adminQuery.trim())}`, {
-        headers: { Authorization: `Bearer ${accessToken}` }
-      });
-      setAdminUsers(data.users || []);
-    } catch (error) {
-      setStatus(`User search failed: ${error.message}`);
-    }
-  }
-
-  async function setPlatformAdmin(userId, enabled) {
-    try {
-      await api(`/v1/admin/users/${userId}/platform-admin`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ enabled })
-      });
-      await loadAdminOverview();
-      setStatus(`Platform admin updated for ${userId}`);
-    } catch (error) {
-      setStatus(`Platform admin update failed: ${error.message}`);
-    }
-  }
-
-  async function setPlatformFounder(userId) {
-    try {
-      await api(`/v1/admin/founder`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ userId })
-      });
-      await loadAdminOverview();
-      const admin = await api("/v1/me/admin-status", { headers: { Authorization: `Bearer ${accessToken}` } });
-      setAdminStatus(admin);
-      setStatus(`Platform founder set to ${userId}`);
-    } catch (error) {
-      setStatus(`Set founder failed: ${error.message}`);
-    }
-  }
-
-  async function setUserBadge(enabled) {
-    if (!badgeUserId || !badgeName) return;
-    try {
-      await api(`/v1/admin/users/${badgeUserId}/badges`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ badge: badgeName, enabled })
-      });
-      setStatus(`Badge ${enabled ? "added" : "removed"}`);
-    } catch (error) {
-      setStatus(`Badge update failed: ${error.message}`);
-    }
   }
 
   if (!accessToken) {
@@ -408,7 +330,7 @@ export function App() {
 
       <aside className="settings-col">
         <h3>Controls</h3>
-        <p>Logged in as <strong>{me?.username}</strong>{adminStatus.isPlatformOwner ? " (Platform Owner)" : adminStatus.isPlatformAdmin ? " (Platform Admin)" : ""}</p>
+        <p>Logged in as <strong>{me?.username}</strong></p>
 
         <div className="card">
           <h4>Add server by provider URL / IP</h4>
@@ -426,40 +348,10 @@ export function App() {
             ))}
           </select>
           <button onClick={createInvite}>Generate Invite</button>
-          <input placeholder="custom code (optional)" value={inviteCustomCode} onChange={(e) => setInviteCustomCode(e.target.value)} />
           {inviteCode && <p>Invite code: <code>{inviteCode}</code></p>}
           <input placeholder="Paste invite code" value={joinInviteCode} onChange={(e) => setJoinInviteCode(e.target.value)} />
           <button onClick={joinInvite}>Join with Invite</button>
         </div>
-
-
-        {adminStatus.isPlatformAdmin && (
-          <div className="card">
-            <h4>Platform Admin Dashboard</h4>
-            <p>Founder: <code>{adminOverview.founder?.id || "(unset)"}</code></p>
-            <p>Admins: {adminOverview.admins?.length || 0}</p>
-            <input placeholder="Search users by username/email" value={adminQuery} onChange={(e) => setAdminQuery(e.target.value)} />
-            <button onClick={searchAdminUsers}>Search Users</button>
-            <div className="admin-users">
-              {adminUsers.map((user) => (
-                <div key={user.id} className="admin-user-row">
-                  <code>{user.id}</code> {user.username}
-                  <div className="admin-user-actions">
-                    <button onClick={() => setPlatformAdmin(user.id, true)}>Make Admin</button>
-                    <button onClick={() => setPlatformAdmin(user.id, false)}>Remove Admin</button>
-                    {adminStatus.isPlatformOwner && <button onClick={() => setPlatformFounder(user.id)}>Set Founder</button>}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <input placeholder="Badge target userId" value={badgeUserId} onChange={(e) => setBadgeUserId(e.target.value)} />
-            <input placeholder="Badge name (e.g. PLATFORM_FOUNDER)" value={badgeName} onChange={(e) => setBadgeName(e.target.value)} />
-            <div className="admin-user-actions">
-              <button onClick={() => setUserBadge(true)}>Add Badge</button>
-              <button onClick={() => setUserBadge(false)}>Remove Badge</button>
-            </div>
-          </div>
-        )}
 
         <div className="card">
           <h4>Custom CSS Theme</h4>
