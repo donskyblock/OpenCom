@@ -10,12 +10,11 @@ Discord-like web client for OpenCom.
 - Email/password register + login flow (Core API).
 - Server list and switching (Core `/v1/servers`).
 - Add server by provider node URL/IP (Core `/v1/servers` with `baseUrl`).
-- Invite generation and invite join (Core `/v1/invites`) including optional custom invite codes.
+- Invite generation and invite join (Core `/v1/invites`).
 - Guild state + channels + messages from server node APIs.
 - Message send in text channels.
 - Custom CSS theme upload (`.css` file) and live application.
 - Theme persistence in `localStorage` and reset button.
-- Platform Admin Dashboard for user search, assigning/removing platform admins, setting founder, and assigning badges.
 
 ## Environment variables
 Create `.env` in `frontend/` (optional):
@@ -37,21 +36,6 @@ npm run dev
 cd frontend
 npm run build
 npm run preview
-```
-
-## Monorepo helper scripts
-From the repository root, you can also use:
-
-```bash
-./scripts/setup.sh frontend
-./scripts/start.sh frontend
-```
-
-Windows:
-
-```bat
-scripts\setup.bat frontend
-scripts\start.bat frontend
 ```
 
 ## How custom themes work
