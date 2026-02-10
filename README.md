@@ -26,6 +26,12 @@ If env already exists and DB is ready:
 ./scripts/setup-database.sh
 ```
 
+## Create a server with explicit owner username
+Use the helper script when you want to assign ownership to a specific existing user:
+```bash
+./scripts/create-server.sh --name "My Server" --base-url "https://node.provider.tld" --owner-username "alice"
+```
+
 ## Frontend quickstart
 ```bash
 cd frontend
