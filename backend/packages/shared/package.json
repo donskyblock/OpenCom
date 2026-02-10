@@ -12,16 +12,16 @@
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
     },
     "./events.js": {
-      "types": "./dist/events.d.ts",
-      "default": "./dist/events.js"
+      "types": "./src/events.ts",
+      "default": "./src/events.ts"
     },
     "./ids.js": {
-      "types": "./dist/ids.d.ts",
-      "default": "./dist/ids.js"
+      "types": "./src/ids.ts",
+      "default": "./src/ids.ts"
     }
   }
 }
