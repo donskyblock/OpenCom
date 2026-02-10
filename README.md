@@ -34,3 +34,14 @@ npm run dev
 ```
 
 See `frontend/README.md` for full documentation, custom CSS theming, and API integration details.
+
+## Run services
+From repository root:
+```bash
+./start.sh
+```
+
+Or explicitly:
+```bash
+./scripts/start.sh all
+```
