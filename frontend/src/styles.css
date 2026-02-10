@@ -89,27 +89,3 @@ button:hover { filter: brightness(1.07); }
   .layout { grid-template-columns: 64px 220px 1fr; }
   .settings-col { display: none; }
 }
-
-.admin-users {
-  display: grid;
-  gap: 8px;
-  max-height: 220px;
-  overflow: auto;
-}
-.admin-user-row {
-  border: 1px solid #464b54;
-  border-radius: 8px;
-  padding: 8px;
-  font-size: 13px;
-}
-.admin-user-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 6px;
-}
-.admin-user-actions button {
-  background: #4c5fe3;
-  padding: 6px 8px;
-  font-size: 12px;
-}

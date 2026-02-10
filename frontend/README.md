@@ -5,18 +5,16 @@ Discord-like web client for OpenCom.
 ## Planned production URLs
 - Frontend: `https://opencom.donskyblock.xyz`
 - Core API: `https://openapi.donskyblock.xyz`
-- Admin panel: `https://opencom.donskyblock.xyz/admin.html`
 
 ## Features implemented
 - Email/password register + login flow (Core API).
 - Server list and switching (Core `/v1/servers`).
 - Add server by provider node URL/IP (Core `/v1/servers` with `baseUrl`).
-- Invite generation and invite join (Core `/v1/invites`) including optional custom invite codes.
+- Invite generation and invite join (Core `/v1/invites`).
 - Guild state + channels + messages from server node APIs.
 - Message send in text channels.
 - Custom CSS theme upload (`.css` file) and live application.
 - Theme persistence in `localStorage` and reset button.
-- Platform Admin Dashboard for user search, assigning/removing platform admins, setting founder, and assigning badges.
 
 ## Environment variables
 Create `.env` in `frontend/` (optional):
@@ -40,21 +38,6 @@ npm run build
 npm run preview
 ```
 
-## Monorepo helper scripts
-From the repository root, you can also use:
-
-```bash
-./scripts/setup.sh frontend
-./scripts/start.sh frontend
-```
-
-Windows:
-
-```bat
-scripts\setup.bat frontend
-scripts\start.bat frontend
-```
-
 ## How custom themes work
 1. In the **Custom CSS Theme** card, upload a `.css` file, or paste CSS in the textarea.
 2. The CSS is inserted into a `<style id="opencom-theme-style">` tag in `document.head`.
@@ -69,11 +52,3 @@ scripts\start.bat frontend
 5. Create invite code and share with others.
 6. Recipients join with invite code.
 7. Apply optional custom CSS theme for personalized UI.
-
-
-## Admin panel password gate
-The dedicated admin page (`/admin.html`) is protected by a server-side password gate.
-
-- Set `ADMIN_PANEL_PASSWORD` in `backend/.env`.
-- The admin page sends it as `x-admin-panel-password` on admin API requests.
-- Without a valid password, admin endpoints return `BAD_PANEL_PASSWORD`.

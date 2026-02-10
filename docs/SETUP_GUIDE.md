@@ -25,8 +25,6 @@ cp backend/.env.example backend/.env
 
 Fill `backend/.env` values (DB/JWT/JWK vars especially).
 
-Important for the separate admin URL: set `ADMIN_PANEL_PASSWORD` (minimum 8 chars).
-
 ## 2) One-command setup
 ### Linux/macOS
 ```bash
@@ -74,19 +72,6 @@ npm run migrate:node
 - If voice does not connect externally, set mediasoup announced IP in `backend/.env`.
 
 ## Deploying
-- Deploy frontend to `opencom.donskyblock.xyz` (admin panel served from `/admin.html`).
+- Deploy frontend to `opencom.donskyblock.xyz`.
 - Deploy Core API to `openapi.donskyblock.xyz`.
 - Deploy one or more provider-hosted server nodes and register each node URL in Core as a server `baseUrl`.
-
-
-## GitHub Pages deployment (Actions)
-OpenCom is configured to deploy with GitHub Actions using `.github/workflows/pages.yml`.
-
-What gets published:
-- Frontend app build from `frontend/` at the Pages root
-- Static docs from `docs/site` at `/docs`
-
-Repository configuration:
-1. In GitHub, open **Settings → Pages**.
-2. Choose **Build and deployment → Source: GitHub Actions**.
-3. Push to `main` to trigger deployment (or use workflow_dispatch).
