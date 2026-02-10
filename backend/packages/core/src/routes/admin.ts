@@ -1,7 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { q } from "../db.js";
-import { env } from "../env.js";
 
 const PLATFORM_ADMIN_BADGE = "PLATFORM_ADMIN";
 const PLATFORM_FOUNDER_BADGE = "PLATFORM_FOUNDER";
@@ -29,12 +28,6 @@ async function requirePlatformStaff(userId: string) {
   return role;
 }
 
-
-function hasValidPanelPassword(req: any): boolean {
-  const provided = req.headers["x-admin-panel-password"];
-  return typeof provided === "string" && provided.length > 0 && provided === env.ADMIN_PANEL_PASSWORD;
-}
-
 async function setBadge(userId: string, badge: string, enabled: boolean) {
   if (enabled) {
     await q(
@@ -54,7 +47,6 @@ async function setBadge(userId: string, badge: string, enabled: boolean) {
 export async function adminRoutes(app: FastifyInstance) {
   app.get("/v1/admin/overview", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const actorId = req.user.sub as string;
-    if (!hasValidPanelPassword(req)) return rep.code(401).send({ error: "BAD_PANEL_PASSWORD" });
 
     try {
       await requirePlatformStaff(actorId);
@@ -84,7 +76,6 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get("/v1/admin/users", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const actorId = req.user.sub as string;
-    if (!hasValidPanelPassword(req)) return rep.code(401).send({ error: "BAD_PANEL_PASSWORD" });
 
     try {
       await requirePlatformStaff(actorId);
@@ -108,7 +99,6 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.post("/v1/admin/users/:userId/platform-admin", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const actorId = req.user.sub as string;
-    if (!hasValidPanelPassword(req)) return rep.code(401).send({ error: "BAD_PANEL_PASSWORD" });
     const actorRole = await getPlatformRole(actorId);
     if (actorRole !== "owner") return rep.code(403).send({ error: "ONLY_OWNER" });
 
@@ -136,7 +126,6 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.post("/v1/admin/founder", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const actorId = req.user.sub as string;
-    if (!hasValidPanelPassword(req)) return rep.code(401).send({ error: "BAD_PANEL_PASSWORD" });
     const actorRole = await getPlatformRole(actorId);
     if (actorRole !== "owner") return rep.code(403).send({ error: "ONLY_OWNER" });
 
@@ -173,7 +162,6 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.post("/v1/admin/users/:userId/badges", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const actorId = req.user.sub as string;
-    if (!hasValidPanelPassword(req)) return rep.code(401).send({ error: "BAD_PANEL_PASSWORD" });
 
     try {
       await requirePlatformStaff(actorId);
@@ -195,7 +183,6 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get("/v1/me/admin-status", { preHandler: [app.authenticate] } as any, async (req: any) => {
     const userId = req.user.sub as string;
-    if (!hasValidPanelPassword(req)) return { platformRole: "user", isPlatformAdmin: false, isPlatformOwner: false };
     const role = await getPlatformRole(userId);
     return {
       platformRole: role,

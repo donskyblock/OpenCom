@@ -6,7 +6,7 @@ MODE="${1:-all}"
 
 print_usage() {
   cat <<USAGE
-Usage: ./scripts/setup.sh [env|backend|frontend|all]
+Usage: ./scripts/setup.sh [backend|frontend|all]
 
 Installs dependencies and prepares local development environment.
 USAGE
@@ -45,9 +45,6 @@ setup_frontend() {
 }
 
 case "$MODE" in
-  env)
-    "$ROOT_DIR/scripts/init-env.sh"
-    ;;
   backend)
     setup_backend
     ;;

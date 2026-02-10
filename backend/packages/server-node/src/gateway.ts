@@ -168,7 +168,7 @@ export function attachNodeGateway(app: FastifyInstance) {
         }
 
         try {
-          await requireGuildMember(guildId, conn.userId, conn.roles);
+          await requireGuildMember(guildId, conn.userId);
 
           const ch = await q<{ id: string; type: string }>(
             `SELECT id,type FROM channels WHERE id=:channelId AND guild_id=:guildId`,
@@ -179,7 +179,7 @@ export function attachNodeGateway(app: FastifyInstance) {
             return;
           }
 
-          const perms = await resolveChannelPermissions({ guildId, channelId, userId: conn.userId, roles: conn.roles });
+          const perms = await resolveChannelPermissions({ guildId, channelId, userId: conn.userId });
           if (!has(perms, Perm.VIEW_CHANNEL) || !has(perms, Perm.CONNECT)) {
             sendDispatch(conn, "VOICE_ERROR", { error: "MISSING_CONNECT_PERMS" });
             return;
@@ -275,7 +275,7 @@ export function attachNodeGateway(app: FastifyInstance) {
           const guildId = conn.voice.guildId;
           const channelId = conn.voice.channelId;
 
-          const perms = await resolveChannelPermissions({ guildId, channelId, userId: conn.userId, roles: conn.roles });
+          const perms = await resolveChannelPermissions({ guildId, channelId, userId: conn.userId });
           if (!has(perms, Perm.SPEAK)) {
             sendDispatch(conn, "VOICE_ERROR", { error: "MISSING_SPEAK_PERMS" });
             return;
