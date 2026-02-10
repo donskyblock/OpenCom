@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS guilds (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  owner_user_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS channels (
+  id TEXT PRIMARY KEY,
+  guild_id TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  author_id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
