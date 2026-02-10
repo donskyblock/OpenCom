@@ -7,10 +7,12 @@ Discord-like web client for OpenCom.
 - Core API: `https://openapi.donskyblock.xyz`
 
 ## Features implemented
+- Discord-like three-pane layout (server rail, channel list, chat, controls).
+- Owner actions card for creating text/voice channels in the active guild.
 - Email/password register + login flow (Core API).
 - Server list and switching (Core `/v1/servers`).
 - Add server by provider node URL/IP (Core `/v1/servers` with `baseUrl`).
-- Invite generation and invite join (Core `/v1/invites`).
+- Invite generation and invite join (Core `/v1/invites`) with metadata preview before joining.
 - Guild state + channels + messages from server node APIs.
 - Message send in text channels.
 - Custom CSS theme upload (`.css` file) and live application.

@@ -61,6 +61,7 @@ export function App() {
   const [password, setPassword] = useState("");
   const [me, setMe] = useState(null);
   const [servers, setServers] = useState([]);
+  const [guilds, setGuilds] = useState([]);
   const [activeServerId, setActiveServerId] = useState("");
   const [activeGuildId, setActiveGuildId] = useState("");
   const [activeChannelId, setActiveChannelId] = useState("");
@@ -72,6 +73,9 @@ export function App() {
   const [inviteServerId, setInviteServerId] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [joinInviteCode, setJoinInviteCode] = useState("");
+  const [invitePreview, setInvitePreview] = useState(null);
+  const [newChannelName, setNewChannelName] = useState("");
+  const [newChannelType, setNewChannelType] = useState("text");
   const [status, setStatus] = useState("");
   const [themeCss, setThemeCss] = useThemeCss();
 
@@ -85,15 +89,39 @@ export function App() {
     [servers, activeServerId]
   );
 
+  const activeGuild = useMemo(
+    () => guilds.find((guild) => guild.id === activeGuildId) || null,
+    [guilds, activeGuildId]
+  );
+
+  const activeChannel = useMemo(
+    () => (guildState?.channels || []).find((channel) => channel.id === activeChannelId) || null,
+    [guildState, activeChannelId]
+  );
+
+  const canManageServer = useMemo(() => {
+    if (!activeServer) return false;
+    return (activeServer.roles || []).includes("owner") || (activeServer.roles || []).includes("platform_admin");
+  }, [activeServer]);
+
   async function loadSession() {
     if (!accessToken) return;
     try {
       const meData = await api("/v1/me", { headers: { Authorization: `Bearer ${accessToken}` } });
       setMe(meData);
       const serverData = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
-      setServers(serverData.servers || []);
-      if (!activeServerId && serverData.servers?.length) {
-        setActiveServerId(serverData.servers[0].id);
+      const nextServers = serverData.servers || [];
+      setServers(nextServers);
+
+      if (!nextServers.length) {
+        setActiveServerId("");
+        setActiveGuildId("");
+        setGuildState(null);
+        return;
+      }
+
+      if (!nextServers.some((server) => server.id === activeServerId)) {
+        setActiveServerId(nextServers[0].id);
       }
     } catch (error) {
       setStatus(`Session error: ${error.message}`);
@@ -130,19 +158,20 @@ export function App() {
   }
 
   async function createServer() {
-    setStatus("Creating server...");
+    if (!newServerName.trim() || !newServerBaseUrl.trim()) return;
+    setStatus("Adding server provider...");
     try {
       await api("/v1/servers", {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ name: newServerName, baseUrl: newServerBaseUrl })
+        body: JSON.stringify({ name: newServerName.trim(), baseUrl: newServerBaseUrl.trim() })
       });
       setNewServerName("");
       setNewServerBaseUrl("https://");
       await loadSession();
-      setStatus("Server created.");
+      setStatus("Server added.");
     } catch (error) {
-      setStatus(`Create server failed: ${error.message}`);
+      setStatus(`Add server failed: ${error.message}`);
     }
   }
 
@@ -162,15 +191,31 @@ export function App() {
     }
   }
 
+  async function previewInvite() {
+    if (!joinInviteCode.trim()) return;
+    setStatus("Checking invite metadata...");
+    try {
+      const data = await api(`/v1/invites/${joinInviteCode.trim()}`);
+      setInvitePreview(data);
+      setStatus("Invite metadata loaded.");
+    } catch (error) {
+      setInvitePreview(null);
+      setStatus(`Invite lookup failed: ${error.message}`);
+    }
+  }
+
   async function joinInvite() {
-    if (!joinInviteCode) return;
+    const code = joinInviteCode.trim();
+    if (!code) return;
     setStatus("Joining via invite...");
     try {
-      await api(`/v1/invites/${joinInviteCode}/join`, {
+      await api(`/v1/invites/${code}/join`, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` }
       });
       await loadSession();
+      setJoinInviteCode("");
+      setInvitePreview(null);
       setStatus("Joined server from invite.");
     } catch (error) {
       setStatus(`Join failed: ${error.message}`);
@@ -182,8 +227,12 @@ export function App() {
     try {
       const state = await nodeApi(server.baseUrl, `/v1/guilds/${guildId}/state`, server.membershipToken);
       setGuildState(state);
-      const firstText = state.channels.find((channel) => channel.type === "text");
-      setActiveChannelId(firstText?.id || "");
+      setActiveChannelId((current) => {
+        const exists = state.channels.some((channel) => channel.id === current && channel.type === "text");
+        if (exists) return current;
+        const firstText = state.channels.find((channel) => channel.type === "text");
+        return firstText?.id || "";
+      });
     } catch (error) {
       setStatus(`Guild state failed: ${error.message}`);
     }
@@ -200,12 +249,28 @@ export function App() {
   }
 
   useEffect(() => {
-    if (!activeServer) return;
+    if (!activeServer) {
+      setGuilds([]);
+      setGuildState(null);
+      return;
+    }
+
     nodeApi(activeServer.baseUrl, "/v1/guilds", activeServer.membershipToken)
-      .then((guilds) => {
-        if (!activeGuildId && guilds.length) setActiveGuildId(guilds[0].id);
+      .then((items) => {
+        setGuilds(items || []);
+        if (!items?.length) {
+          setActiveGuildId("");
+          return;
+        }
+
+        if (!items.some((guild) => guild.id === activeGuildId)) {
+          setActiveGuildId(items[0].id);
+        }
       })
-      .catch((error) => setStatus(`Guild list failed: ${error.message}`));
+      .catch((error) => {
+        setGuilds([]);
+        setStatus(`Guild list failed: ${error.message}`);
+      });
   }, [activeServerId, servers]);
 
   useEffect(() => {
@@ -232,6 +297,22 @@ export function App() {
     }
   }
 
+  async function createChannel() {
+    if (!activeServer || !activeGuildId || !newChannelName.trim()) return;
+    setStatus("Creating channel...");
+    try {
+      await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/channels`, activeServer.membershipToken, {
+        method: "POST",
+        body: JSON.stringify({ name: newChannelName.trim(), type: newChannelType })
+      });
+      setNewChannelName("");
+      await loadGuildState(activeServer, activeGuildId);
+      setStatus("Channel created.");
+    } catch (error) {
+      setStatus(`Create channel failed: ${error.message}`);
+    }
+  }
+
   async function onUploadTheme(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -250,6 +331,7 @@ export function App() {
       <div className="auth-shell">
         <div className="auth-card">
           <h1>OpenCom</h1>
+          <p className="sub">Discord-style private communities, on your own infrastructure.</p>
           <p>Frontend URL: <code>{FRONTEND_URL}</code></p>
           <p>API URL: <code>{CORE_API}</code></p>
           <form onSubmit={handleAuthSubmit}>
@@ -274,46 +356,89 @@ export function App() {
   const voiceChannels = channels.filter((channel) => channel.type === "voice");
 
   return (
-    <div className="layout">
-      <aside className="servers-col">
-        <h2>Servers</h2>
-        {servers.map((server) => (
-          <button
-            key={server.id}
-            className={`server-pill ${server.id === activeServerId ? "active" : ""}`}
-            onClick={() => {
-              setActiveServerId(server.id);
-              setActiveGuildId("");
-              setGuildState(null);
-            }}
-          >
-            {server.name.slice(0, 2).toUpperCase()}
-          </button>
-        ))}
+    <div className="discord-shell">
+      <aside className="server-rail">
+        <div className="rail-header">OC</div>
+        <div className="server-list">
+          {servers.map((server) => (
+            <button
+              key={server.id}
+              className={`server-pill ${server.id === activeServerId ? "active" : ""}`}
+              title={server.name}
+              onClick={() => {
+                setActiveServerId(server.id);
+                setActiveGuildId("");
+                setGuildState(null);
+                setMessages([]);
+              }}
+            >
+              {server.name.slice(0, 2).toUpperCase()}
+            </button>
+          ))}
+        </div>
       </aside>
 
-      <aside className="channel-col">
-        <h3>{activeServer?.name || "No server selected"}</h3>
-        <section>
-          <h4>Text Channels</h4>
+      <aside className="channel-sidebar">
+        <header className="sidebar-header">
+          <h2>{activeServer?.name || "No server"}</h2>
+          <small>{activeGuild?.name || "Select a guild"}</small>
+        </header>
+
+        <section className="sidebar-block">
+          <label>Guild</label>
+          <select value={activeGuildId} onChange={(e) => setActiveGuildId(e.target.value)}>
+            <option value="">Select guild</option>
+            {guilds.map((guild) => (
+              <option key={guild.id} value={guild.id}>{guild.name}</option>
+            ))}
+          </select>
+        </section>
+
+        <section className="sidebar-block">
+          <h3>Text Channels</h3>
           {textChannels.map((channel) => (
-            <button key={channel.id} className="channel-btn" onClick={() => setActiveChannelId(channel.id)}>
+            <button
+              key={channel.id}
+              className={`channel-row ${channel.id === activeChannelId ? "active" : ""}`}
+              onClick={() => setActiveChannelId(channel.id)}
+            >
               # {channel.name}
             </button>
           ))}
         </section>
-        <section>
-          <h4>Voice Channels</h4>
+
+        <section className="sidebar-block">
+          <h3>Voice Channels</h3>
           {voiceChannels.map((channel) => (
-            <div key={channel.id} className="voice-item">🔊 {channel.name}</div>
+            <div key={channel.id} className="channel-row voice">🔊 {channel.name}</div>
           ))}
         </section>
+
+        <footer className="self-card">
+          <div>
+            <strong>{me?.username}</strong>
+            <span>{canManageServer ? "Owner tools enabled" : "Member"}</span>
+          </div>
+          <button
+            className="danger ghost"
+            onClick={() => {
+              setAccessToken("");
+              setServers([]);
+              setGuildState(null);
+              setMessages([]);
+            }}
+          >
+            Logout
+          </button>
+        </footer>
       </aside>
 
-      <main className="chat-col">
-        <header>
-          <h3># {channels.find((c) => c.id === activeChannelId)?.name || "general"}</h3>
+      <main className="chat-pane">
+        <header className="chat-header">
+          <h3># {activeChannel?.name || "general"}</h3>
+          <span>{activeGuild?.name || "No guild selected"}</span>
         </header>
+
         <div className="messages">
           {messages.map((message) => (
             <article key={message.id} className="msg">
@@ -321,26 +446,54 @@ export function App() {
               <p>{message.content}</p>
             </article>
           ))}
+          {!messages.length && <p className="empty">No messages yet. Start the conversation.</p>}
         </div>
+
         <footer className="composer">
-          <input value={messageText} onChange={(e) => setMessageText(e.target.value)} placeholder="Message channel" />
+          <input
+            value={messageText}
+            onChange={(e) => setMessageText(e.target.value)}
+            placeholder={`Message #${activeChannel?.name || "channel"}`}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") sendMessage();
+            }}
+          />
           <button onClick={sendMessage}>Send</button>
         </footer>
       </main>
 
-      <aside className="settings-col">
-        <h3>Controls</h3>
-        <p>Logged in as <strong>{me?.username}</strong></p>
+      <aside className="control-pane">
+        <section className="card">
+          <h4>Join Server (Metadata Flow)</h4>
+          <input
+            placeholder="Paste invite code"
+            value={joinInviteCode}
+            onChange={(e) => setJoinInviteCode(e.target.value)}
+          />
+          <div className="row-actions">
+            <button className="ghost" onClick={previewInvite}>Preview</button>
+            <button onClick={joinInvite}>Join</button>
+          </div>
+          {invitePreview && (
+            <div className="preview">
+              <p><strong>Server ID:</strong> <code>{invitePreview.serverId}</code></p>
+              <p><strong>Invite:</strong> {invitePreview.code}</p>
+              <p><strong>Uses:</strong> {invitePreview.uses}{invitePreview.maxUses ? ` / ${invitePreview.maxUses}` : ""}</p>
+              <p><strong>Expires:</strong> {invitePreview.expiresAt || "Never"}</p>
+            </div>
+          )}
+        </section>
 
-        <div className="card">
-          <h4>Add server by provider URL / IP</h4>
+        <section className="card">
+          <h4>Add Server Provider</h4>
           <input placeholder="Server name" value={newServerName} onChange={(e) => setNewServerName(e.target.value)} />
           <input placeholder="https://node.provider.tld" value={newServerBaseUrl} onChange={(e) => setNewServerBaseUrl(e.target.value)} />
           <button onClick={createServer}>Add Server</button>
-        </div>
+          <p className="hint">For explicit owner assignment, use <code>scripts/create-server.sh</code>.</p>
+        </section>
 
-        <div className="card">
-          <h4>Invites</h4>
+        <section className="card">
+          <h4>Server Invites</h4>
           <select value={inviteServerId} onChange={(e) => setInviteServerId(e.target.value)}>
             <option value="">Select server</option>
             {servers.map((server) => (
@@ -349,33 +502,36 @@ export function App() {
           </select>
           <button onClick={createInvite}>Generate Invite</button>
           {inviteCode && <p>Invite code: <code>{inviteCode}</code></p>}
-          <input placeholder="Paste invite code" value={joinInviteCode} onChange={(e) => setJoinInviteCode(e.target.value)} />
-          <button onClick={joinInvite}>Join with Invite</button>
-        </div>
+        </section>
 
-        <div className="card">
+        {canManageServer && (
+          <section className="card">
+            <h4>Owner Actions</h4>
+            <p className="hint">Create channels and manage structure directly from your server role.</p>
+            <input
+              placeholder="New channel name"
+              value={newChannelName}
+              onChange={(e) => setNewChannelName(e.target.value)}
+            />
+            <select value={newChannelType} onChange={(e) => setNewChannelType(e.target.value)}>
+              <option value="text">Text Channel</option>
+              <option value="voice">Voice Channel</option>
+            </select>
+            <button onClick={createChannel}>Create Channel</button>
+          </section>
+        )}
+
+        <section className="card">
           <h4>Custom CSS Theme</h4>
           <input type="file" accept="text/css,.css" onChange={onUploadTheme} />
-          <button onClick={clearTheme}>Reset Theme</button>
+          <button className="ghost" onClick={clearTheme}>Reset Theme</button>
           <textarea
             value={themeCss}
             onChange={(e) => setThemeCss(e.target.value)}
-            rows={10}
-            placeholder="You can also paste CSS directly"
+            rows={8}
+            placeholder="Paste custom CSS"
           />
-        </div>
-
-        <button
-          className="logout"
-          onClick={() => {
-            setAccessToken("");
-            setServers([]);
-            setGuildState(null);
-            setMessages([]);
-          }}
-        >
-          Logout
-        </button>
+        </section>
 
         <p className="status">{status}</p>
       </aside>
