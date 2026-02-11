@@ -4,6 +4,7 @@ import { ulidLike } from "@ods/shared/ids.js";
 import { q } from "../db.js";
 import { SignJWT, importJWK } from "jose";
 import { env } from "../env.js";
+import { parseBody } from "../validation.js";
 
 const CreateServer = z.object({
   name: z.string().min(2).max(64),
@@ -63,7 +64,7 @@ async function ensureDefaultGuildOnServerNode(serverId: string, serverName: stri
 export async function serverRoutes(app: FastifyInstance) {
   app.post("/v1/servers", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
-    const body = CreateServer.parse(req.body);
+    const body = parseBody(CreateServer, req.body);
 
     const platformRole = await getPlatformRole(userId);
     if (platformRole === "user") {

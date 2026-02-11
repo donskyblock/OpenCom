@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { ulidLike } from "@ods/shared/ids.js";
 import { q } from "../db.js";
+import { parseBody } from "../validation.js";
 
 const RegisterDevice = z.object({
   name: z.string().max(64).optional(),
@@ -12,7 +13,7 @@ const RegisterDevice = z.object({
 export async function deviceRoutes(app: FastifyInstance) {
   app.post("/v1/devices/register", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
-    const body = RegisterDevice.parse(req.body);
+    const body = parseBody(RegisterDevice, req.body);
 
     const id = ulidLike();
     await q(

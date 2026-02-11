@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { q } from "../db.js";
+import { parseBody } from "../validation.js";
 
 const UpdateProfile = z.object({
   displayName: z.string().min(1).max(64).nullable().optional(),
@@ -40,7 +41,7 @@ export async function profileRoutes(app: FastifyInstance) {
 
   app.patch("/v1/me/profile", { preHandler: [app.authenticate] } as any, async (req: any) => {
     const userId = req.user.sub as string;
-    const body = UpdateProfile.parse(req.body);
+    const body = parseBody(UpdateProfile, req.body);
 
     await q(
       `UPDATE users SET

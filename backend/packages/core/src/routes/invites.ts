@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { q } from "../db.js";
+import { parseBody } from "../validation.js";
 
 function inviteCode(): string {
   return crypto.randomBytes(6).toString("base64url");
@@ -27,7 +28,7 @@ async function getPlatformRole(userId: string): Promise<"user" | "admin" | "owne
 export async function inviteRoutes(app: FastifyInstance) {
   app.post("/v1/invites", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
-    const body = CreateInvite.parse(req.body);
+    const body = parseBody(CreateInvite, req.body);
 
     const s = await q<{ owner_user_id: string }>(`SELECT owner_user_id FROM servers WHERE id=:serverId`, { serverId: body.serverId });
     if (!s.length) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
