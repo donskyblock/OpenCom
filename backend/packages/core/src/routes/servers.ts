@@ -20,10 +20,60 @@ async function getPlatformRole(userId: string): Promise<"user" | "admin" | "owne
   return "user";
 }
 
+async function signMembershipToken(serverId: string, userId: string, roles: string[], platformRole: "user" | "admin" | "owner") {
+  const privateJwk = JSON.parse(env.CORE_MEMBERSHIP_PRIVATE_JWK);
+  const priv = await importJWK(privateJwk, "RS256");
+
+  return new SignJWT({
+    server_id: serverId,
+    roles,
+    platform_role: platformRole
+  })
+    .setProtectedHeader({ alg: "RS256", kid: privateJwk.kid })
+    .setIssuer(env.CORE_ISSUER)
+    .setAudience(serverId)
+    .setSubject(userId)
+    .setExpirationTime("10m")
+    .sign(priv);
+}
+
+async function ensureDefaultGuildOnServerNode(serverId: string, serverName: string, baseUrl: string, ownerUserId: string) {
+  const platformRole = await getPlatformRole(ownerUserId);
+  const ownerRoles = ["owner"];
+  if (platformRole === "admin") ownerRoles.push("platform_admin");
+  if (platformRole === "owner") ownerRoles.push("platform_admin", "platform_owner");
+
+  const membershipToken = await signMembershipToken(serverId, ownerUserId, ownerRoles, platformRole);
+
+  const response = await fetch(`${baseUrl}/v1/guilds`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${membershipToken}`
+    },
+    body: JSON.stringify({ name: serverName, createDefaultVoice: true })
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    throw new Error(`DEFAULT_GUILD_CREATE_FAILED_${response.status}${errorBody ? `:${errorBody}` : ""}`);
+  }
+}
+
 export async function serverRoutes(app: FastifyInstance) {
   app.post("/v1/servers", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
     const body = CreateServer.parse(req.body);
+
+    const platformRole = await getPlatformRole(userId);
+    if (platformRole === "user") {
+      const ownedServers = await q<{ count: number }>(
+        `SELECT COUNT(*) as count FROM servers WHERE owner_user_id=:userId`,
+        { userId }
+      );
+      const totalOwned = Number(ownedServers[0]?.count || 0);
+      if (totalOwned >= 1) return rep.code(403).send({ error: "SERVER_LIMIT_REACHED" });
+    }
 
     const id = ulidLike();
     await q(`INSERT INTO servers (id,name,base_url,owner_user_id) VALUES (:id,:name,:baseUrl,:userId)`,
@@ -32,6 +82,13 @@ export async function serverRoutes(app: FastifyInstance) {
     await q(`INSERT INTO memberships (server_id,user_id,roles) VALUES (:id,:userId,:roles)`,
       { id, userId, roles: JSON.stringify(["owner"]) }
     );
+
+    try {
+      await ensureDefaultGuildOnServerNode(id, body.name, body.baseUrl, userId);
+    } catch (error: any) {
+      app.log.error({ err: error, serverId: id, baseUrl: body.baseUrl }, "Failed to create default guild on server node");
+      return rep.code(502).send({ error: "DEFAULT_GUILD_CREATE_FAILED" });
+    }
 
     return rep.send({ serverId: id });
   });
@@ -57,8 +114,6 @@ export async function serverRoutes(app: FastifyInstance) {
         { userId }
       );
 
-    const priv = await importJWK(JSON.parse(env.CORE_MEMBERSHIP_PRIVATE_JWK), "RS256");
-
     const servers = await Promise.all(rows.map(async (r) => {
       const membershipRoles = Array.isArray(r.roles) ? r.roles : JSON.parse(r.roles || "[]");
       if (platformRole === "admin" && !membershipRoles.includes("platform_admin")) membershipRoles.push("platform_admin");
@@ -67,17 +122,7 @@ export async function serverRoutes(app: FastifyInstance) {
         if (!membershipRoles.includes("platform_owner")) membershipRoles.push("platform_owner");
       }
 
-      const membershipToken = await new SignJWT({
-        server_id: r.id,
-        roles: membershipRoles,
-        platform_role: platformRole
-      })
-        .setProtectedHeader({ alg: "RS256", kid: JSON.parse(env.CORE_MEMBERSHIP_PRIVATE_JWK).kid })
-        .setIssuer(env.CORE_ISSUER)
-        .setAudience(r.id)
-        .setSubject(userId)
-        .setExpirationTime("10m")
-        .sign(priv);
+      const membershipToken = await signMembershipToken(r.id, userId, membershipRoles, platformRole);
 
       return {
         id: r.id,
