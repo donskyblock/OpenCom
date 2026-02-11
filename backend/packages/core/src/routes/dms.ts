@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { ulidLike } from "@ods/shared/ids.js";
 import { q } from "../db.js";
+import { parseBody } from "../validation.js";
 
 const CreateThread = z.object({ otherUserId: z.string().min(3) });
 
@@ -16,7 +17,7 @@ const SendDM = z.object({
 export async function dmRoutes(app: FastifyInstance, broadcastDM: (recipientDeviceId: string, payload: any) => void) {
   app.post("/v1/dms/create", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
-    const body = CreateThread.parse(req.body);
+    const body = parseBody(CreateThread, req.body);
 
     const a = userId;
     const b = body.otherUserId;
@@ -34,7 +35,7 @@ export async function dmRoutes(app: FastifyInstance, broadcastDM: (recipientDevi
   });
 
   app.post("/v1/dms/send", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
-    const body = SendDM.parse(req.body);
+    const body = parseBody(SendDM, req.body);
 
     const msgId = ulidLike();
     const sentAt = new Date().toISOString();
