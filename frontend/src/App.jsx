@@ -61,6 +61,21 @@ function getStoredJson(key, fallback) {
   }
 }
 
+function getInitials(value = "") {
+  const cleaned = value.trim();
+  if (!cleaned) return "OC";
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+}
+
+function formatMessageTime(value) {
+  if (!value) return "just now";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "just now";
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 export function App() {
   const [accessToken, setAccessToken] = useState(localStorage.getItem("opencom_access_token") || "");
   const [authMode, setAuthMode] = useState("login");
@@ -151,6 +166,12 @@ export function App() {
       window.removeEventListener("keydown", onEscape);
     };
   }, []);
+
+  useEffect(() => {
+    if (!status) return;
+    const timer = window.setTimeout(() => setStatus(""), 3800);
+    return () => window.clearTimeout(timer);
+  }, [status]);
 
   const activeServer = useMemo(() => servers.find((server) => server.id === activeServerId) || null, [servers, activeServerId]);
   const activeGuild = useMemo(() => guilds.find((guild) => guild.id === activeGuildId) || null, [guilds, activeGuildId]);
@@ -340,6 +361,7 @@ export function App() {
     const friend = { id: cleaned.toLowerCase().replace(/\s+/g, "-"), username: cleaned, status: "online" };
     setFriends((current) => [friend, ...current]);
     setDms((current) => [{ id: friend.id, name: friend.username, messages: [] }, ...current]);
+    setActiveDmId(friend.id);
     setFriendSearch("");
     setStatus(`Friend request accepted for ${friend.username}.`);
   }
@@ -521,10 +543,10 @@ export function App() {
   return (
     <div className="discord-shell">
       <aside className="server-rail">
-        <div className="rail-header" title="OpenCom">◎</div>
-        <button className={`server-pill nav-pill ${navMode === "friends" ? "active" : ""}`} onClick={() => setNavMode("friends")}>👥</button>
-        <button className={`server-pill nav-pill ${navMode === "dms" ? "active" : ""}`} onClick={() => setNavMode("dms")}>💬</button>
-        <button className={`server-pill nav-pill ${navMode === "profile" ? "active" : ""}`} onClick={() => setNavMode("profile")}>🪪</button>
+        <div className="rail-header" title="OpenCom">OC</div>
+        <button className={`server-pill nav-pill ${navMode === "friends" ? "active" : ""}`} onClick={() => setNavMode("friends")} aria-label="Friends" title="Friends">👥</button>
+        <button className={`server-pill nav-pill ${navMode === "dms" ? "active" : ""}`} onClick={() => setNavMode("dms")} aria-label="Direct messages" title="Direct Messages">💬</button>
+        <button className={`server-pill nav-pill ${navMode === "profile" ? "active" : ""}`} onClick={() => setNavMode("profile")} aria-label="Profile" title="Profile">🪪</button>
         <div className="server-list">
           {servers.map((server) => (
             <button
@@ -540,7 +562,7 @@ export function App() {
               }}
               onContextMenu={(event) => openServerContextMenu(event, server)}
             >
-              {server.name.slice(0, 2).toUpperCase()}
+              {getInitials(server.name)}
             </button>
           ))}
         </div>
@@ -548,16 +570,16 @@ export function App() {
 
       <aside className="channel-sidebar">
         <header className="sidebar-header">
-          <h2>{navMode === "servers" ? (activeServer?.name || "No server") : navMode.toUpperCase()}</h2>
-          <small>{navMode === "servers" ? (activeGuild?.name || "Select a guild") : "Discord-like social layer"}</small>
+          <h2>{navMode === "servers" ? (activeServer?.name || "No workspace") : navMode.toUpperCase()}</h2>
+          <small>{navMode === "servers" ? (activeGuild?.name || "Choose a space to begin") : "Unified communication hub"}</small>
         </header>
 
         {navMode === "servers" && (
           <>
             <section className="sidebar-block">
-              <label>Guild</label>
+              <label>Workspace</label>
               <select value={activeGuildId} onChange={(e) => setActiveGuildId(e.target.value)}>
-                <option value="">Select guild</option>
+                <option value="">Select workspace</option>
                 {guilds.map((guild) => <option key={guild.id} value={guild.id}>{guild.name}</option>)}
               </select>
             </section>
@@ -628,7 +650,7 @@ export function App() {
         <footer className="self-card">
           {voiceConnectedChannelId && (
             <div className="voice-widget">
-              <div className="voice-top"><strong>Voice Connected</strong><span>{voiceConnectedChannelId}</span></div>
+              <div className="voice-top"><strong>Voice connected</strong><span>{voiceConnectedChannelId}</span></div>
               <div className="voice-actions">
                 <button className="ghost" onClick={() => setIsScreenSharing((v) => !v)}>{isScreenSharing ? "Stop Share" : "Share Screen"}</button>
                 <button className="danger" onClick={() => { setVoiceConnectedChannelId(""); setIsScreenSharing(false); }}>Disconnect</button>
@@ -636,7 +658,7 @@ export function App() {
             </div>
           )}
           <div className="user-row">
-            <div className="avatar">{(me?.username || "U").slice(0, 1).toUpperCase()}</div>
+            <div className="avatar">{getInitials(me?.username || "OpenCom User")}</div>
             <div className="user-meta"><strong>{me?.username}</strong><span>{canManageServer ? "Owner" : "Member"}</span></div>
             <div className="user-controls">
               <button className={`icon-btn ${isMuted ? "danger" : "ghost"}`} onClick={() => setIsMuted((v) => !v)}>{isMuted ? "🎙️" : "🎤"}</button>
@@ -653,22 +675,22 @@ export function App() {
           <div className="chat-layout">
             <section className="chat-main">
               <header className="chat-header">
-                <h3><span className="channel-hash">#</span> {activeChannel?.name || "general"}</h3>
+                <h3><span className="channel-hash">#</span> {activeChannel?.name || "updates"}</h3>
                 <div className="chat-actions">
                   <button className="icon-btn ghost" title="Threads">🧵</button>
                   <button className="icon-btn ghost" title="Notifications">🔔</button>
                   <button className="icon-btn ghost" title="Pinned">📌</button>
                   <button className="icon-btn ghost" title="Members">👥</button>
-                  <input className="search-input" placeholder={`Search ${activeServer?.name || "server"}`} />
-                  <button className="ghost" onClick={() => setToolsOpen((v) => !v)}>OpenCom Tools</button>
+                  <input className="search-input" placeholder={`Search ${activeServer?.name || "workspace"}`} />
+                  <button className="ghost" onClick={() => setToolsOpen((v) => !v)}>{toolsOpen ? "Close tools" : "Open tools"}</button>
                 </div>
               </header>
               <div className="messages" ref={messagesRef}>
                 {messages.map((message) => (
                   <article key={message.id} className="msg">
-                    <div className="msg-avatar">{(message.author_id || message.authorId || "U").slice(0, 1).toUpperCase()}</div>
+                    <div className="msg-avatar">{getInitials(message.author_id || message.authorId || "User")}</div>
                     <div className="msg-body">
-                      <strong>{message.author_id || message.authorId} <span className="msg-time">just now</span></strong>
+                      <strong>{message.author_id || message.authorId} <span className="msg-time">{formatMessageTime(message.created_at || message.createdAt)}</span></strong>
                       <p>{message.content}</p>
                     </div>
                   </article>
@@ -679,7 +701,7 @@ export function App() {
                 <button className="ghost composer-icon">＋</button>
                 <input value={messageText} onChange={(e) => setMessageText(e.target.value)} placeholder={`Message #${activeChannel?.name || "channel"}`} onKeyDown={(e) => e.key === "Enter" && sendMessage()} />
                 <button className="ghost composer-icon">🎁</button>
-                <button onClick={sendMessage}>Send</button>
+                <button onClick={sendMessage} disabled={!activeChannelId || !messageText.trim()}>Send</button>
               </footer>
             </section>
 
@@ -687,7 +709,7 @@ export function App() {
               <h4>Online — {memberList.length}</h4>
               {memberList.map((member) => (
                 <button className="member-row" key={member.id} onClick={(event) => { event.stopPropagation(); openMemberProfile(member); }}>
-                  <div className="avatar member-avatar">{member.username.slice(0, 1).toUpperCase()}</div>
+                  <div className="avatar member-avatar">{getInitials(member.username)}</div>
                   <div>
                     <strong>{member.username}</strong>
                     <span>{member.status}</span>
@@ -706,7 +728,7 @@ export function App() {
               {(activeDm?.messages || []).map((message) => <article key={message.id} className="msg"><strong>{message.author} <span className="msg-time">{new Date(message.createdAt).toLocaleTimeString()}</span></strong><p>{message.content}</p></article>)}
               {!activeDm && <p className="empty">Select a DM on the left.</p>}
             </div>
-            <footer className="composer"><input value={dmText} onChange={(e) => setDmText(e.target.value)} placeholder={`Message ${activeDm?.name || "friend"}`} onKeyDown={(e) => e.key === "Enter" && sendDm()} /><button onClick={sendDm}>Send</button></footer>
+            <footer className="composer"><input value={dmText} onChange={(e) => setDmText(e.target.value)} placeholder={`Message ${activeDm?.name || "friend"}`} onKeyDown={(e) => e.key === "Enter" && sendDm()} /><button onClick={sendDm} disabled={!activeDm || !dmText.trim()}>Send</button></footer>
           </>
         )}
 
@@ -727,7 +749,7 @@ export function App() {
               {friendView === "add" && (
                 <div className="friend-add-card">
                   <h4>Add Friend</h4>
-                  <p className="hint">Use their OpenCom username to add them directly.</p>
+                  <p className="hint">Use their OpenCom username to add them instantly.</p>
                   <div className="friend-add-row">
                     <input placeholder="Username" value={friendSearch} onChange={(e) => setFriendSearch(e.target.value)} />
                     <button onClick={addFriend}>Send Request</button>
@@ -751,7 +773,7 @@ export function App() {
               {(filteredFriends.slice(0, 4)).map((friend) => (
                 <button key={`active-${friend.id}`} className="active-card" onClick={(event) => { event.stopPropagation(); openMemberProfile(friend); }}>
                   <strong>{friend.username}</strong>
-                  <span>{friend.status === "online" ? "Playing OpenCom" : "Recently active"}</span>
+                  <span>{friend.status === "online" ? "Available now" : "Recently active"}</span>
                 </button>
               ))}
               {!filteredFriends.length && <p className="hint">When friends are active, they'll appear here.</p>}
