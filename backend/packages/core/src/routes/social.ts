@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { ulidLike } from "@ods/shared/ids.js";
 import { q } from "../db.js";
+import { parseBody } from "../validation.js";
 
 const AddFriend = z.object({ username: z.string().min(2).max(32) });
 const OpenDm = z.object({ friendId: z.string().min(3) });
@@ -52,7 +53,7 @@ export async function socialRoutes(app: FastifyInstance) {
 
   app.post("/v1/social/friends", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
-    const body = AddFriend.parse(req.body);
+    const body = parseBody(AddFriend, req.body);
 
     const target = await q<{ id: string; username: string; display_name: string | null }>(
       `SELECT id, username, display_name FROM users WHERE LOWER(username)=LOWER(:username) LIMIT 1`,
@@ -98,7 +99,7 @@ export async function socialRoutes(app: FastifyInstance) {
 
   app.post("/v1/social/dms/open", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
-    const body = OpenDm.parse(req.body);
+    const body = parseBody(OpenDm, req.body);
 
     const friend = await q<{ id: string }>(
       `SELECT id FROM users WHERE id=:friendId LIMIT 1`,
@@ -169,7 +170,7 @@ export async function socialRoutes(app: FastifyInstance) {
   app.post("/v1/social/dms/:threadId/messages", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
     const { threadId } = z.object({ threadId: z.string().min(3) }).parse(req.params);
-    const body = SendDm.parse(req.body);
+    const body = parseBody(SendDm, req.body);
 
     const thread = await q<{ id: string }>(
       `SELECT id FROM social_dm_threads WHERE id=:threadId AND (user_a=:userId OR user_b=:userId) LIMIT 1`,

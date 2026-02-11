@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { q } from "../db.js";
+import { parseBody } from "../validation.js";
 
 const PLATFORM_ADMIN_BADGE = "PLATFORM_ADMIN";
 const PLATFORM_FOUNDER_BADGE = "PLATFORM_FOUNDER";
@@ -103,7 +104,7 @@ export async function adminRoutes(app: FastifyInstance) {
     if (actorRole !== "owner") return rep.code(403).send({ error: "ONLY_OWNER" });
 
     const { userId } = z.object({ userId: z.string().min(3) }).parse(req.params);
-    const { enabled } = z.object({ enabled: z.boolean() }).parse(req.body);
+    const { enabled } = parseBody(z.object({ enabled: z.boolean() }), req.body);
 
     const target = await q<{ id: string }>(`SELECT id FROM users WHERE id=:userId`, { userId });
     if (!target.length) return rep.code(404).send({ error: "USER_NOT_FOUND" });
@@ -129,7 +130,7 @@ export async function adminRoutes(app: FastifyInstance) {
     const actorRole = await getPlatformRole(actorId);
     if (actorRole !== "owner") return rep.code(403).send({ error: "ONLY_OWNER" });
 
-    const { userId } = z.object({ userId: z.string().min(3) }).parse(req.body);
+    const { userId } = parseBody(z.object({ userId: z.string().min(3) }), req.body);
 
     const target = await q<{ id: string }>(`SELECT id FROM users WHERE id=:userId`, { userId });
     if (!target.length) return rep.code(404).send({ error: "USER_NOT_FOUND" });
@@ -170,7 +171,7 @@ export async function adminRoutes(app: FastifyInstance) {
     }
 
     const { userId } = z.object({ userId: z.string().min(3) }).parse(req.params);
-    const body = z.object({ badge: z.string().min(2).max(64), enabled: z.boolean() }).parse(req.body);
+    const body = parseBody(z.object({ badge: z.string().min(2).max(64), enabled: z.boolean() }), req.body);
 
     if (body.badge === PLATFORM_FOUNDER_BADGE) {
       const role = await getPlatformRole(actorId);

@@ -4,6 +4,7 @@ import { ulidLike } from "@ods/shared/ids.js";
 import { q } from "../db.js";
 import { hashPassword, verifyPassword, sha256Hex } from "../crypto.js";
 import crypto from "node:crypto";
+import { parseBody } from "../validation.js";
 
 const Register = z.object({
   email: z.string().email(),
@@ -31,7 +32,7 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.post("/v1/auth/register", async (req, rep) => {
-    const body = Register.parse(req.body);
+    const body = parseBody(Register, req.body);
 
     const existing = await q(`SELECT id FROM users WHERE email=:email`, { email: body.email });
     if (existing.length) return rep.code(409).send({ error: "EMAIL_TAKEN" });
@@ -58,7 +59,7 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.post("/v1/auth/login", async (req, rep) => {
-    const body = Login.parse(req.body);
+    const body = parseBody(Login, req.body);
     const users = await q<{ id: string; password_hash: string; username: string; email: string }>(
       `SELECT id,password_hash,username,email FROM users WHERE email=:email`,
       { email: body.email }
@@ -89,7 +90,7 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.post("/v1/auth/refresh", async (req, rep) => {
-    const body = z.object({ refreshToken: z.string().min(10) }).parse(req.body);
+    const body = parseBody(z.object({ refreshToken: z.string().min(10) }), req.body);
     const tokenHash = sha256Hex(body.refreshToken);
 
     const rows = await q<{ id: string; user_id: string; revoked_at: string | null; expires_at: string }>(
