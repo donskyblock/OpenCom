@@ -241,6 +241,9 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 .messages { overflow: auto; padding: 18px 0; }
 .msg { display: grid; grid-template-columns: auto 1fr; gap: 12px; padding: 6px 16px 12px; border-radius: 10px; }
 .msg:hover { background: rgba(129, 160, 240, 0.08); }
+.grouped-msg .msg-body p { margin-top: 2px; }
+.msg-author { font-size: 13px; font-weight: 600; }
+.dm-msg .msg-author { font-size: 12px; color: var(--text-soft); }
 .msg-avatar {
   width: 40px;
   height: 40px;
@@ -289,6 +292,7 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 .friend-add-card { padding: 12px; border: 1px solid var(--border-subtle); background: rgba(22, 33, 58, 0.84); border-radius: 12px; }
 .friend-add-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .friend-meta { display: grid; text-align: left; gap: 1px; }
+.row-actions { display: flex; gap: 8px; }
 .active-now { border-left: 1px solid var(--border-subtle); background: rgba(14, 23, 42, 0.92); padding: 20px 12px; }
 .active-card {
   width: 100%;
