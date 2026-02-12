@@ -241,6 +241,27 @@ export function App() {
     (message) => message.createdAt
   ), [activeDm]);
 
+  async function refreshSocialData(token = accessToken) {
+    if (!token) return;
+    const [friendsData, dmsData, requestData, socialSettingsData] = await Promise.all([
+      api("/v1/social/friends", { headers: { Authorization: `Bearer ${token}` } }),
+      api("/v1/social/dms", { headers: { Authorization: `Bearer ${token}` } }),
+      api("/v1/social/requests", { headers: { Authorization: `Bearer ${token}` } }),
+      api("/v1/social/settings", { headers: { Authorization: `Bearer ${token}` } })
+    ]);
+
+    setFriends(friendsData.friends || []);
+    let nextDms = [];
+    setDms((current) => {
+      const previous = new Map(current.map((item) => [item.id, item]));
+      nextDms = (dmsData.dms || []).map((item) => ({ ...item, messages: previous.get(item.id)?.messages || [] }));
+      return nextDms;
+    });
+    if (!nextDms.some((item) => item.id === activeDmId)) setActiveDmId(nextDms[0]?.id || "");
+    setFriendRequests({ incoming: requestData.incoming || [], outgoing: requestData.outgoing || [] });
+    setAllowFriendRequests(socialSettingsData.allowFriendRequests !== false);
+  }
+
   useEffect(() => {
     if (accessToken) localStorage.setItem("opencom_access_token", accessToken);
     else localStorage.removeItem("opencom_access_token");
@@ -320,16 +341,7 @@ export function App() {
 
         setServers(nextServers);
         try {
-          const [friendsData, dmsData, requestData, socialSettingsData] = await Promise.all([
-            api("/v1/social/friends", { headers: { Authorization: `Bearer ${accessToken}` } }),
-            api("/v1/social/dms", { headers: { Authorization: `Bearer ${accessToken}` } }),
-            api("/v1/social/requests", { headers: { Authorization: `Bearer ${accessToken}` } }),
-            api("/v1/social/settings", { headers: { Authorization: `Bearer ${accessToken}` } })
-          ]);
-          setFriends(friendsData.friends || []);
-          setDms((dmsData.dms || []).map((item) => ({ ...item, messages: [] })));
-          setFriendRequests({ incoming: requestData.incoming || [], outgoing: requestData.outgoing || [] });
-          setAllowFriendRequests(socialSettingsData.allowFriendRequests !== false);
+          await refreshSocialData(accessToken);
         } catch {
           // fallback to local-only social data if backend social routes are unavailable
         }
@@ -419,6 +431,57 @@ export function App() {
         // keep existing local messages as fallback
       });
   }, [activeDmId, navMode, accessToken]);
+
+  useEffect(() => {
+    if (navMode !== "dms") return;
+    if (!dms.length) {
+      setActiveDmId("");
+      return;
+    }
+    if (!activeDmId || !dms.some((dm) => dm.id === activeDmId)) {
+      setActiveDmId(dms[0].id);
+    }
+  }, [navMode, dms, activeDmId]);
+
+  useEffect(() => {
+    if (!accessToken || navMode !== "dms") return;
+
+    const timer = window.setInterval(async () => {
+      try {
+        const [dmsData, requestsData] = await Promise.all([
+          api("/v1/social/dms", { headers: { Authorization: `Bearer ${accessToken}` } }),
+          api("/v1/social/requests", { headers: { Authorization: `Bearer ${accessToken}` } })
+        ]);
+
+        setDms((current) => {
+          const prevMap = new Map(current.map((item) => [item.id, item]));
+          return (dmsData.dms || []).map((item) => ({ ...item, messages: prevMap.get(item.id)?.messages || [] }));
+        });
+        setFriendRequests({ incoming: requestsData.incoming || [], outgoing: requestsData.outgoing || [] });
+
+        if (activeDmId) {
+          const messagesData = await api(`/v1/social/dms/${activeDmId}/messages`, { headers: { Authorization: `Bearer ${accessToken}` } });
+          setDms((current) => current.map((item) => item.id === activeDmId ? { ...item, messages: messagesData.messages || [] } : item));
+        }
+      } catch {
+        // keep UI stable if polling fails
+      }
+    }, 3000);
+
+    return () => window.clearInterval(timer);
+  }, [accessToken, navMode, activeDmId]);
+
+  useEffect(() => {
+    if (!accessToken || (navMode !== "friends" && navMode !== "dms")) return;
+
+    const timer = window.setInterval(() => {
+      refreshSocialData(accessToken).catch(() => {
+        // keep existing state on transient failures
+      });
+    }, 10000);
+
+    return () => window.clearInterval(timer);
+  }, [accessToken, navMode]);
 
   useEffect(() => {
     if (navMode !== "servers" || !activeServer || !activeChannelId) {
@@ -556,6 +619,13 @@ export function App() {
   }
 
   async function openDmFromFriend(friend) {
+    const existing = dms.find((item) => item.participantId === friend.id || item.name === friend.username);
+    if (existing) {
+      setActiveDmId(existing.id);
+      setNavMode("dms");
+      return;
+    }
+
     try {
       const data = await api("/v1/social/dms/open", {
         method: "POST",
@@ -757,9 +827,28 @@ export function App() {
     setMessageContextMenu(null);
   }
 
+  async function deleteDmMessage(messageId) {
+    if (!activeDmId || !messageId) return;
+    try {
+      await api(`/v1/social/dms/${activeDmId}/messages/${messageId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      setDms((current) => current.map((item) => item.id === activeDmId
+        ? { ...item, messages: (item.messages || []).filter((message) => message.id !== messageId) }
+        : item));
+      setStatus("DM message deleted.");
+    } catch (error) {
+      setStatus(`Delete failed: ${error.message}`);
+    }
+    setMessageContextMenu(null);
+  }
+
   function openMessageContextMenu(event, message) {
     event.preventDefault();
-    setMessageContextMenu({ x: event.clientX, y: event.clientY, message });
+    const x = Math.min(event.clientX, window.innerWidth - 240);
+    const y = Math.min(event.clientY, window.innerHeight - 180);
+    setMessageContextMenu({ x, y, message });
   }
 
   async function readImageFile(file) {
@@ -920,7 +1009,7 @@ export function App() {
         {navMode === "dms" && (
           <section className="sidebar-block channels-container">
             {dms.map((dm) => (
-              <button key={dm.id} className={`channel-row ${dm.id === activeDmId ? "active" : ""}`} onClick={() => setActiveDmId(dm.id)}>
+              <button key={dm.id} className={`channel-row dm-sidebar-row ${dm.id === activeDmId ? "active" : ""}`} onClick={() => setActiveDmId(dm.id)} title={`DM ${dm.name}`}>
                 <span className="channel-hash">@</span> {dm.name}
               </button>
             ))}
@@ -931,9 +1020,9 @@ export function App() {
         {navMode === "friends" && (
           <section className="sidebar-block channels-container">
             {friends.map((friend) => (
-              <button className="friend-row" key={friend.id} onClick={() => openDmFromFriend(friend)}>
+              <button className="friend-row friend-sidebar-row" key={friend.id} onClick={() => openDmFromFriend(friend)} title={`Open ${friend.username}`}>
                 <strong>{friend.username}</strong>
-                <span>{friend.status}</span>
+                <span className="hint">{friend.status}</span>
               </button>
             ))}
             {!friends.length && <p className="hint">No friends yet. Use the Add Friend tab in the main panel.</p>}
@@ -998,7 +1087,13 @@ export function App() {
                     <div className="msg-body">
                       <strong className="msg-author">{group.author} <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span></strong>
                       {group.messages.map((message) => (
-                        <p key={message.id} onContextMenu={(event) => openMessageContextMenu(event, { id: message.id, author: group.author, content: message.content, mine: (message.author_id || message.authorId) === me?.id })}>
+                        <p key={message.id} onContextMenu={(event) => openMessageContextMenu(event, {
+                          id: message.id,
+                          kind: "server",
+                          author: group.author,
+                          content: message.content,
+                          mine: (message.author_id || message.authorId) === me?.id
+                        })}>
                           {message.content}
                         </p>
                       ))}
@@ -1048,7 +1143,17 @@ export function App() {
                   <div className="msg-avatar">{getInitials(group.author)}</div>
                   <div className="msg-body">
                     <strong className="msg-author">{group.author} <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span></strong>
-                    {group.messages.map((message) => <p key={message.id}>{message.content}</p>)}
+                    {group.messages.map((message) => (
+                      <p key={message.id} onContextMenu={(event) => openMessageContextMenu(event, {
+                        id: message.id,
+                        kind: "dm",
+                        author: message.author,
+                        content: message.content,
+                        mine: message.authorId === me?.id
+                      })}>
+                        {message.content}
+                      </p>
+                    ))}
                   </div>
                 </article>
               ))}
@@ -1143,8 +1248,26 @@ export function App() {
 
       {messageContextMenu && (
         <div className="server-context-menu" style={{ top: messageContextMenu.y, left: messageContextMenu.x }} onClick={(event) => event.stopPropagation()}>
-          <button onClick={() => { setReplyTarget({ author: messageContextMenu.message.author, content: messageContextMenu.message.content }); setMessageContextMenu(null); }}>Reply</button>
-          {messageContextMenu.message.mine && <button className="danger" onClick={() => deleteServerMessage(messageContextMenu.message.id)}>Delete</button>}
+          {messageContextMenu.message.kind === "server" && (
+            <button onClick={() => { setReplyTarget({ author: messageContextMenu.message.author, content: messageContextMenu.message.content }); setMessageContextMenu(null); }}>Reply</button>
+          )}
+          {messageContextMenu.message.kind === "dm" && (
+            <button onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(messageContextMenu.message.content || "");
+                setStatus("Copied message text.");
+              } catch {
+                setStatus("Could not copy message text.");
+              }
+              setMessageContextMenu(null);
+            }}>Copy Text</button>
+          )}
+          {messageContextMenu.message.mine && messageContextMenu.message.kind === "server" && (
+            <button className="danger" onClick={() => deleteServerMessage(messageContextMenu.message.id)}>Delete</button>
+          )}
+          {messageContextMenu.message.mine && messageContextMenu.message.kind === "dm" && (
+            <button className="danger" onClick={() => deleteDmMessage(messageContextMenu.message.id)}>Delete</button>
+          )}
         </div>
       )}
 

@@ -8,6 +8,7 @@ const AddFriend = z.object({ username: z.string().min(2).max(32) });
 const OpenDm = z.object({ friendId: z.string().min(3) });
 const SendDm = z.object({ content: z.string().min(1).max(4000) });
 const UpdateSocialSettings = z.object({ allowFriendRequests: z.boolean() });
+const DmMessageParams = z.object({ threadId: z.string().min(3), messageId: z.string().min(3) });
 
 function sortPair(a: string, b: string) {
   return a < b ? [a, b] as const : [b, a] as const;
@@ -335,5 +336,26 @@ export async function socialRoutes(app: FastifyInstance) {
     await q(`UPDATE social_dm_threads SET last_message_at=NOW() WHERE id=:threadId`, { threadId });
 
     return { ok: true, messageId: id };
+  });
+
+  app.delete("/v1/social/dms/:threadId/messages/:messageId", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const { threadId, messageId } = DmMessageParams.parse(req.params);
+
+    const thread = await q<{ id: string }>(
+      `SELECT id FROM social_dm_threads WHERE id=:threadId AND (user_a=:userId OR user_b=:userId) LIMIT 1`,
+      { threadId, userId }
+    );
+    if (!thread.length) return rep.code(404).send({ error: "THREAD_NOT_FOUND" });
+
+    const message = await q<{ id: string; sender_user_id: string }>(
+      `SELECT id,sender_user_id FROM social_dm_messages WHERE id=:messageId AND thread_id=:threadId LIMIT 1`,
+      { messageId, threadId }
+    );
+    if (!message.length) return rep.code(404).send({ error: "MESSAGE_NOT_FOUND" });
+    if (message[0].sender_user_id !== userId) return rep.code(403).send({ error: "MISSING_PERMS" });
+
+    await q(`DELETE FROM social_dm_messages WHERE id=:messageId`, { messageId });
+    return { ok: true };
   });
 }
