@@ -9,6 +9,13 @@ const OpenDm = z.object({ friendId: z.string().min(3) });
 const SendDm = z.object({ content: z.string().min(1).max(4000) });
 const UpdateSocialSettings = z.object({ allowFriendRequests: z.boolean() });
 const DmMessageParams = z.object({ threadId: z.string().min(3), messageId: z.string().min(3) });
+const DmCallSignalParams = z.object({ threadId: z.string().min(3) });
+const DmCallSignalQuery = z.object({ afterId: z.string().min(3).optional() });
+const DmCallSignalBody = z.object({
+  targetUserId: z.string().min(3),
+  type: z.enum(["offer", "answer", "ice", "end"]),
+  payload: z.any().optional()
+});
 
 function sortPair(a: string, b: string) {
   return a < b ? [a, b] as const : [b, a] as const;
@@ -115,6 +122,58 @@ export async function socialRoutes(app: FastifyInstance) {
        WHERE sender_user_id=:friendId AND recipient_user_id=:userId AND status='pending'
        LIMIT 1`,
       { userId, friendId }
+    );
+    if (existing.length) {
+      const threadId = await ensureThread(userId, friendId);
+      return {
+        ok: true,
+        alreadyFriends: true,
+        friend: {
+          id: friendId,
+          username: target[0].display_name || target[0].username,
+          status: "online"
+        },
+        threadId
+      };
+    }
+
+    const isAllowed = target[0].allow_friend_requests === null || target[0].allow_friend_requests === 1;
+    if (!isAllowed) return rep.code(403).send({ error: "FRIEND_REQUESTS_DISABLED" });
+
+    const incoming = await q<{ id: string }>(
+      `SELECT id FROM friend_requests
+       WHERE sender_user_id=:friendId AND recipient_user_id=:userId AND status='pending'
+       LIMIT 1`,
+      { userId, friendId }
+    );
+
+    if (incoming.length) {
+      await createFriendshipPair(userId, friendId);
+      const threadId = await ensureThread(userId, friendId);
+      return {
+        ok: true,
+        acceptedExistingRequest: true,
+        friend: {
+          id: friendId,
+          username: target[0].display_name || target[0].username,
+          status: "online"
+        },
+        threadId
+      };
+    }
+
+    const outgoing = await q<{ id: string }>(
+      `SELECT id FROM friend_requests
+       WHERE sender_user_id=:userId AND recipient_user_id=:friendId AND status='pending'
+       LIMIT 1`,
+      { userId, friendId }
+    );
+    if (outgoing.length) return { ok: true, requestId: outgoing[0].id, requestStatus: "pending" };
+
+    const requestId = ulidLike();
+    await q(
+      `INSERT INTO friend_requests (id,sender_user_id,recipient_user_id,status) VALUES (:id,:userId,:friendId,'pending')`,
+      { id: requestId, userId, friendId }
     );
 
     if (incoming.length) {
@@ -357,5 +416,62 @@ export async function socialRoutes(app: FastifyInstance) {
 
     await q(`DELETE FROM social_dm_messages WHERE id=:messageId`, { messageId });
     return { ok: true };
+  });
+
+  app.post("/v1/social/dms/:threadId/call-signals", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const { threadId } = DmCallSignalParams.parse(req.params);
+    const body = parseBody(DmCallSignalBody, req.body);
+
+    const thread = await q<{ id: string; user_a: string; user_b: string }>(
+      `SELECT id,user_a,user_b FROM social_dm_threads WHERE id=:threadId AND (user_a=:userId OR user_b=:userId) LIMIT 1`,
+      { threadId, userId }
+    );
+    if (!thread.length) return rep.code(404).send({ error: "THREAD_NOT_FOUND" });
+
+    const otherUserId = thread[0].user_a === userId ? thread[0].user_b : thread[0].user_a;
+    if (body.targetUserId !== otherUserId) return rep.code(400).send({ error: "INVALID_TARGET" });
+
+    const id = ulidLike();
+    await q(
+      `INSERT INTO social_dm_call_signals (id,thread_id,from_user_id,target_user_id,type,payload_json)
+       VALUES (:id,:threadId,:fromUserId,:targetUserId,:type,:payloadJson)`,
+      { id, threadId, fromUserId: userId, targetUserId: body.targetUserId, type: body.type, payloadJson: JSON.stringify(body.payload ?? {}) }
+    );
+
+    return { ok: true, id };
+  });
+
+  app.get("/v1/social/dms/:threadId/call-signals", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const { threadId } = DmCallSignalParams.parse(req.params);
+    const { afterId } = DmCallSignalQuery.parse(req.query || {});
+
+    const thread = await q<{ id: string }>(
+      `SELECT id FROM social_dm_threads WHERE id=:threadId AND (user_a=:userId OR user_b=:userId) LIMIT 1`,
+      { threadId, userId }
+    );
+    if (!thread.length) return rep.code(404).send({ error: "THREAD_NOT_FOUND" });
+
+    const rows = await q<{ id: string; from_user_id: string; type: string; payload_json: string | null; created_at: string }>(
+      `SELECT id,from_user_id,type,payload_json,created_at
+       FROM social_dm_call_signals
+       WHERE thread_id=:threadId
+         AND target_user_id=:userId
+         AND (:afterId IS NULL OR id > :afterId)
+       ORDER BY id ASC
+       LIMIT 100`,
+      { threadId, userId, afterId: afterId ?? null }
+    );
+
+    return {
+      signals: rows.map((row) => ({
+        id: row.id,
+        fromUserId: row.from_user_id,
+        type: row.type,
+        payload: row.payload_json ? JSON.parse(row.payload_json) : {},
+        createdAt: row.created_at
+      }))
+    };
   });
 }
