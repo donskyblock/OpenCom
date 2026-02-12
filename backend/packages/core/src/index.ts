@@ -34,4 +34,4 @@ await adminRoutes(app);
 await dmRoutes(app, gw.broadcastDM);
 await socialRoutes(app);
 
-app.listen({ port: env.CORE_PORT, host: "0.0.0.0" });
+app.listen({ port: env.CORE_PORT, host: env.CORE_HOST });

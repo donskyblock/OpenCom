@@ -42,4 +42,4 @@ await attachmentRoutes(app);
 startAttachmentCleanupLoop();
 
 
-app.listen({ port: env.NODE_PORT, host: "0.0.0.0" });
+app.listen({ port: env.NODE_PORT, host: env.NODE_HOST });

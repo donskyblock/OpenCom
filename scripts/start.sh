@@ -22,6 +22,9 @@ load_backend_env() {
   set -a
   # shellcheck disable=SC1090
   source "$env_file"
+  # Configure for reverse proxy (localhost only)
+  export CORE_HOST="${CORE_HOST:-127.0.0.1}"
+  export NODE_HOST="${NODE_HOST:-127.0.0.1}"
   set +a
 }
 
