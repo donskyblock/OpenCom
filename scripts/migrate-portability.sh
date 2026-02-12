@@ -79,7 +79,18 @@ run_mysqldump() {
   [[ -n "$password" ]] && args+=(--password="$password")
   args+=("$dbname")
 
-  mysqldump "${args[@]}" > "$out_file"
+  if ! mysqldump "${args[@]}" > "$out_file"; then
+    if [[ "$host" == "localhost" && "$port" != "3306" ]]; then
+      echo "[warn] Primary dump connection failed for ${host}:${port}; retrying 127.0.0.1:3306"
+      args=(--single-transaction --routines --events --protocol=TCP --host="127.0.0.1" --port="3306")
+      [[ -n "$user" ]] && args+=(--user="$user")
+      [[ -n "$password" ]] && args+=(--password="$password")
+      args+=("$dbname")
+      mysqldump "${args[@]}" > "$out_file"
+      return
+    fi
+    return 1
+  fi
 }
 
 run_mysql_import() {
@@ -105,7 +116,18 @@ run_mysql_import() {
   [[ -n "$password" ]] && args+=(--password="$password")
   args+=("$dbname")
 
-  mysql "${args[@]}" < "$in_file"
+  if ! mysql "${args[@]}" < "$in_file"; then
+    if [[ "$host" == "localhost" && "$port" != "3306" ]]; then
+      echo "[warn] Primary import connection failed for ${host}:${port}; retrying 127.0.0.1:3306"
+      args=(--protocol=TCP --host="127.0.0.1" --port="3306")
+      [[ -n "$user" ]] && args+=(--user="$user")
+      [[ -n "$password" ]] && args+=(--password="$password")
+      args+=("$dbname")
+      mysql "${args[@]}" < "$in_file"
+      return
+    fi
+    return 1
+  fi
 }
 
 export_bundle() {
