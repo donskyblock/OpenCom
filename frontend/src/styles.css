@@ -26,6 +26,7 @@ body {
   font-family: Inter, "Segoe UI", Roboto, "Noto Sans", Arial, sans-serif;
   color: var(--text-main);
   background: radial-gradient(circle at 0% 0%, #182748 0%, #0b1324 46%, #070d19 100%);
+  overflow: hidden;
 }
 
 button, input, select, textarea { font: inherit; }
@@ -86,9 +87,10 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 .link-btn { border: none; background: transparent; color: #9db0ff; padding: 0; }
 
 .opencom-shell {
-  height: 100vh;
+  height: 100dvh;
   display: grid;
   grid-template-columns: 80px 280px minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .server-rail {
@@ -312,6 +314,15 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 .server-composer { grid-template-columns: auto 1fr auto auto; }
 .dm-composer { grid-template-columns: 1fr auto; }
 .send-btn { padding: 7px 12px; min-width: 82px; }
+.name-btn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-main);
+  font-weight: 700;
+  cursor: pointer;
+}
+.name-btn:hover { text-decoration: underline; }
 .reply-banner {
   margin: 0 16px 6px;
   border: 1px solid var(--border-subtle);
@@ -392,6 +403,17 @@ textarea { resize: vertical; min-height: 120px; }
   background: #14213d;
   box-shadow: var(--shadow-lg);
   z-index: 45;
+}
+.popout-drag-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  font-size: 11px;
+  padding: 6px 8px;
+  cursor: move;
+  background: rgba(10, 16, 30, 0.65);
+  border-bottom-left-radius: 10px;
 }
 .popout-banner { height: 90px; background: linear-gradient(135deg, #344b91, #596cd1); background-size: cover; }
 .popout-content { padding: 14px; display: grid; gap: 8px; }

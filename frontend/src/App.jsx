@@ -6,6 +6,7 @@ const THEME_ENABLED_STORAGE_KEY = "opencom_custom_theme_enabled";
 const SELF_STATUS_KEY = "opencom_self_status";
 const PINNED_SERVER_KEY = "opencom_pinned_server_messages";
 const PINNED_DM_KEY = "opencom_pinned_dm_messages";
+const DM_CALL_SIGNAL_CHANNEL = "opencom_dm_call_signal";
 
 function useThemeCss() {
   const [css, setCss] = useState(localStorage.getItem(THEME_STORAGE_KEY) || "");
@@ -192,6 +193,11 @@ export function App() {
   const [showPinned, setShowPinned] = useState(false);
   const [pinnedServerMessages, setPinnedServerMessages] = useState(getStoredJson(PINNED_SERVER_KEY, {}));
   const [pinnedDmMessages, setPinnedDmMessages] = useState(getStoredJson(PINNED_DM_KEY, {}));
+  const [newRoleName, setNewRoleName] = useState("");
+  const [selectedRoleId, setSelectedRoleId] = useState("");
+  const [selectedMemberId, setSelectedMemberId] = useState("");
+  const [profileCardPosition, setProfileCardPosition] = useState({ x: 26, y: 26 });
+  const [draggingProfileCard, setDraggingProfileCard] = useState(false);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState("profile");
@@ -205,7 +211,11 @@ export function App() {
   const composerInputRef = useRef(null);
   const dmComposerInputRef = useRef(null);
   const dmCallStreamRef = useRef(null);
+  const dmCallPeerRef = useRef(null);
+  const dmCallSignalChannelRef = useRef(null);
+  const remoteAudioRef = useRef(null);
   const lastDmMessageIdRef = useRef("");
+  const profileCardDragOffsetRef = useRef({ x: 0, y: 0 });
   const storageScope = me?.id || "anonymous";
 
   const activeServer = useMemo(() => servers.find((server) => server.id === activeServerId) || null, [servers, activeServerId]);
@@ -338,7 +348,77 @@ export function App() {
 
   useEffect(() => () => {
     dmCallStreamRef.current?.getTracks().forEach((track) => track.stop());
+    dmCallPeerRef.current?.close();
+    dmCallSignalChannelRef.current?.close();
   }, []);
+
+  useEffect(() => {
+    const channel = new BroadcastChannel(DM_CALL_SIGNAL_CHANNEL);
+    dmCallSignalChannelRef.current = channel;
+
+    channel.onmessage = async (event) => {
+      const msg = event.data;
+      if (!msg || msg.dmId !== activeDmId || msg.targetUserId !== me?.id) return;
+
+      if (msg.type === "offer") {
+        try {
+          const stream = dmCallStreamRef.current || await navigator.mediaDevices.getUserMedia({ audio: true });
+          dmCallStreamRef.current = stream;
+          const peer = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+          dmCallPeerRef.current = peer;
+          stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+
+          peer.ontrack = (remoteEvent) => {
+            if (remoteAudioRef.current) remoteAudioRef.current.srcObject = remoteEvent.streams[0];
+          };
+
+          peer.onicecandidate = (iceEvent) => {
+            if (!iceEvent.candidate) return;
+            channel.postMessage({ type: "ice", dmId: activeDmId, fromUserId: me?.id, targetUserId: msg.fromUserId, candidate: iceEvent.candidate });
+          };
+
+          await peer.setRemoteDescription(msg.offer);
+          const answer = await peer.createAnswer();
+          await peer.setLocalDescription(answer);
+          channel.postMessage({ type: "answer", dmId: activeDmId, fromUserId: me?.id, targetUserId: msg.fromUserId, answer });
+          setDmCallActive(true);
+        } catch {
+          setStatus("Could not join DM call.");
+        }
+      }
+
+      if (msg.type === "answer" && dmCallPeerRef.current) {
+        await dmCallPeerRef.current.setRemoteDescription(msg.answer);
+      }
+
+      if (msg.type === "ice" && dmCallPeerRef.current) {
+        try { await dmCallPeerRef.current.addIceCandidate(msg.candidate); } catch {}
+      }
+
+      if (msg.type === "end") {
+        endDmCall();
+      }
+    };
+
+    return () => channel.close();
+  }, [activeDmId, me?.id]);
+
+  useEffect(() => {
+    if (!draggingProfileCard) return;
+    const onMove = (event) => {
+      const x = Math.max(8, Math.min(window.innerWidth - 340, event.clientX - profileCardDragOffsetRef.current.x));
+      const y = Math.max(8, Math.min(window.innerHeight - 280, event.clientY - profileCardDragOffsetRef.current.y));
+      setProfileCardPosition({ x, y });
+    };
+    const onUp = () => setDraggingProfileCard(false);
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [draggingProfileCard]);
 
   useEffect(() => {
     const onGlobalClick = () => {
@@ -809,6 +889,41 @@ export function App() {
     }
   }
 
+  async function createRole() {
+    if (!activeServer || !activeGuildId || !newRoleName.trim()) return;
+    try {
+      await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/roles`, activeServer.membershipToken, {
+        method: "POST",
+        body: JSON.stringify({ name: newRoleName.trim(), permissions: "0" })
+      });
+      setNewRoleName("");
+      const state = await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/state`, activeServer.membershipToken);
+      setGuildState(state);
+      setStatus("Role created.");
+    } catch (error) {
+      setStatus(`Create role failed: ${error.message}`);
+    }
+  }
+
+  async function assignRoleToMember() {
+    if (!activeServer || !activeGuildId || !selectedMemberId || !selectedRoleId) return;
+    try {
+      await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/members/${selectedMemberId}/roles/${selectedRoleId}`, activeServer.membershipToken, { method: "PUT" });
+      setStatus("Role assigned.");
+    } catch (error) {
+      setStatus(`Assign role failed: ${error.message}`);
+    }
+  }
+
+  function startDraggingProfileCard(event) {
+    event.preventDefault();
+    profileCardDragOffsetRef.current = {
+      x: event.clientX - profileCardPosition.x,
+      y: event.clientY - profileCardPosition.y
+    };
+    setDraggingProfileCard(true);
+  }
+
   async function createWorkspace() {
     if (!activeServer || !newWorkspaceName.trim()) return;
     const name = newWorkspaceName.trim();
@@ -940,9 +1055,39 @@ export function App() {
   }
 
   async function startDmCall() {
+    if (!activeDm?.participantId || !activeDmId) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       dmCallStreamRef.current = stream;
+      const peer = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+      dmCallPeerRef.current = peer;
+
+      stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+      peer.ontrack = (remoteEvent) => {
+        if (remoteAudioRef.current) remoteAudioRef.current.srcObject = remoteEvent.streams[0];
+      };
+
+      peer.onicecandidate = (event) => {
+        if (!event.candidate) return;
+        dmCallSignalChannelRef.current?.postMessage({
+          type: "ice",
+          dmId: activeDmId,
+          fromUserId: me?.id,
+          targetUserId: activeDm.participantId,
+          candidate: event.candidate
+        });
+      };
+
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      dmCallSignalChannelRef.current?.postMessage({
+        type: "offer",
+        dmId: activeDmId,
+        fromUserId: me?.id,
+        targetUserId: activeDm.participantId,
+        offer
+      });
+
       setDmCallActive(true);
       setStatus(`Voice call started with ${activeDm?.name || "friend"}.`);
     } catch {
@@ -951,8 +1096,14 @@ export function App() {
   }
 
   function endDmCall() {
+    if (activeDm?.participantId && activeDmId) {
+      dmCallSignalChannelRef.current?.postMessage({ type: "end", dmId: activeDmId, fromUserId: me?.id, targetUserId: activeDm.participantId });
+    }
     dmCallStreamRef.current?.getTracks().forEach((track) => track.stop());
     dmCallStreamRef.current = null;
+    dmCallPeerRef.current?.close();
+    dmCallPeerRef.current = null;
+    if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
     setDmCallActive(false);
     setDmCallMuted(false);
   }
@@ -1222,7 +1373,10 @@ export function App() {
                   <article key={group.id} className="msg grouped-msg">
                     <div className="msg-avatar">{getInitials(group.author || "User")}</div>
                     <div className="msg-body">
-                      <strong className="msg-author">{group.author} <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span></strong>
+                      <strong className="msg-author">
+                        <button className="name-btn" onClick={() => openMemberProfile({ id: group.author, username: group.author, status: "online" })}>{group.author}</button>
+                        <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span>
+                      </strong>
                       {group.messages.map((message) => (
                         <p key={message.id} onContextMenu={(event) => openMessageContextMenu(event, {
                           id: message.id,
@@ -1295,7 +1449,10 @@ export function App() {
                 <article key={group.id} className="msg dm-msg grouped-msg">
                   <div className="msg-avatar">{getInitials(group.author)}</div>
                   <div className="msg-body">
-                    <strong className="msg-author">{group.author} <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span></strong>
+                    <strong className="msg-author">
+                      <button className="name-btn" onClick={() => openMemberProfile({ id: group.messages[0]?.authorId || group.author, username: group.author, status: "online" })}>{group.author}</button>
+                      <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span>
+                    </strong>
                     {group.messages.map((message) => (
                       <p key={message.id} onContextMenu={(event) => openMessageContextMenu(event, {
                         id: message.id,
@@ -1316,6 +1473,7 @@ export function App() {
               <input ref={dmComposerInputRef} value={dmText} onChange={(event) => setDmText(event.target.value)} placeholder={`Message ${activeDm?.name || "friend"}`} onKeyDown={(event) => event.key === "Enter" && sendDm()} />
               <button className="send-btn" onClick={sendDm} disabled={!activeDm || !dmText.trim()}>Send</button>
             </footer>
+            <audio ref={remoteAudioRef} autoPlay />
           </>
         )}
 
@@ -1437,7 +1595,8 @@ export function App() {
       )}
 
       {memberProfileCard && (
-        <div className="member-profile-popout" onClick={(event) => event.stopPropagation()}>
+        <div className="member-profile-popout" style={{ right: profileCardPosition.x, bottom: profileCardPosition.y }} onClick={(event) => event.stopPropagation()}>
+          <div className="popout-drag-handle" onMouseDown={startDraggingProfileCard}>Drag</div>
           <div className="popout-banner" style={{ backgroundImage: memberProfileCard.bannerUrl ? `url(${memberProfileCard.bannerUrl})` : undefined }} />
           <div className="popout-content">
             <div className="avatar popout-avatar">{getInitials(memberProfileCard.displayName || memberProfileCard.username || "User")}</div>
@@ -1460,6 +1619,7 @@ export function App() {
               <h3>Settings</h3>
               <button className={settingsTab === "profile" ? "active" : "ghost"} onClick={() => setSettingsTab("profile")}>Profile</button>
               <button className={settingsTab === "workspace" ? "active" : "ghost"} onClick={() => setSettingsTab("workspace")}>Workspace</button>
+              <button className={settingsTab === "roles" ? "active" : "ghost"} onClick={() => setSettingsTab("roles")}>Roles</button>
               <button className={settingsTab === "invites" ? "active" : "ghost"} onClick={() => setSettingsTab("invites")}>Invites</button>
               <button className={settingsTab === "appearance" ? "active" : "ghost"} onClick={() => setSettingsTab("appearance")}>Appearance</button>
               <button className="ghost" onClick={() => setSettingsOpen(false)}>Close</button>
@@ -1514,6 +1674,31 @@ export function App() {
                       <button onClick={createChannel}>Create Channel</button>
                     </section>
                   )}
+                </>
+              )}
+
+              {settingsTab === "roles" && canManageServer && (
+                <>
+                  <section className="card">
+                    <h4>Create Role</h4>
+                    <input placeholder="Role name" value={newRoleName} onChange={(event) => setNewRoleName(event.target.value)} />
+                    <button onClick={createRole}>Create Role</button>
+                  </section>
+
+                  <section className="card">
+                    <h4>Assign Role</h4>
+                    <select value={selectedMemberId} onChange={(event) => setSelectedMemberId(event.target.value)}>
+                      <option value="">Select member</option>
+                      {memberList.map((member) => <option key={member.id} value={member.id}>{member.username}</option>)}
+                    </select>
+                    <select value={selectedRoleId} onChange={(event) => setSelectedRoleId(event.target.value)}>
+                      <option value="">Select role</option>
+                      {(guildState?.roles || []).filter((role) => !role.is_everyone).map((role) => (
+                        <option key={role.id} value={role.id}>{role.name}</option>
+                      ))}
+                    </select>
+                    <button onClick={assignRoleToMember}>Assign Role</button>
+                  </section>
                 </>
               )}
 
