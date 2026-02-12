@@ -6,6 +6,23 @@ DO_PULL=0
 DO_BACKUP=0
 SKIP_BUILD=0
 
+load_backend_env() {
+  local env_file="$BACKEND_DIR/.env"
+
+  if [[ ! -f "$env_file" ]]; then
+    echo "[ERROR] backend/.env not found. Run ./scripts/init-env.sh first, or use --init-env."
+    exit 1
+  fi
+
+  echo "[db-setup] Loading backend/.env"
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_file"
+  set +a
+}
+
+load_backend_env
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --pull) DO_PULL=1 ;;
