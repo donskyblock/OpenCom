@@ -87,9 +87,9 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 .link-btn { border: none; background: transparent; color: #9db0ff; padding: 0; }
 
 .opencom-shell {
-  height: 100dvh;
+  height: 100svh; /* better mobile behavior than 100vh; keep 100dvh if you want */
   display: grid;
-  grid-template-columns: 80px 280px minmax(0, 1fr);
+  grid-template-columns: 80px clamp(220px, 22vw, 300px) minmax(0, 1fr);
   overflow: hidden;
 }
 
@@ -202,9 +202,40 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 }
 .dm-sidebar-row:hover { border-color: var(--border-subtle); background: rgba(23, 36, 64, 0.7); }
 
-.channel-row:hover, .channel-row.active { background: var(--bg-hover); color: var(--text-main); }
-.channel-row.active { background: var(--bg-active); }
-.channel-hash { margin-right: 6px; color: var(--text-dim); }
+.channel-row {
+  width: 100%;
+  text-align: left;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-soft);
+  padding: 8px;
+  margin-bottom: 3px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.channel-row:hover {
+  background: var(--bg-hover);
+  color: var(--text-main);
+}
+
+.channel-row.active {
+  background: var(--bg-active);
+  color: var(--text-main);
+  font-weight: 500;
+}
+
+.channel-hash {
+  margin-right: 6px;
+  color: var(--text-dim);
+  min-width: 16px;
+  text-align: center;
+}
+
 
 .friend-row {
   display: flex;
@@ -283,7 +314,11 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
   border-radius: inherit;
 }
 .chat-pane { background: var(--bg-chat); min-width: 0; display: grid; height: 100dvh; overflow: hidden; }
-.chat-layout { display: grid; grid-template-columns: minmax(0, 1fr) 250px; height: 100%; }
+.chat-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(210px, 18vw, 270px);
+  height: 100%;
+}
 .chat-main { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
 
 .chat-header {
