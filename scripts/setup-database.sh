@@ -12,6 +12,7 @@ Usage: ./scripts/setup-database.sh [options]
 Fully configures backend database schema by optionally generating env files,
 optionally provisioning local MariaDB databases/users (via sudo), and running all
 core + server-node migrations.
+Requires Node.js >=22 for backend tooling.
 
 Options:
   --init-env                Generate backend/.env + frontend/.env before setup.
@@ -29,6 +30,18 @@ USAGE
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "[ERROR] Missing required command: $1"
+    exit 1
+  fi
+}
+
+require_node_major() {
+  local min_major="$1"
+  require_cmd node
+  local node_major
+  node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
+  if [[ "$node_major" -lt "$min_major" ]]; then
+    echo "[ERROR] Node.js >= ${min_major} is required. Current: $(node -v)"
+    echo "[hint] Backend dependencies (including mediasoup) require Node 22+ on this project."
     exit 1
   fi
 }
@@ -168,6 +181,15 @@ NODE
   printf '%s\n' "$sql" | sudo mysql -u "$mariadb_root_user"
 }
 
+ensure_backend_deps() {
+  pushd "$BACKEND_DIR" >/dev/null
+  if [[ ! -x "node_modules/.bin/tsx" ]]; then
+    echo "[db-setup] Installing backend dependencies (tsx not found)"
+    npm install
+  fi
+  popd >/dev/null
+}
+
 run_migrations() {
   echo "[db-setup] Running database migrations"
   pushd "$BACKEND_DIR" >/dev/null
@@ -214,6 +236,7 @@ main() {
   done
 
   require_cmd npm
+  require_node_major 22
 
   if [[ ! -d "$BACKEND_DIR" ]]; then
     echo "[ERROR] Backend directory not found at $BACKEND_DIR"
@@ -224,6 +247,7 @@ main() {
   load_backend_env
   start_docker_if_requested "$with_docker"
   provision_local_db_if_requested "$provision_local_db" "$mariadb_root_user"
+  ensure_backend_deps
   run_migrations
 }
 
