@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://openapi.donskyblock.xyz";
 const THEME_STORAGE_KEY = "opencom_custom_theme_css";
+const THEME_ENABLED_STORAGE_KEY = "opencom_custom_theme_enabled";
 
 function useThemeCss() {
   const [css, setCss] = useState(localStorage.getItem(THEME_STORAGE_KEY) || "");
+  const [enabled, setEnabled] = useState(localStorage.getItem(THEME_ENABLED_STORAGE_KEY) !== "0");
 
   useEffect(() => {
     let tag = document.getElementById("opencom-theme-style");
@@ -13,11 +15,47 @@ function useThemeCss() {
       tag.id = "opencom-theme-style";
       document.head.appendChild(tag);
     }
-    tag.textContent = css;
-    localStorage.setItem(THEME_STORAGE_KEY, css);
-  }, [css]);
 
-  return [css, setCss];
+    tag.textContent = enabled ? css : "";
+    localStorage.setItem(THEME_STORAGE_KEY, css);
+    localStorage.setItem(THEME_ENABLED_STORAGE_KEY, enabled ? "1" : "0");
+  }, [css, enabled]);
+
+  return [css, setCss, enabled, setEnabled];
+}
+
+function groupMessages(messages = [], getAuthor, getTimestamp) {
+  const groups = [];
+
+  for (const message of messages) {
+    const author = getAuthor(message);
+    const createdRaw = getTimestamp(message);
+    const createdAt = createdRaw ? new Date(createdRaw) : null;
+    const createdMs = createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt.getTime() : null;
+
+    const previousGroup = groups[groups.length - 1];
+    const canGroup = previousGroup
+      && previousGroup.author === author
+      && createdMs !== null
+      && previousGroup.lastMessageMs !== null
+      && (createdMs - previousGroup.lastMessageMs) <= 120000;
+
+    if (canGroup) {
+      previousGroup.messages.push(message);
+      previousGroup.lastMessageMs = createdMs;
+      continue;
+    }
+
+    groups.push({
+      id: message.id,
+      author,
+      firstMessageTime: createdRaw,
+      lastMessageMs: createdMs,
+      messages: [message]
+    });
+  }
+
+  return groups;
 }
 
 async function api(path, options = {}) {
@@ -118,6 +156,9 @@ export function App() {
   const [newChannelName, setNewChannelName] = useState("");
   const [newChannelType, setNewChannelType] = useState("text");
   const [newChannelParentId, setNewChannelParentId] = useState("");
+  const [newWorkspaceName, setNewWorkspaceName] = useState("");
+  const [friendRequests, setFriendRequests] = useState({ incoming: [], outgoing: [] });
+  const [allowFriendRequests, setAllowFriendRequests] = useState(true);
 
   const [collapsedCategories, setCollapsedCategories] = useState({});
   const [voiceConnectedChannelId, setVoiceConnectedChannelId] = useState("");
@@ -129,7 +170,7 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState("profile");
   const [serverContextMenu, setServerContextMenu] = useState(null);
   const [memberProfileCard, setMemberProfileCard] = useState(null);
-  const [themeCss, setThemeCss] = useThemeCss();
+  const [themeCss, setThemeCss, themeEnabled, setThemeEnabled] = useThemeCss();
 
   const messagesRef = useRef(null);
   const storageScope = me?.id || "anonymous";
@@ -182,6 +223,18 @@ export function App() {
       ...(uncategorized.length ? [{ category: { id: "uncategorized", name: "Channels" }, channels: uncategorized }] : [])
     ];
   }, [categoryChannels, sortedChannels]);
+
+  const groupedServerMessages = useMemo(() => groupMessages(
+    messages,
+    (message) => message.author_id || message.authorId || "Unknown",
+    (message) => message.created_at || message.createdAt
+  ), [messages]);
+
+  const groupedDmMessages = useMemo(() => groupMessages(
+    activeDm?.messages || [],
+    (message) => message.author || "Unknown",
+    (message) => message.createdAt
+  ), [activeDm]);
 
   useEffect(() => {
     if (accessToken) localStorage.setItem("opencom_access_token", accessToken);
@@ -261,12 +314,16 @@ export function App() {
 
         setServers(nextServers);
         try {
-          const [friendsData, dmsData] = await Promise.all([
+          const [friendsData, dmsData, requestData, socialSettingsData] = await Promise.all([
             api("/v1/social/friends", { headers: { Authorization: `Bearer ${accessToken}` } }),
-            api("/v1/social/dms", { headers: { Authorization: `Bearer ${accessToken}` } })
+            api("/v1/social/dms", { headers: { Authorization: `Bearer ${accessToken}` } }),
+            api("/v1/social/requests", { headers: { Authorization: `Bearer ${accessToken}` } }),
+            api("/v1/social/settings", { headers: { Authorization: `Bearer ${accessToken}` } })
           ]);
           setFriends(friendsData.friends || []);
           setDms((dmsData.dms || []).map((item) => ({ ...item, messages: [] })));
+          setFriendRequests({ incoming: requestData.incoming || [], outgoing: requestData.outgoing || [] });
+          setAllowFriendRequests(socialSettingsData.allowFriendRequests !== false);
         } catch {
           // fallback to local-only social data if backend social routes are unavailable
         }
@@ -440,15 +497,54 @@ export function App() {
         body: JSON.stringify({ username: cleaned })
       });
 
-      setFriends((current) => [data.friend, ...current.filter((item) => item.id !== data.friend.id)]);
-      const nextDm = { id: data.threadId, participantId: data.friend.id, name: data.friend.username, messages: [] };
-      setDms((current) => [nextDm, ...current.filter((item) => item.id !== nextDm.id)]);
-      setActiveDmId(nextDm.id);
+      if (data.friend && data.threadId) {
+        setFriends((current) => [data.friend, ...current.filter((item) => item.id !== data.friend.id)]);
+        const nextDm = { id: data.threadId, participantId: data.friend.id, name: data.friend.username, messages: [] };
+        setDms((current) => [nextDm, ...current.filter((item) => item.id !== nextDm.id)]);
+        setActiveDmId(nextDm.id);
+        setStatus(`You're now connected with ${data.friend.username}.`);
+      } else {
+        setStatus("Friend request sent.");
+      }
+
+      const requests = await api("/v1/social/requests", { headers: { Authorization: `Bearer ${accessToken}` } });
+      setFriendRequests({ incoming: requests.incoming || [], outgoing: requests.outgoing || [] });
       setFriendAddInput("");
-      setFriendView("all");
-      setStatus(`Added ${data.friend.username} to your network.`);
+      setFriendView("requests");
     } catch (error) {
       setStatus(`Add friend failed: ${error.message}`);
+    }
+  }
+
+  async function respondToFriendRequest(requestId, action) {
+    try {
+      await api(`/v1/social/requests/${requestId}/${action}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+
+      const [requests, friendsData] = await Promise.all([
+        api("/v1/social/requests", { headers: { Authorization: `Bearer ${accessToken}` } }),
+        api("/v1/social/friends", { headers: { Authorization: `Bearer ${accessToken}` } })
+      ]);
+      setFriendRequests({ incoming: requests.incoming || [], outgoing: requests.outgoing || [] });
+      setFriends(friendsData.friends || []);
+      setStatus(action === "accept" ? "Friend request accepted." : "Friend request declined.");
+    } catch (error) {
+      setStatus(`Request update failed: ${error.message}`);
+    }
+  }
+
+  async function saveSocialSettings() {
+    try {
+      await api("/v1/social/settings", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ allowFriendRequests })
+      });
+      setStatus("Privacy settings saved.");
+    } catch (error) {
+      setStatus(`Could not save privacy settings: ${error.message}`);
     }
   }
 
@@ -576,6 +672,22 @@ export function App() {
       setGuildState(state);
     } catch (error) {
       setStatus(`Create channel failed: ${error.message}`);
+    }
+  }
+
+  async function createWorkspace() {
+    if (!activeServer || !newWorkspaceName.trim()) return;
+    try {
+      await nodeApi(activeServer.baseUrl, "/v1/guilds", activeServer.membershipToken, {
+        method: "POST",
+        body: JSON.stringify({ name: newWorkspaceName.trim() })
+      });
+      setNewWorkspaceName("");
+      const updated = await nodeApi(activeServer.baseUrl, "/v1/guilds", activeServer.membershipToken);
+      setGuilds(updated || []);
+      setStatus("Workspace created.");
+    } catch (error) {
+      setStatus(`Create workspace failed: ${error.message}`);
     }
   }
 
@@ -808,12 +920,12 @@ export function App() {
               </header>
 
               <div className="messages" ref={messagesRef}>
-                {messages.map((message) => (
-                  <article key={message.id} className="msg">
-                    <div className="msg-avatar">{getInitials(message.author_id || message.authorId || "User")}</div>
+                {groupedServerMessages.map((group) => (
+                  <article key={group.id} className="msg grouped-msg">
+                    <div className="msg-avatar">{getInitials(group.author || "User")}</div>
                     <div className="msg-body">
-                      <strong>{message.author_id || message.authorId} <span className="msg-time">{formatMessageTime(message.created_at || message.createdAt)}</span></strong>
-                      <p>{message.content}</p>
+                      <strong className="msg-author">{group.author} <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span></strong>
+                      {group.messages.map((message) => <p key={message.id}>{message.content}</p>)}
                     </div>
                   </article>
                 ))}
@@ -848,12 +960,12 @@ export function App() {
           <>
             <header className="chat-header"><h3>{activeDm ? `@ ${activeDm.name}` : "Direct Messages"}</h3></header>
             <div className="messages" ref={messagesRef}>
-              {(activeDm?.messages || []).map((message) => (
-                <article key={message.id} className="msg dm-msg">
-                  <div className="msg-avatar">{getInitials(message.author)}</div>
+              {groupedDmMessages.map((group) => (
+                <article key={group.id} className="msg dm-msg grouped-msg">
+                  <div className="msg-avatar">{getInitials(group.author)}</div>
                   <div className="msg-body">
-                    <strong>{message.author} <span className="msg-time">{formatMessageTime(message.createdAt)}</span></strong>
-                    <p>{message.content}</p>
+                    <strong className="msg-author">{group.author} <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span></strong>
+                    {group.messages.map((message) => <p key={message.id}>{message.content}</p>)}
                   </div>
                 </article>
               ))}
@@ -875,6 +987,7 @@ export function App() {
                   <button className={friendView === "online" ? "active" : "ghost"} onClick={() => setFriendView("online")}>Online</button>
                   <button className={friendView === "all" ? "active" : "ghost"} onClick={() => setFriendView("all")}>All</button>
                   <button className={friendView === "add" ? "active" : "ghost"} onClick={() => setFriendView("add")}>Add Friend</button>
+                  <button className={friendView === "requests" ? "active" : "ghost"} onClick={() => setFriendView("requests")}>Requests</button>
                 </div>
               </header>
 
@@ -888,6 +1001,27 @@ export function App() {
                     <input placeholder="Username" value={friendAddInput} onChange={(event) => setFriendAddInput(event.target.value)} />
                     <button onClick={addFriend}>Send Request</button>
                   </div>
+                </div>
+              )}
+
+              {friendView === "requests" && (
+                <div className="friend-add-card">
+                  <h4>Friend Requests</h4>
+                  {friendRequests.incoming.map((request) => (
+                    <div key={request.id} className="friend-row">
+                      <div className="friend-meta"><strong>{request.username}</strong><span>Incoming request</span></div>
+                      <div className="row-actions">
+                        <button onClick={() => respondToFriendRequest(request.id, "accept")}>Accept</button>
+                        <button className="ghost" onClick={() => respondToFriendRequest(request.id, "decline")}>Decline</button>
+                      </div>
+                    </div>
+                  ))}
+                  {friendRequests.outgoing.map((request) => (
+                    <div key={request.id} className="friend-row">
+                      <div className="friend-meta"><strong>{request.username}</strong><span>Pending</span></div>
+                    </div>
+                  ))}
+                  {!friendRequests.incoming.length && !friendRequests.outgoing.length && <p className="hint">No pending friend requests.</p>}
                 </div>
               )}
 
@@ -985,6 +1119,14 @@ export function App() {
 
                   {canManageServer && (
                     <section className="card">
+                      <h4>Create Workspace</h4>
+                      <input placeholder="Workspace name" value={newWorkspaceName} onChange={(event) => setNewWorkspaceName(event.target.value)} />
+                      <button onClick={createWorkspace}>Create Workspace</button>
+                    </section>
+                  )}
+
+                  {canManageServer && (
+                    <section className="card">
                       <h4>Create Channel</h4>
                       <input placeholder="New channel/category" value={newChannelName} onChange={(event) => setNewChannelName(event.target.value)} />
                       <select value={newChannelType} onChange={(event) => setNewChannelType(event.target.value)}>
@@ -1031,8 +1173,17 @@ export function App() {
               {settingsTab === "appearance" && (
                 <section className="card">
                   <h4>Custom CSS Theme</h4>
+                  <label><input type="checkbox" checked={themeEnabled} onChange={(event) => setThemeEnabled(event.target.checked)} /> Enable custom CSS</label>
                   <input type="file" accept="text/css,.css" onChange={onUploadTheme} />
                   <textarea value={themeCss} onChange={(event) => setThemeCss(event.target.value)} rows={10} placeholder="Paste custom CSS" />
+                </section>
+              )}
+
+              {settingsTab === "profile" && (
+                <section className="card">
+                  <h4>Social Privacy</h4>
+                  <label><input type="checkbox" checked={allowFriendRequests} onChange={(event) => setAllowFriendRequests(event.target.checked)} /> Allow incoming friend requests</label>
+                  <button onClick={saveSocialSettings}>Save Privacy</button>
                 </section>
               )}
 
