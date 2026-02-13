@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://openapi.donskyblock.xyz";
+
+/** Resolve profile image URL so it loads from the API when relative (e.g. /v1/profile-images/...) */
+function profileImageUrl(url) {
+  if (!url || typeof url !== "string") return null;
+  if (url.startsWith("data:")) return url;
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  if (url.startsWith("/")) return `${CORE_API.replace(/\/$/, "")}${url}`;
+  return url;
+}
+
 const THEME_STORAGE_KEY = "opencom_custom_theme_css";
 const THEME_ENABLED_STORAGE_KEY = "opencom_custom_theme_enabled";
 const SELF_STATUS_KEY = "opencom_self_status";
@@ -198,6 +208,7 @@ export function App() {
   const [newChannelName, setNewChannelName] = useState("");
   const [newChannelType, setNewChannelType] = useState("text");
   const [newChannelParentId, setNewChannelParentId] = useState("");
+  const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [friendRequests, setFriendRequests] = useState({ incoming: [], outgoing: [] });
   const [allowFriendRequests, setAllowFriendRequests] = useState(true);
 
@@ -219,6 +230,7 @@ export function App() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState("profile");
+  const [addServerModalOpen, setAddServerModalOpen] = useState(false);
   const [serverContextMenu, setServerContextMenu] = useState(null);
   const [messageContextMenu, setMessageContextMenu] = useState(null);
   const [replyTarget, setReplyTarget] = useState(null);
@@ -261,8 +273,8 @@ export function App() {
     return (activeServer.roles || []).includes("owner") || (activeServer.roles || []).includes("platform_admin");
   }, [activeServer]);
 
-  const sortedChannels = useMemo(() => [...channels].sort((a, b) => (a.position ?? 0) - (b.position ?? 0)), [channels]);
-  const categoryChannels = useMemo(() => sortedChannels.filter((channel) => channel.type === "category"), [sortedChannels]);
+  const sortedChannels = useMemo(() => [...(channels || [])].filter(Boolean).sort((a, b) => (a.position ?? 0) - (b.position ?? 0)), [channels]);
+  const categoryChannels = useMemo(() => sortedChannels.filter((channel) => channel && channel.type === "category"), [sortedChannels]);
 
   const filteredFriends = useMemo(() => {
     const query = friendQuery.trim().toLowerCase();
@@ -1119,11 +1131,23 @@ export function App() {
           bannerUrl: profileForm.bannerUrl || null
         })
       });
-
-      setProfile((current) => ({ ...current, ...profileForm }));
+      if (me?.id) {
+        const updated = await api(`/v1/users/${me.id}/profile`, { headers: { Authorization: `Bearer ${accessToken}` } });
+        setProfile(updated);
+        setProfileForm({
+          displayName: updated.displayName ?? "",
+          bio: updated.bio ?? "",
+          pfpUrl: updated.pfpUrl ?? "",
+          bannerUrl: updated.bannerUrl ?? ""
+        });
+      } else {
+        setProfile((current) => ({ ...current, ...profileForm }));
+      }
       setStatus("Profile updated.");
     } catch (error) {
-      setStatus(`Profile update failed: ${error.message}`);
+      const msg = error?.message || "";
+      if (msg.includes("INVALID_IMAGE")) setStatus("Invalid image. Use PNG, JPG, GIF, or WebP under 4MB.");
+      else setStatus(`Profile update failed: ${msg}`);
     }
   }
 
@@ -1140,8 +1164,30 @@ export function App() {
       setStatus("Server provider added.");
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
       setServers(refreshed.servers || []);
+      setAddServerModalOpen(false);
     } catch (error) {
       setStatus(`Add server failed: ${error.message}`);
+    }
+  }
+
+  async function createWorkspace() {
+    if (!activeServer?.baseUrl || !activeServer?.membershipToken || !newWorkspaceName?.trim()) {
+      setStatus("Select a server and enter a workspace name.");
+      return;
+    }
+    try {
+      const data = await nodeApi(activeServer.baseUrl, "/v1/guilds", activeServer.membershipToken, {
+        method: "POST",
+        body: JSON.stringify({ name: newWorkspaceName.trim(), createDefaultVoice: true })
+      });
+      setNewWorkspaceName("");
+      setStatus("Workspace created.");
+      const nextGuilds = await nodeApi(activeServer.baseUrl, "/v1/guilds", activeServer.membershipToken);
+      const list = Array.isArray(nextGuilds) ? nextGuilds : [];
+      setGuilds(list);
+      if (data?.guildId && list.length) setActiveGuildId(data.guildId);
+    } catch (error) {
+      setStatus(`Create workspace failed: ${error.message}`);
     }
   }
 
@@ -1186,6 +1232,7 @@ export function App() {
       const next = refreshed.servers || [];
       setServers(next);
       if (next.length) setActiveServerId(next[0].id);
+      setAddServerModalOpen(false);
     } catch (error) {
       setStatus(`Join failed: ${error.message}`);
     }
@@ -1358,6 +1405,7 @@ export function App() {
         setActiveServerId(data.serverId);
         setNavMode("servers");
       }
+      setAddServerModalOpen(false);
     } catch (err) {
       setStatus(err.message?.includes("SERVER_LIMIT") ? "You already have a server." : `Failed: ${err.message}`);
     }
@@ -1368,6 +1416,14 @@ export function App() {
     const x = Math.min(event.clientX, window.innerWidth - 240);
     const y = Math.min(event.clientY, window.innerHeight - 180);
     setMessageContextMenu({ x, y, message: { ...message, pinned: isMessagePinned(message) } });
+  }
+
+  const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"];
+  const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB
+
+  function isAcceptedImage(file) {
+    if (!file?.type) return false;
+    return ACCEPTED_IMAGE_TYPES.includes(file.type) || file.type.startsWith("image/");
   }
 
   async function readImageFile(file) {
@@ -1381,16 +1437,52 @@ export function App() {
 
   async function onAvatarUpload(event) {
     const file = event.target.files?.[0];
+    event.target.value = "";
     if (!file) return;
-    const dataUrl = await readImageFile(file);
-    setProfileForm((current) => ({ ...current, pfpUrl: dataUrl }));
+    if (!isAcceptedImage(file)) {
+      setStatus("Please choose an image (PNG, JPG, GIF, or WebP).");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setStatus("Image too large. Use a file under 4MB.");
+      return;
+    }
+    try {
+      const dataUrl = await readImageFile(file);
+      if (!dataUrl?.startsWith("data:image/")) {
+        setStatus("Could not read image.");
+        return;
+      }
+      setProfileForm((current) => ({ ...current, pfpUrl: dataUrl }));
+      setStatus("Avatar selected. Click Save Profile to apply.");
+    } catch {
+      setStatus("Failed to read file.");
+    }
   }
 
   async function onBannerUpload(event) {
     const file = event.target.files?.[0];
+    event.target.value = "";
     if (!file) return;
-    const dataUrl = await readImageFile(file);
-    setProfileForm((current) => ({ ...current, bannerUrl: dataUrl }));
+    if (!isAcceptedImage(file)) {
+      setStatus("Please choose an image (PNG, JPG, GIF, or WebP).");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setStatus("Image too large. Use a file under 4MB.");
+      return;
+    }
+    try {
+      const dataUrl = await readImageFile(file);
+      if (!dataUrl?.startsWith("data:image/")) {
+        setStatus("Could not read image.");
+        return;
+      }
+      setProfileForm((current) => ({ ...current, bannerUrl: dataUrl }));
+      setStatus("Banner selected. Click Save Profile to apply.");
+    } catch {
+      setStatus("Failed to read file.");
+    }
   }
 
   async function openMemberProfile(member) {
@@ -1471,7 +1563,7 @@ export function App() {
               {getInitials(server.name)}
             </button>
           ))}
-          <button className="server-pill" title="Create or join a server" onClick={() => { setSettingsOpen(true); setSettingsTab("server"); }}>
+          <button className="server-pill" title="Create or join a server" onClick={() => setAddServerModalOpen(true)}>
             ＋
           </button>
         </div>
@@ -1524,7 +1616,7 @@ export function App() {
             {dms.map((dm) => (
                 <button key={dm.id} className={`channel-row dm-sidebar-row ${dm.id === activeDmId ? "active" : ""}`} onClick={() => setActiveDmId(dm.id)} title={`DM ${dm.name}`} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   {dm.pfp_url ? (
-                    <img src={dm.pfp_url} alt={dm.name} style={{ width: "28px", height: "28px", borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+                    <img src={profileImageUrl(dm.pfp_url)} alt={dm.name} style={{ width: "28px", height: "28px", borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
                   ) : (
                     <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: `hsl(${Math.abs((dm.participantId || dm.id || "").charCodeAt(0) * 7) % 360}, 70%, 60%)`, display: "grid", placeItems: "center", fontSize: "12px", fontWeight: "bold", flexShrink: 0 }}>
                       {dm.name?.substring(0, 1).toUpperCase()}
@@ -1543,7 +1635,7 @@ export function App() {
             {friends.map((friend) => (
               <button className="friend-row friend-sidebar-row" key={friend.id} onClick={() => openDmFromFriend(friend)} title={`Open ${friend.username}`} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                 {friend.pfp_url ? (
-                  <img src={friend.pfp_url} alt={friend.username} style={{ width: "28px", height: "28px", borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+                  <img src={profileImageUrl(friend.pfp_url)} alt={friend.username} style={{ width: "28px", height: "28px", borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
                 ) : (
                   <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: `hsl(${Math.abs((friend.id || "").charCodeAt(0) * 7) % 360}, 70%, 60%)`, display: "grid", placeItems: "center", fontSize: "12px", fontWeight: "bold", flexShrink: 0 }}>
                     {friend.username?.substring(0, 1).toUpperCase()}
@@ -1561,7 +1653,7 @@ export function App() {
 
         {navMode === "profile" && profile && (
           <section className="sidebar-block channels-container">
-            <div className="profile-preview" style={{ backgroundImage: profile.bannerUrl ? `url(${profile.bannerUrl})` : undefined }}>
+            <div className="profile-preview" style={{ backgroundImage: profile?.bannerUrl ? `url(${profileImageUrl(profile.bannerUrl)})` : undefined }}>
               <div className="avatar">{getInitials(profile.displayName || profile.username || "User")}</div>
               <strong>{profile.displayName || profile.username}</strong>
               <span>@{profile.username}</span>
@@ -1582,7 +1674,7 @@ export function App() {
           )}
 
           <div className="user-row">
-            <div className="avatar">{profile?.pfpUrl ? <img src={profile.pfpUrl} alt="Your avatar" className="avatar-image" /> : getInitials(me?.username || "OpenCom User")}</div>
+            <div className="avatar">{profile?.pfpUrl ? <img src={profileImageUrl(profile.pfpUrl)} alt="Your avatar" className="avatar-image" /> : getInitials(me?.username || "OpenCom User")}</div>
             <div className="user-meta"><strong>{me?.username}</strong><span>{canManageServer ? "Owner" : "Member"}</span></div>
             <select className="status-select" value={selfStatus} onChange={(event) => setSelfStatus(event.target.value)} title="Your status">
               <option value="online">Online</option>
@@ -1643,7 +1735,7 @@ export function App() {
                   <article key={group.id} className="msg grouped-msg">
                     <div className="msg-avatar">
                       {group.pfpUrl ? (
-                        <img src={group.pfpUrl} alt={group.author} />
+                        <img src={profileImageUrl(group.pfpUrl)} alt={group.author} />
                       ) : (
                         getInitials(group.author || "User")
                       )}
@@ -1690,7 +1782,7 @@ export function App() {
               {memberList.map((member) => (
                 <button className="member-row" key={member.id} title={`View ${member.username}`} onClick={(event) => { event.stopPropagation(); openMemberProfile(member); }}>
                   {member.pfp_url ? (
-                    <img src={member.pfp_url} alt={member.username} className="avatar member-avatar" style={{ objectFit: "cover" }} />
+                    <img src={profileImageUrl(member.pfp_url)} alt={member.username} className="avatar member-avatar" style={{ objectFit: "cover" }} />
                   ) : (
                     <div className="avatar member-avatar">{getInitials(member.username)}</div>
                   )}
@@ -1725,7 +1817,7 @@ export function App() {
                 <article key={group.id} className="msg dm-msg grouped-msg">
                   <div className="msg-avatar">
                     {group.pfpUrl ? (
-                      <img src={group.pfpUrl} alt={group.author} />
+                      <img src={profileImageUrl(group.pfpUrl)} alt={group.author} />
                     ) : (
                       getInitials(group.author)
                     )}
@@ -1875,12 +1967,55 @@ export function App() {
         </div>
       )}
 
+      {addServerModalOpen && (
+        <div className="settings-overlay" onClick={() => setAddServerModalOpen(false)}>
+          <div className="add-server-modal" onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0, marginBottom: "1rem" }}>Create or join a server</h3>
+
+            <section className="card" style={{ marginBottom: "1rem" }}>
+              <h4 style={{ marginTop: 0 }}>Join a server</h4>
+              <p className="hint" style={{ marginBottom: "0.5rem" }}>Enter an invite code to join an existing server.</p>
+              <input placeholder="Invite code" value={joinInviteCode ?? ""} onChange={(e) => setJoinInviteCode(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+              <div className="row-actions" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                <button className="ghost" onClick={previewInvite}>Preview</button>
+                <button onClick={joinInvite}>Join</button>
+              </div>
+              {invitePreview && <p className="hint" style={{ marginTop: "0.5rem" }}>Invite: {invitePreview.code} · Uses: {invitePreview.uses}</p>}
+            </section>
+
+            <section className="card" style={{ marginBottom: "1rem" }}>
+              <h4 style={{ marginTop: 0 }}>Add custom host</h4>
+              <p className="hint" style={{ marginBottom: "0.5rem" }}>Connect to a server node by URL (self-hosted or provider).</p>
+              <input placeholder="Server name" value={newServerName ?? ""} onChange={(e) => setNewServerName(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+              <input placeholder="https://node.example.com" value={newServerBaseUrl ?? "https://"} onChange={(e) => setNewServerBaseUrl(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+              <button onClick={createServer}>Add Server</button>
+            </section>
+
+            <section className="card" style={{ marginBottom: "1rem" }}>
+              <h4 style={{ marginTop: 0 }}>Create your server</h4>
+              <p className="hint" style={{ marginBottom: "0.5rem" }}>One server hosted by us—name it and customize channels and roles.</p>
+              <input placeholder="Server name" value={newOfficialServerName ?? ""} onChange={(e) => setNewOfficialServerName(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+              <button onClick={createOfficialServer} disabled={!newOfficialServerName?.trim()}>Create your server</button>
+            </section>
+
+            {servers.some((s) => s?.roles?.includes?.("owner")) && (
+              <section className="card" style={{ marginBottom: "1rem" }}>
+                <h4 style={{ marginTop: 0 }}>Configure platform</h4>
+                <a href="/server-admin.html" target="_blank" rel="noopener noreferrer" className="ghost" style={{ display: "inline-block", padding: "0.5rem 1rem", borderRadius: "var(--radius)", color: "var(--text-main)", textDecoration: "none", border: "1px solid var(--border-subtle)", fontSize: "0.95em" }}>🔧 Open Server Admin Panel</a>
+              </section>
+            )}
+
+            <button className="ghost" style={{ width: "100%", marginTop: "0.5rem" }} onClick={() => setAddServerModalOpen(false)}>Close</button>
+          </div>
+        </div>
+      )}
+
       {memberProfileCard && (
         <div className="member-profile-popout" style={{ right: profileCardPosition.x, bottom: profileCardPosition.y }} onClick={(event) => event.stopPropagation()}>
           <div className="popout-drag-handle" onMouseDown={startDraggingProfileCard}>Drag</div>
-          <div className="popout-banner" style={{ backgroundImage: memberProfileCard.bannerUrl ? `url(${memberProfileCard.bannerUrl})` : undefined }} />
+          <div className="popout-banner" style={{ backgroundImage: memberProfileCard.bannerUrl ? `url(${profileImageUrl(memberProfileCard.bannerUrl)})` : undefined }} />
           <div className="popout-content">
-            <div className="avatar popout-avatar">{memberProfileCard.pfpUrl ? <img src={memberProfileCard.pfpUrl} alt="Profile avatar" className="avatar-image" /> : getInitials(memberProfileCard.displayName || memberProfileCard.username || "User")}</div>
+            <div className="avatar popout-avatar">{memberProfileCard.pfpUrl ? <img src={profileImageUrl(memberProfileCard.pfpUrl)} alt="Profile avatar" className="avatar-image" /> : getInitials(memberProfileCard.displayName || memberProfileCard.username || "User")}</div>
             <h4>{memberProfileCard.displayName || memberProfileCard.username}</h4>
             <p className="hint">@{memberProfileCard.username} · {memberProfileCard.status || "online"}</p>
             {memberProfileCard.platformTitle && <p className="hint">{memberProfileCard.platformTitle}</p>}
@@ -1917,9 +2052,9 @@ export function App() {
                   <label>Display Name<input value={profileForm.displayName} onChange={(event) => setProfileForm((current) => ({ ...current, displayName: event.target.value }))} /></label>
                   <label>Bio<textarea rows={4} value={profileForm.bio} onChange={(event) => setProfileForm((current) => ({ ...current, bio: event.target.value }))} /></label>
                   <label>Avatar URL<input value={profileForm.pfpUrl} onChange={(event) => setProfileForm((current) => ({ ...current, pfpUrl: event.target.value }))} /></label>
-                  <label>Upload Avatar<input type="file" accept="image/*" onChange={onAvatarUpload} /></label>
+                  <label>Upload Avatar<input type="file" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp" onChange={onAvatarUpload} /></label>
                   <label>Banner URL<input value={profileForm.bannerUrl} onChange={(event) => setProfileForm((current) => ({ ...current, bannerUrl: event.target.value }))} /></label>
-                  <label>Upload Banner<input type="file" accept="image/*" onChange={onBannerUpload} /></label>
+                  <label>Upload Banner<input type="file" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp" onChange={onBannerUpload} /></label>
                   <button onClick={saveProfile}>Save Profile</button>
                 </div>
               )}
@@ -1928,36 +2063,42 @@ export function App() {
                 <>
                   <section className="card">
                     <h4>Add Server Provider</h4>
-                    <input placeholder="Server name" value={newServerName} onChange={(event) => setNewServerName(event.target.value)} />
-                    <input placeholder="https://node.provider.tld" value={newServerBaseUrl} onChange={(event) => setNewServerBaseUrl(event.target.value)} />
+                    <input placeholder="Server name" value={newServerName ?? ""} onChange={(e) => setNewServerName(e.target.value)} />
+                    <input placeholder="https://node.provider.tld" value={newServerBaseUrl ?? "https://"} onChange={(e) => setNewServerBaseUrl(e.target.value)} />
                     <button onClick={createServer}>Add Server</button>
                   </section>
 
-                  {canManageServer && (
+                  {activeServer && canManageServer && (
                     <section className="card">
                       <h4>Create Workspace</h4>
-                      <input placeholder="Workspace name" value={newWorkspaceName} onChange={(event) => setNewWorkspaceName(event.target.value)} />
+                      <input placeholder="Workspace name" value={newWorkspaceName ?? ""} onChange={(e) => setNewWorkspaceName(e.target.value)} />
                       <button onClick={createWorkspace}>Create Workspace</button>
                     </section>
                   )}
 
-                  {canManageServer && (
+                  {activeServer && canManageServer && (
                     <section className="card">
                       <h4>Create Channel</h4>
-                      <input placeholder="New channel/category" value={newChannelName} onChange={(event) => setNewChannelName(event.target.value)} />
-                      <select value={newChannelType} onChange={(event) => setNewChannelType(event.target.value)}>
+                      <input placeholder="New channel/category" value={newChannelName ?? ""} onChange={(e) => setNewChannelName(e.target.value)} />
+                      <select value={newChannelType ?? "text"} onChange={(e) => setNewChannelType(e.target.value)}>
                         <option value="text">Text Channel</option>
                         <option value="voice">Voice Channel</option>
                         <option value="category">Category</option>
                       </select>
                       {newChannelType !== "category" && (
-                        <select value={newChannelParentId} onChange={(event) => setNewChannelParentId(event.target.value)}>
+                        <select value={newChannelParentId ?? ""} onChange={(e) => setNewChannelParentId(e.target.value)}>
                           <option value="">No category</option>
-                          {categoryChannels.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                          {(categoryChannels || []).map((cat) => (
+                            <option key={cat?.id ?? ""} value={cat?.id ?? ""}>{cat?.name ?? "Category"}</option>
+                          ))}
                         </select>
                       )}
                       <button onClick={createChannel}>Create Channel</button>
                     </section>
+                  )}
+
+                  {settingsTab === "server" && !activeServer && servers.length > 0 && (
+                    <p className="hint">Select a server from the sidebar to manage workspaces and channels.</p>
                   )}
                 </>
               )}

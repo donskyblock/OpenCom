@@ -42,7 +42,16 @@ export async function profileRoutes(app: FastifyInstance) {
       return rep.code(404).send({ error: "NOT_FOUND" });
     }
 
-    // Set cache headers
+    const ext = path.extname(filename).toLowerCase();
+    const mime: Record<string, string> = {
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".png": "image/png",
+      ".gif": "image/gif",
+      ".webp": "image/webp",
+      ".svg": "image/svg+xml"
+    };
+    if (mime[ext]) rep.header("Content-Type", mime[ext]);
     rep.header("Cache-Control", "public, max-age=31536000, immutable");
     return rep.sendFile(filepath);
   });
@@ -106,7 +115,7 @@ export async function profileRoutes(app: FastifyInstance) {
           }
           pfpUrl = `${env.PROFILE_IMAGE_BASE_URL}/${saved}`;
         } else {
-          return { error: "INVALID_IMAGE", field: "pfpUrl" };
+          return rep.code(400).send({ error: "INVALID_IMAGE", field: "pfpUrl" });
         }
       } else if (body.pfpUrl.startsWith("http")) {
         // External URL - allow it
@@ -132,7 +141,7 @@ export async function profileRoutes(app: FastifyInstance) {
           }
           bannerUrl = `${env.PROFILE_IMAGE_BASE_URL}/${saved}`;
         } else {
-          return { error: "INVALID_IMAGE", field: "bannerUrl" };
+          return rep.code(400).send({ error: "INVALID_IMAGE", field: "bannerUrl" });
         }
       } else if (body.bannerUrl.startsWith("http")) {
         // External URL - allow it
