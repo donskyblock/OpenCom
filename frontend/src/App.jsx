@@ -1407,7 +1407,11 @@ export function App() {
       }
       setAddServerModalOpen(false);
     } catch (err) {
-      setStatus(err.message?.includes("SERVER_LIMIT") ? "You already have a server." : `Failed: ${err.message}`);
+      const msg = err?.message || "";
+      if (msg.includes("SERVER_LIMIT")) setStatus("You already have a server.");
+      else if (msg.includes("OFFICIAL_SERVER_NOT_CONFIGURED")) setStatus("Official server is not configured yet. Please try again later.");
+      else if (msg.includes("OFFICIAL_SERVER_UNAVAILABLE")) setStatus("Official server is unavailable. Please try again later.");
+      else setStatus(`Failed: ${msg}`);
     }
   }
 

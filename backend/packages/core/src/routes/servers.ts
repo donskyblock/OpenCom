@@ -97,6 +97,7 @@ export async function serverRoutes(app: FastifyInstance) {
     );
 
     if (!OFFICIAL_NODE_SERVER_ID) {
+      app.log.warn("OFFICIAL_NODE_SERVER_ID is not set; set it to the same value as NODE_SERVER_ID on the official node");
       await q(`DELETE FROM memberships WHERE server_id=:id`, { id });
       await q(`DELETE FROM servers WHERE id=:id`, { id });
       return rep.code(503).send({ error: "OFFICIAL_SERVER_NOT_CONFIGURED" });
