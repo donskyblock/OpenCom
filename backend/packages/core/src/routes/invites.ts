@@ -105,7 +105,8 @@ export async function inviteRoutes(app: FastifyInstance) {
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${joinToken}`
-          }
+          },
+          body: "{}"
         });
         if (!joinRes.ok) {
           req.log.warn({ serverId: inv.server_id, userId, status: joinRes.status }, "Invite join: failed to add user to node guild");

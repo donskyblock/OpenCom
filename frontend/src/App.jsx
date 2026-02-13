@@ -624,6 +624,24 @@ export function App() {
     loadSession();
   }, [accessToken]);
 
+  // Handle invite link: ?join=CODE — pre-fill join form; if logged in, auto-join and clear URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const joinCode = params.get("join") || (window.location.hash && window.location.hash.startsWith("#join=") && decodeURIComponent(window.location.hash.slice(6))) || null;
+    const code = joinCode?.trim();
+    if (!code) return;
+    setJoinInviteCode(code);
+    setAddServerModalOpen(true);
+    setAddServerTab("join");
+    if (accessToken) {
+      joinInvite(code);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("join");
+      if (url.hash.startsWith("#join=")) url.hash = url.hash.replace(/#join=[^#&]*/, "").replace(/^#&?|&#?$/, "") || "";
+      window.history.replaceState({}, "", url.pathname + (url.search || "") + (url.hash ? "#" + url.hash : ""));
+    }
+  }, [accessToken]);
+
   useEffect(() => {
     if (navMode !== "servers" || !activeServer) {
       setGuilds([]);
@@ -1284,12 +1302,12 @@ export function App() {
     }
   }
 
-  async function joinInvite() {
-    const code = joinInviteCode.trim();
+  async function joinInvite(codeToUse = null) {
+    const code = (codeToUse || joinInviteCode || "").trim();
     if (!code) return;
 
     try {
-      await api(`/v1/invites/${code}/join`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } });
+      const data = await api(`/v1/invites/${code}/join`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } });
       setJoinInviteCode("");
       setInvitePreview(null);
       setStatus("Joined server from invite.");
@@ -1297,7 +1315,12 @@ export function App() {
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
       const next = refreshed.servers || [];
       setServers(next);
-      if (next.length) setActiveServerId(next[0].id);
+      const joinedServerId = data?.serverId;
+      if (joinedServerId && next.some((s) => s.id === joinedServerId)) {
+        setActiveServerId(joinedServerId);
+      } else if (next.length) {
+        setActiveServerId(next[0].id);
+      }
       setAddServerModalOpen(false);
     } catch (error) {
       setStatus(`Join failed: ${error.message}`);
@@ -1408,6 +1431,13 @@ export function App() {
   async function leaveServer(server) {
     if (!server?.id) return;
     setServerContextMenu(null);
+    const wasActive = activeServerId === server.id;
+    if (wasActive) {
+      setActiveServerId("");
+      setActiveGuildId("");
+      setGuildState(null);
+      setMessages([]);
+    }
     try {
       await api(`/v1/servers/${server.id}/leave`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } });
       if (server.defaultGuildId && server.baseUrl) {
@@ -1420,12 +1450,7 @@ export function App() {
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
       const next = refreshed.servers || [];
       setServers(next);
-      if (activeServerId === server.id) {
-        setActiveServerId(next.length ? next[0].id : "");
-        setActiveGuildId("");
-        setGuildState(null);
-        setMessages([]);
-      }
+      if (wasActive && next.length) setActiveServerId(next[0].id);
       setStatus("Left server.");
     } catch (error) {
       setStatus(`Leave failed: ${error.message}`);
@@ -2147,7 +2172,7 @@ export function App() {
             <div className="add-server-content">
               {addServerTab === "join" && (
                 <section className="card">
-                  <p className="hint" style={{ marginBottom: "0.5rem" }}>Enter an invite code to join an existing server.</p>
+                  <p className="hint" style={{ marginBottom: "0.5rem" }}>Paste an invite code, or use a link — if someone sent you a join link, open it to join automatically when logged in.</p>
                   <input placeholder="Invite code" value={joinInviteCode ?? ""} onChange={(e) => setJoinInviteCode(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
                   <div className="row-actions" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                     <button className="ghost" onClick={previewInvite}>Preview</button>
@@ -2334,7 +2359,16 @@ export function App() {
                       {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
                     </select>
                     <button onClick={createInvite}>Generate Invite</button>
-                    {inviteCode && <p className="hint">Code: <code>{inviteCode}</code></p>}
+                    {inviteCode && (
+                      <>
+                        <p className="hint">Code: <code>{inviteCode}</code></p>
+                        <p className="hint">Invite link (share this — opens app and joins when logged in):</p>
+                        <div className="invite-link-row">
+                          <input readOnly className="invite-link-input" value={`${typeof window !== "undefined" ? window.location.origin + (window.location.pathname || "/") : ""}?join=${encodeURIComponent(inviteCode)}`} />
+                          <button type="button" onClick={() => { const u = `${window.location.origin}${window.location.pathname || "/"}?join=${encodeURIComponent(inviteCode)}`; navigator.clipboard.writeText(u).then(() => setStatus("Invite link copied.")).catch(() => setStatus("Could not copy.")); }}>Copy link</button>
+                        </div>
+                      </>
+                    )}
                   </section>
                 </>
               )}

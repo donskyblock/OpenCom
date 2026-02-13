@@ -785,6 +785,8 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 .friend-add-row { display: grid; grid-template-columns: 1fr auto; gap: var(--space-xs);}
 .friend-meta { display: grid; text-align: left; gap: 1px;}
 .row-actions { display: flex; gap: var(--space-xs);}
+.invite-link-row { display: flex; gap: var(--space-sm); align-items: center; margin-top: var(--space-xs); flex-wrap: wrap;}
+.invite-link-row .invite-link-input { flex: 1; min-width: 0; font-size: 0.9em;}
 .active-now {
   border-left: 1px solid var(--border-subtle);
   background: rgba(14, 23, 42, 0.92);
