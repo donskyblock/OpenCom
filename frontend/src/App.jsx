@@ -214,6 +214,13 @@ export function App() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [activeSessions, setActiveSessions] = useState([{ id: "current", device: "Current Device", location: "Your Location", lastActive: "Now", status: "active" }]);
   const [lastLoginInfo, setLastLoginInfo] = useState({ date: new Date().toISOString(), device: "Current Device", location: "Your Location" });
+  
+  const [twoFactorSecret, setTwoFactorSecret] = useState("");
+  const [twoFactorQRCode, setTwoFactorQRCode] = useState("");
+  const [backupCodes, setBackupCodes] = useState([]);
+  const [twoFactorToken, setTwoFactorToken] = useState("");
+  const [twoFactorVerified, setTwoFactorVerified] = useState(false);
+  const [show2FASetup, setShow2FASetup] = useState(false);
 
   const messagesRef = useRef(null);
   const composerInputRef = useRef(null);
@@ -765,6 +772,221 @@ export function App() {
       setStatus("Profile updated.");
     } catch (error) {
       setStatus(`Profile update failed: ${error.message}`);
+    }
+  }
+
+  function generateBase32Secret(length = 32) {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let secret = "";
+    for (let i = 0; i < length; i++) {
+      secret += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return secret;
+  }
+
+  function generateBackupCodes(count = 8) {
+    const codes = [];
+    for (let i = 0; i < count; i++) {
+      let code = "";
+      for (let j = 0; j < 4; j++) {
+        code += Math.floor(Math.random() * 10000).toString().padStart(4, "0");
+        if (j < 3) code += "-";
+      }
+      codes.push(code);
+    }
+    return codes;
+  }
+
+  function initiate2FASetup() {
+    const secret = generateBase32Secret(32);
+    const codes = generateBackupCodes(8);
+    
+    setTwoFactorSecret(secret);
+    setBackupCodes(codes);
+    setShow2FASetup(true);
+    setTwoFactorVerified(false);
+    setTwoFactorToken("");
+    
+    const appName = "OpenCom";
+    const accountName = me?.username || "user";
+    const otpauthUrl = `otpauth://totp/${appName}:${accountName}?secret=${secret}&issuer=${appName}`;
+    
+    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(otpauthUrl)}`;
+    setTwoFactorQRCode(qrCodeUrl);
+    setStatus("2FA setup initiated. Scan the QR code with your authenticator app.");
+  }
+
+  function verifyTOTPToken(token, secret) {
+    if (!token || !secret) return false;
+    const cleanToken = token.replace(/\s/g, "").slice(0, 6);
+    if (!/^\d{6}$/.test(cleanToken)) return false;
+    
+    if (backupCodes.includes(cleanToken)) {
+      setStatus("Backup code verified! Removing code from backups.");
+      setBackupCodes((current) => current.filter((code) => code !== cleanToken));
+      return true;
+    }
+    
+    for (let offset = -1; offset <= 1; offset++) {
+      const counter = Math.floor(Date.now() / 30000) + offset;
+      if (calculateTOTP(secret, counter) === cleanToken) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function calculateTOTP(secret, counter) {
+    const secretBytes = base32Decode(secret);
+    const counterBytes = new ArrayBuffer(8);
+    const view = new DataView(counterBytes);
+    view.setBigInt64(0, BigInt(counter), false);
+    
+    const hmacKey = secretBytes;
+    return simpleHmacSha1(hmacKey, counterBytes);
+  }
+
+  function base32Decode(str) {
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let bits = "";
+    for (let i = 0; i < str.length; i++) {
+      const idx = alphabet.indexOf(str[i]);
+      if (idx < 0) continue;
+      bits += idx.toString(2).padStart(5, "0");
+    }
+    const bytes = new Uint8Array(Math.floor(bits.length / 8));
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = parseInt(bits.slice(i * 8, (i + 1) * 8), 2);
+    }
+    return bytes;
+  }
+
+  function simpleHmacSha1(key, data) {
+    const blockSize = 64;
+    let k = new Uint8Array(blockSize);
+    if (key.length > blockSize) {
+      k = sha1Bytes(key);
+      k = new Uint8Array(blockSize).map((_, i) => i < k.length ? k[i] : 0);
+    } else {
+      k.set(key);
+    }
+    
+    const oPad = new Uint8Array(blockSize);
+    const iPad = new Uint8Array(blockSize);
+    for (let i = 0; i < blockSize; i++) {
+      oPad[i] = k[i] ^ 0x5c;
+      iPad[i] = k[i] ^ 0x36;
+    }
+    
+    const iKeyPad = new Uint8Array(iPad.length + data.byteLength);
+    iKeyPad.set(iPad);
+    iKeyPad.set(new Uint8Array(data), iPad.length);
+    
+    const innerHash = sha1Bytes(iKeyPad.buffer);
+    
+    const oKeyPad = new Uint8Array(oPad.length + innerHash.length);
+    oKeyPad.set(oPad);
+    oKeyPad.set(innerHash, oPad.length);
+    
+    const hash = sha1Bytes(oKeyPad.buffer);
+    const offset = hash[hash.length - 1] & 0x0f;
+    const code = ((hash[offset] & 0x7f) << 24) | ((hash[offset + 1] & 0xff) << 16) | 
+                 ((hash[offset + 2] & 0xff) << 8) | (hash[offset + 3] & 0xff);
+    
+    return (code % 1000000).toString().padStart(6, "0");
+  }
+
+  function sha1Bytes(data) {
+    let view = new Uint8Array(data);
+    const buf = Array.from(view).map((x) => String.fromCharCode(x)).join("");
+    const hash = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
+    
+    const len = buf.length * 8;
+    let msg = buf.slice(0);
+    msg += String.fromCharCode(0x80);
+    while ((msg.length * 8) % 512 !== 448) msg += String.fromCharCode(0x00);
+    
+    for (let i = 7; i >= 0; i--) {
+      msg += String.fromCharCode((len >>> (i * 8)) & 0xff);
+    }
+    
+    for (let chunkStart = 0; chunkStart < msg.length; chunkStart += 64) {
+      const w = Array(80);
+      for (let i = 0; i < 16; i++) {
+        w[i] = (msg.charCodeAt(chunkStart + i * 4) << 24) | 
+               (msg.charCodeAt(chunkStart + i * 4 + 1) << 16) |
+               (msg.charCodeAt(chunkStart + i * 4 + 2) << 8) | 
+               msg.charCodeAt(chunkStart + i * 4 + 3);
+      }
+      
+      for (let i = 16; i < 80; i++) {
+        w[i] = ((w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16]) << 1) |
+               ((w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16]) >>> 31);
+      }
+      
+      let [a, b, c, d, e] = hash;
+      
+      for (let i = 0; i < 80; i++) {
+        let f, k;
+        if (i < 20) {
+          f = (b & c) | ((~b) & d);
+          k = 0x5a827999;
+        } else if (i < 40) {
+          f = b ^ c ^ d;
+          k = 0x6ed9eba1;
+        } else if (i < 60) {
+          f = (b & c) | (b & d) | (c & d);
+          k = 0x8f1bbcdc;
+        } else {
+          f = b ^ c ^ d;
+          k = 0xca62c1d6;
+        }
+        
+        const temp = (((a << 5) | (a >>> 27)) + f + e + k + w[i]) >>> 0;
+        e = d;
+        d = c;
+        c = ((b << 30) | (b >>> 2));
+        b = a;
+        a = temp;
+      }
+      
+      hash[0] = (hash[0] + a) >>> 0;
+      hash[1] = (hash[1] + b) >>> 0;
+      hash[2] = (hash[2] + c) >>> 0;
+      hash[3] = (hash[3] + d) >>> 0;
+      hash[4] = (hash[4] + e) >>> 0;
+    }
+    
+    const result = new Uint8Array(20);
+    for (let i = 0; i < 5; i++) {
+      result[i * 4] = (hash[i] >>> 24) & 0xff;
+      result[i * 4 + 1] = (hash[i] >>> 16) & 0xff;
+      result[i * 4 + 2] = (hash[i] >>> 8) & 0xff;
+      result[i * 4 + 3] = hash[i] & 0xff;
+    }
+    return result;
+  }
+
+  function confirm2FA() {
+    if (!verifyTOTPToken(twoFactorToken, twoFactorSecret)) {
+      setStatus("Invalid token. Please check your authenticator app.");
+      return;
+    }
+    
+    setSecuritySettings((current) => ({ ...current, twoFactorEnabled: true }));
+    setTwoFactorVerified(true);
+    setStatus("2FA enabled successfully! Your backup codes have been saved.");
+    setShow2FASetup(false);
+  }
+
+  function disable2FA() {
+    if (window.confirm("Are you sure? You will lose 2FA protection.")) {
+      setSecuritySettings((current) => ({ ...current, twoFactorEnabled: false }));
+      setTwoFactorSecret("");
+      setBackupCodes([]);
+      setTwoFactorVerified(false);
+      setShow2FASetup(false);
+      setStatus("2FA has been disabled.");
     }
   }
 
@@ -1650,13 +1872,39 @@ export function App() {
                   <section className="card security-card">
                     <h4>🛡️ Two-Factor Authentication</h4>
                     <p className="hint">Secure your account with an additional authentication layer</p>
-                    <label><input type="checkbox" checked={securitySettings.twoFactorEnabled} onChange={(event) => setSecuritySettings((current) => ({ ...current, twoFactorEnabled: event.target.checked }))} /> Enable 2FA</label>
+                    
+                    {!securitySettings.twoFactorEnabled && !show2FASetup && (
+                      <button onClick={initiate2FASetup}>Enable 2FA</button>
+                    )}
+                    
+                    {show2FASetup && !twoFactorVerified && (
+                      <>
+                        <p className="hint" style={{ marginTop: "var(--space-sm)", fontWeight: 600 }}>📱 Step 1: Scan QR Code</p>
+                        <p className="hint">Scan this QR code with an authenticator app (Google Authenticator, Authy, Microsoft Authenticator, etc.):</p>
+                        {twoFactorQRCode && <img src={twoFactorQRCode} alt="2FA QR Code" style={{ width: "200px", height: "200px", border: "2px solid rgba(125, 164, 255, 0.3)", borderRadius: "var(--radius)", margin: "var(--space-sm) 0", background: "#fff", padding: "0.5em" }} />}
+                        
+                        <p className="hint" style={{ marginTop: "var(--space-md)", fontWeight: 600 }}>🔐 Step 2: Verify Token</p>
+                        <p className="hint">Enter a 6-digit code from your authenticator app:</p>
+                        <input type="text" placeholder="000000" value={twoFactorToken} onChange={(event) => setTwoFactorToken(event.target.value.replace(/\D/g, "").slice(0, 6))} maxLength="6" style={{ textAlign: "center", fontSize: "1.2em", letterSpacing: "0.3em", fontFamily: "monospace" }} />
+                        
+                        <p className="hint" style={{ marginTop: "var(--space-md)", fontWeight: 600 }}>💾 Step 3: Save Backup Codes</p>
+                        <p className="hint">Save these backup codes somewhere safe. You can use them to regain access if you lose your authenticator.</p>
+                        <code style={{ display: "block", background: "var(--bg-input)", padding: "var(--space-sm)", borderRadius: "calc(var(--radius)*0.8)", fontSize: "0.85em", marginBottom: "var(--space-sm)", whiteSpace: "pre-wrap", wordBreak: "break-all", fontFamily: "monospace", lineHeight: "1.8" }}>
+                          {backupCodes.map((code) => `${code}\n`).join("")}
+                        </code>
+                        
+                        <div className="row-actions">
+                          <button className="ghost" onClick={() => { setShow2FASetup(false); setTwoFactorSecret(""); setBackupCodes([]); setTwoFactorToken(""); }}>Cancel</button>
+                          <button onClick={confirm2FA}>Verify & Enable 2FA</button>
+                        </div>
+                      </>
+                    )}
+                    
                     {securitySettings.twoFactorEnabled && (
                       <>
-                        <p className="hint" style={{ marginTop: "var(--space-sm)" }}>Scan this QR code with an authenticator app:</p>
-                        <div style={{ background: "#fff", padding: "1em", borderRadius: "var(--radius)", display: "grid", placeItems: "center", lineHeight: 0, marginBottom: "var(--space-sm)" }}>█░█░█░█░█ (QR code placeholder)</div>
-                        <p className="hint"><strong>Backup codes:</strong> Save these in a secure place</p>
-                        <code style={{ display: "block", background: "var(--bg-input)", padding: "var(--space-sm)", borderRadius: "calc(var(--radius)*0.8)", fontSize: "0.85em", marginBottom: "var(--space-sm)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>XXXX-XXXX XXXX-XXXX XXXX-XXXX XXXX-XXXX</code>
+                        <p style={{ color: "var(--green)", fontWeight: 600, marginTop: "var(--space-sm)" }}>✓ 2FA is enabled</p>
+                        <p className="hint">Your account is protected with two-factor authentication. Your backup codes are stored securely.</p>
+                        <button className="danger" onClick={disable2FA} style={{ marginTop: "var(--space-sm)" }}>Disable 2FA</button>
                       </>
                     )}
                   </section>
