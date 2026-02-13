@@ -7,6 +7,7 @@ import { env } from "../env.js";
 import { parseBody } from "../validation.js";
 
 const OFFICIAL_NODE_BASE_URL = env.OFFICIAL_NODE_BASE_URL;
+const OFFICIAL_NODE_SERVER_ID = env.OFFICIAL_NODE_SERVER_ID;
 
 const CreateServer = z.object({
   name: z.string().min(2).max(64),
@@ -44,13 +45,15 @@ async function signMembershipToken(serverId: string, userId: string, roles: stri
     .sign(priv);
 }
 
-async function ensureDefaultGuildOnServerNode(serverId: string, serverName: string, baseUrl: string, ownerUserId: string) {
+async function ensureDefaultGuildOnServerNode(serverId: string, serverName: string, baseUrl: string, ownerUserId: string, tokenServerId?: string) {
   const platformRole = await getPlatformRole(ownerUserId);
   const ownerRoles = ["owner"];
   if (platformRole === "admin") ownerRoles.push("platform_admin");
   if (platformRole === "owner") ownerRoles.push("platform_admin", "platform_owner");
 
-  const membershipToken = await signMembershipToken(serverId, ownerUserId, ownerRoles, platformRole);
+  // Use tokenServerId when calling the official node so the node accepts the token (it expects server_id === NODE_SERVER_ID)
+  const idForToken = tokenServerId ?? serverId;
+  const membershipToken = await signMembershipToken(idForToken, ownerUserId, ownerRoles, platformRole);
 
   const response = await fetch(`${baseUrl}/v1/guilds`, {
     method: "POST",
@@ -93,8 +96,13 @@ export async function serverRoutes(app: FastifyInstance) {
       { id, userId, roles: JSON.stringify(["owner"]) }
     );
 
+    if (!OFFICIAL_NODE_SERVER_ID) {
+      await q(`DELETE FROM memberships WHERE server_id=:id`, { id });
+      await q(`DELETE FROM servers WHERE id=:id`, { id });
+      return rep.code(503).send({ error: "OFFICIAL_SERVER_NOT_CONFIGURED" });
+    }
     try {
-      await ensureDefaultGuildOnServerNode(id, body.name, OFFICIAL_NODE_BASE_URL, userId);
+      await ensureDefaultGuildOnServerNode(id, body.name, OFFICIAL_NODE_BASE_URL, userId, OFFICIAL_NODE_SERVER_ID);
     } catch (error: any) {
       app.log.error({ err: error, serverId: id }, "Failed to create default guild on official node");
       await q(`DELETE FROM memberships WHERE server_id=:id`, { id });
@@ -166,7 +174,11 @@ export async function serverRoutes(app: FastifyInstance) {
         if (!membershipRoles.includes("platform_owner")) membershipRoles.push("platform_owner");
       }
 
-      const membershipToken = await signMembershipToken(r.id, userId, membershipRoles, platformRole);
+      // For official node, token must use OFFICIAL_NODE_SERVER_ID so the node accepts it
+      const idForToken = (OFFICIAL_NODE_BASE_URL && OFFICIAL_NODE_SERVER_ID && r.base_url === OFFICIAL_NODE_BASE_URL)
+        ? OFFICIAL_NODE_SERVER_ID
+        : r.id;
+      const membershipToken = await signMembershipToken(idForToken, userId, membershipRoles, platformRole);
 
       return {
         id: r.id,

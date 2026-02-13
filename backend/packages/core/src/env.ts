@@ -18,7 +18,9 @@ const Env = z.object({
   PROFILE_IMAGE_BASE_URL: z.string().default("/v1/profile-images"),
 
   // Official server node (one server per user hosted by the platform)
-  OFFICIAL_NODE_BASE_URL: z.string().url().optional()
+  OFFICIAL_NODE_BASE_URL: z.string().url().optional(),
+  /** Must match NODE_SERVER_ID on that node so the node accepts the membership token */
+  OFFICIAL_NODE_SERVER_ID: z.string().min(1).optional()
 });
 
 export const env = Env.parse(process.env);
