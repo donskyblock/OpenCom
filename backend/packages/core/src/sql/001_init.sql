@@ -4,102 +4,102 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 
 CREATE TABLE IF NOT EXISTS users (
-  id VARCHAR(64) PRIMARY KEY,
-  email VARCHAR(255) NOT NULL UNIQUE,
-  username VARCHAR(32) NOT NULL,
+  id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci PRIMARY KEY,
+  email VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL UNIQUE,
+  username VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
   password_hash TEXT NOT NULL,
-  display_name VARCHAR(64),
-  bio VARCHAR(400),
+  display_name VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci,
+  bio VARCHAR(400) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci,
   pfp_url TEXT,
   banner_url TEXT,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 
 CREATE TABLE IF NOT EXISTS user_badges (
-  user_id VARCHAR(64) NOT NULL,
-  badge VARCHAR(64) NOT NULL,
+  user_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
+  badge VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (user_id, badge),
   CONSTRAINT fk_badges_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 
 CREATE TABLE IF NOT EXISTS devices (
-  id VARCHAR(64) PRIMARY KEY,
-  user_id VARCHAR(64) NOT NULL,
-  name VARCHAR(64),
+  id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci PRIMARY KEY,
+  user_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
+  name VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci,
   identity_pubkey TEXT NOT NULL,
-  prekey_bundle JSON NOT NULL,
+  prekey_bundle LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL CHECK (json_valid(`prekey_bundle`)),
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_devices_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 
 CREATE TABLE IF NOT EXISTS refresh_tokens (
-  id VARCHAR(64) PRIMARY KEY,
-  user_id VARCHAR(64) NOT NULL,
-  device_id VARCHAR(64),
-  token_hash VARCHAR(64) NOT NULL,
+  id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci PRIMARY KEY,
+  user_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
+  device_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci,
+  token_hash VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
   expires_at TIMESTAMP NOT NULL,
   revoked_at TIMESTAMP NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_rt_hash (token_hash),
   CONSTRAINT fk_rt_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_rt_device FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 
 CREATE TABLE IF NOT EXISTS servers (
-  id VARCHAR(64) PRIMARY KEY,
-  name VARCHAR(64) NOT NULL,
+  id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci PRIMARY KEY,
+  name VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
   base_url TEXT NOT NULL,
-  owner_user_id VARCHAR(64) NOT NULL,
+  owner_user_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_servers_owner FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 
 CREATE TABLE IF NOT EXISTS memberships (
-  server_id VARCHAR(64) NOT NULL,
-  user_id VARCHAR(64) NOT NULL,
+  server_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
+  user_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
   roles JSON NOT NULL, -- ["owner","member",...]
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (server_id, user_id),
   CONSTRAINT fk_mem_server FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE,
   CONSTRAINT fk_mem_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 
 CREATE TABLE IF NOT EXISTS invites (
-  code VARCHAR(32) PRIMARY KEY,
-  server_id VARCHAR(64) NOT NULL,
-  created_by VARCHAR(64) NOT NULL,
+  code VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci PRIMARY KEY,
+  server_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
+  created_by VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
   max_uses INT NULL,
   uses INT NOT NULL DEFAULT 0,
   expires_at TIMESTAMP NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_inv_server FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE,
   CONSTRAINT fk_inv_user FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 
 CREATE TABLE IF NOT EXISTS presence (
-  user_id VARCHAR(64) PRIMARY KEY,
-  status VARCHAR(16) NOT NULL,
-  custom_status VARCHAR(128),
+  user_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci PRIMARY KEY,
+  status VARCHAR(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
+  custom_status VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_presence_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 
 CREATE TABLE IF NOT EXISTS dm_threads (
-  id VARCHAR(64) PRIMARY KEY,
-  user_a VARCHAR(64) NOT NULL,
-  user_b VARCHAR(64) NOT NULL,
+  id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci PRIMARY KEY,
+  user_a VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
+  user_b VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_dm_pair (user_a, user_b),
   CONSTRAINT fk_dm_a FOREIGN KEY (user_a) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_dm_b FOREIGN KEY (user_b) REFERENCES users(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 
 CREATE TABLE IF NOT EXISTS dm_messages (
-  id VARCHAR(64) PRIMARY KEY,
-  thread_id VARCHAR(64) NOT NULL,
-  sender_device_id VARCHAR(64) NOT NULL,
-  recipient_device_id VARCHAR(64) NOT NULL,
+  id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci PRIMARY KEY,
+  thread_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
+  sender_device_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
+  recipient_device_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci NOT NULL,
   header JSON NOT NULL,
   ciphertext MEDIUMTEXT NOT NULL,
   sent_at TIMESTAMP NOT NULL,
@@ -108,4 +108,4 @@ CREATE TABLE IF NOT EXISTS dm_messages (
   read_at TIMESTAMP NULL,
   INDEX idx_dm_thread_time (thread_id, sent_at),
   CONSTRAINT fk_dm_thread FOREIGN KEY (thread_id) REFERENCES dm_threads(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
