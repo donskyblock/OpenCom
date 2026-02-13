@@ -1612,7 +1612,7 @@ export function App() {
 
   async function startDmCall() {
     if (!activeDm?.participantId || !activeDmId) return;
-    
+
     const call = callRef.current;
     if (call.dmId) {
       setStatus("Call already active.");
@@ -1621,11 +1621,13 @@ export function App() {
     
     try {
       endCall(false);
+
+      const nextCall = callRef.current;
       
       // Claim caller state immediately (before any async)
-      call.dmId = activeDmId;
-      call.remoteUserId = activeDm.participantId;
-      call.role = "caller";
+      nextCall.dmId = activeDmId;
+      nextCall.remoteUserId = activeDm.participantId;
+      nextCall.role = "caller";
       setIncomingCall(null);
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1642,7 +1644,7 @@ export function App() {
         if (remoteAudioRef.current) {
           remoteAudioRef.current.srcObject = e.streams[0];
         }
-        const dmObj = dms.find(d => d.id === call.dmId);
+        const dmObj = dms.find(d => d.id === nextCall.dmId);
         setCallParticipants(prev => {
           if (prev.find(p => p.id === activeDm?.participantId)) return prev;
           return [...prev, { 
@@ -1654,8 +1656,8 @@ export function App() {
       };
       
       peer.onicecandidate = (e) => {
-        if (e.candidate && call.dmId && call.remoteUserId) {
-          sendSignal("ice", { candidate: e.candidate }, call.dmId, call.remoteUserId);
+        if (e.candidate && nextCall.dmId && nextCall.remoteUserId) {
+          sendSignal("ice", { candidate: e.candidate }, nextCall.dmId, nextCall.remoteUserId);
         }
       };
       
@@ -1673,8 +1675,8 @@ export function App() {
       const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
       await peer.setLocalDescription(offer);
       
-      call.peer = peer;
-      call.localStream = stream;
+      nextCall.peer = peer;
+      nextCall.localStream = stream;
       
       await sendSignal("offer", { offer }, activeDmId, activeDm.participantId);
       
@@ -1706,6 +1708,8 @@ export function App() {
     
     try {
       endCall(false);
+
+      const nextCall = callRef.current;
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const peer = new RTCPeerConnection({ 
@@ -1721,7 +1725,7 @@ export function App() {
         if (remoteAudioRef.current) {
           remoteAudioRef.current.srcObject = e.streams[0];
         }
-        const dmObj = dms.find(d => d.id === call.dmId);
+        const dmObj = dms.find(d => d.id === offer.dmId);
         setCallParticipants(prev => {
           if (prev.find(p => p.id === offer.fromUserId)) return prev;
           return [...prev, { 
@@ -1733,8 +1737,8 @@ export function App() {
       };
       
       peer.onicecandidate = (e) => {
-        if (e.candidate && call.dmId && call.remoteUserId) {
-          sendSignal("ice", { candidate: e.candidate }, call.dmId, call.remoteUserId);
+        if (e.candidate && nextCall.dmId && nextCall.remoteUserId) {
+          sendSignal("ice", { candidate: e.candidate }, nextCall.dmId, nextCall.remoteUserId);
         }
       };
       
@@ -1751,22 +1755,22 @@ export function App() {
 
         await peer.setRemoteDescription(new RTCSessionDescription(offer.offer));
       
-      for (const candidate of call.pendingIce) {
+      for (const candidate of nextCall.pendingIce) {
         try {
           await peer.addIceCandidate(new RTCIceCandidate(candidate));
         } catch {}
       }
-      call.pendingIce = [];
+      nextCall.pendingIce = [];
       
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
       
-      call.dmId = offer.dmId;
-      call.remoteUserId = offer.fromUserId;
-      call.role = "callee";
-      call.peer = peer;
-      call.localStream = stream;
-      call.incomingOffer = null;
+      nextCall.dmId = offer.dmId;
+      nextCall.remoteUserId = offer.fromUserId;
+      nextCall.role = "callee";
+      nextCall.peer = peer;
+      nextCall.localStream = stream;
+      nextCall.incomingOffer = null;
       
       await sendSignal("answer", { answer }, offer.dmId, offer.fromUserId);
       
