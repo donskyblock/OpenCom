@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { q } from "../db.js";
 import { requireGuildMember } from "../auth/requireGuildMember.js";
-import { canEditRole, requireManageRoles, rolePosition } from "../permissions/hierarchy.js";
+import { canEditRole, isGuildOwner, requireManageRoles, rolePosition } from "../permissions/hierarchy.js";
 
 export async function memberRoutes(
   app: FastifyInstance,
@@ -22,8 +22,11 @@ export async function memberRoutes(
     const anyChannel = await q<{ id: string }>(`SELECT id FROM channels WHERE guild_id=:guildId ORDER BY created_at ASC LIMIT 1`, { guildId });
     if (!anyChannel.length) return rep.code(400).send({ error: "GUILD_HAS_NO_CHANNELS" });
 
-    try { await requireManageRoles({ guildId, channelIdForPerms: anyChannel[0].id, actorId: userId }); }
-    catch { return rep.code(403).send({ error: "MISSING_PERMS" }); }
+    const guildOwner = await isGuildOwner(guildId, userId);
+    if (!guildOwner) {
+      try { await requireManageRoles({ guildId, channelIdForPerms: anyChannel[0].id, actorId: userId, actorRoles: req.auth.roles || [] }); }
+      catch { return rep.code(403).send({ error: "MISSING_PERMS" }); }
+    }
 
     const rp = await rolePosition(roleId).catch(() => null);
     if (!rp || rp.guildId !== guildId) return rep.code(404).send({ error: "ROLE_NOT_FOUND" });
@@ -62,8 +65,11 @@ export async function memberRoutes(
     const anyChannel = await q<{ id: string }>(`SELECT id FROM channels WHERE guild_id=:guildId ORDER BY created_at ASC LIMIT 1`, { guildId });
     if (!anyChannel.length) return rep.code(400).send({ error: "GUILD_HAS_NO_CHANNELS" });
 
-    try { await requireManageRoles({ guildId, channelIdForPerms: anyChannel[0].id, actorId: userId }); }
-    catch { return rep.code(403).send({ error: "MISSING_PERMS" }); }
+    const guildOwner = await isGuildOwner(guildId, userId);
+    if (!guildOwner) {
+      try { await requireManageRoles({ guildId, channelIdForPerms: anyChannel[0].id, actorId: userId, actorRoles: req.auth.roles || [] }); }
+      catch { return rep.code(403).send({ error: "MISSING_PERMS" }); }
+    }
 
     const rp = await rolePosition(roleId).catch(() => null);
     if (!rp || rp.guildId !== guildId) return rep.code(404).send({ error: "ROLE_NOT_FOUND" });
