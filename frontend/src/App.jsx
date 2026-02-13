@@ -1405,10 +1405,58 @@ export function App() {
     setServerContextMenu(null);
   }
 
+  async function leaveServer(server) {
+    if (!server?.id) return;
+    setServerContextMenu(null);
+    try {
+      await api(`/v1/servers/${server.id}/leave`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } });
+      if (server.defaultGuildId && server.baseUrl) {
+        try {
+          await nodeApi(server.baseUrl, `/v1/guilds/${server.defaultGuildId}/leave`, server.membershipToken, { method: "POST", body: "{}" });
+        } catch {
+          // membership already gone on core; node leave is best-effort
+        }
+      }
+      const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
+      const next = refreshed.servers || [];
+      setServers(next);
+      if (activeServerId === server.id) {
+        setActiveServerId(next.length ? next[0].id : "");
+        setActiveGuildId("");
+        setGuildState(null);
+        setMessages([]);
+      }
+      setStatus("Left server.");
+    } catch (error) {
+      setStatus(`Leave failed: ${error.message}`);
+    }
+  }
+
+  async function deleteServer(server) {
+    if (!server?.id || !(server.roles || []).includes("owner")) return;
+    if (!window.confirm(`Delete "${server.name}"? This cannot be undone. All members will lose access.`)) return;
+    setServerContextMenu(null);
+    try {
+      await api(`/v1/servers/${server.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } });
+      const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
+      const next = refreshed.servers || [];
+      setServers(next);
+      if (activeServerId === server.id) {
+        setActiveServerId(next.length ? next[0].id : "");
+        setActiveGuildId("");
+        setGuildState(null);
+        setMessages([]);
+      }
+      setStatus("Server deleted.");
+    } catch (error) {
+      setStatus(`Delete failed: ${error.message}`);
+    }
+  }
+
   async function deleteServerMessage(messageId) {
     if (!activeServer || !activeChannelId || !messageId) return;
     try {
-      await nodeApi(activeServer.baseUrl, `/v1/channels/${activeChannelId}/messages/${messageId}`, activeServer.membershipToken, { method: "DELETE" });
+      await nodeApi(activeServer.baseUrl, `/v1/channels/${activeChannelId}/messages/${messageId}`, activeServer.membershipToken, { method: "DELETE", body: "{}" });
       setMessages((current) => current.filter((message) => message.id !== messageId));
       setStatus("Message deleted.");
     } catch (error) {
@@ -2073,7 +2121,11 @@ export function App() {
           <button onClick={() => openServerFromContext(serverContextMenu.server.id)}>Open Server</button>
           <button onClick={() => { setInviteServerId(serverContextMenu.server.id); setSettingsOpen(true); setSettingsTab("invites"); setServerContextMenu(null); }}>Create Invite</button>
           <button onClick={() => copyServerId(serverContextMenu.server.id)}>Copy Server ID</button>
-          <button className="danger" onClick={() => { setSettingsOpen(true); setSettingsTab("server"); setServerContextMenu(null); }}>Server Settings</button>
+          <button onClick={() => { setSettingsOpen(true); setSettingsTab("server"); setServerContextMenu(null); }}>Server Settings</button>
+          <button className="danger" onClick={() => leaveServer(serverContextMenu.server)}>Leave Server</button>
+          {(serverContextMenu.server.roles || []).includes("owner") && (
+            <button className="danger" onClick={() => deleteServer(serverContextMenu.server)}>Delete Server</button>
+          )}
         </div>
       )}
 
