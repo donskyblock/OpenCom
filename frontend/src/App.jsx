@@ -1599,8 +1599,10 @@ export function App() {
               continue;
             }
 
-            // Handle END: only for active call or incoming call
+            // Handle END: only for active call or incoming call, and only if signal is recent
             if (signal.type === "end") {
+              const createdAt = signal.createdAt ? new Date(signal.createdAt).getTime() : 0;
+              if (createdAt && Date.now() - createdAt > 25_000) continue;
               if (callState.dmId === dm.id || (incomingCall && incomingCall.dmId === dm.id)) {
                 cleanupCall();
               }
@@ -1678,9 +1680,9 @@ export function App() {
         }
       };
       
-      // Handle connection state
+      // Handle connection state (don't end on "disconnected" – it can be transient during ICE)
       peer.onconnectionstatechange = () => {
-        if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
+        if (peer.connectionState === "failed" || peer.connectionState === "closed") {
           setStatus("Call connection lost.");
           endDmCall(true);
         } else if (peer.connectionState === "connected") {
@@ -1784,9 +1786,9 @@ export function App() {
         }
       };
       
-      // Handle connection state
+      // Handle connection state (don't end on "disconnected" – transient during ICE)
       peer.onconnectionstatechange = () => {
-        if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
+        if (peer.connectionState === "failed" || peer.connectionState === "closed") {
           setStatus("Call connection lost.");
           endDmCall(true);
         } else if (peer.connectionState === "connected") {
