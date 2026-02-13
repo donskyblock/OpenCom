@@ -6,6 +6,7 @@ const THEME_ENABLED_STORAGE_KEY = "opencom_custom_theme_enabled";
 const SELF_STATUS_KEY = "opencom_self_status";
 const PINNED_SERVER_KEY = "opencom_pinned_server_messages";
 const PINNED_DM_KEY = "opencom_pinned_dm_messages";
+const ACTIVE_DM_KEY = "opencom_active_dm";
 
 function useThemeCss() {
   const [css, setCss] = useState(localStorage.getItem(THEME_STORAGE_KEY) || "");
@@ -208,6 +209,7 @@ function playRingtone() {
 
 
 export function App() {
+  const storedActiveDmId = localStorage.getItem(ACTIVE_DM_KEY) || "";
   const [accessToken, setAccessToken] = useState(localStorage.getItem("opencom_access_token") || "");
   const [authMode, setAuthMode] = useState("login");
   const [email, setEmail] = useState("");
@@ -233,7 +235,7 @@ export function App() {
   const [friendView, setFriendView] = useState("online");
 
   const [dms, setDms] = useState([]);
-  const [activeDmId, setActiveDmId] = useState("");
+  const [activeDmId, setActiveDmId] = useState(storedActiveDmId);
   const [dmText, setDmText] = useState("");
 
   const [profile, setProfile] = useState(null);
@@ -405,7 +407,23 @@ export function App() {
       nextDms = (dmsData.dms || []).map((item) => ({ ...item, messages: previous.get(item.id)?.messages || [] }));
       return nextDms;
     });
-    if (!nextDms.some((item) => item.id === activeDmId)) setActiveDmId(nextDms[0]?.id || "");
+    
+    // Clear any lingering call state when refreshing
+    endDmCall(false);
+    lastDmCallSignalIdsRef.current.clear();
+    processedSignalIdsRef.current.clear();
+    pendingIceCandidatesRef.current = [];
+    
+    // Preserve current DM selection if it still exists, otherwise find last DM with messages
+    if (!nextDms.some((item) => item.id === activeDmId)) {
+      const dmWithMessages = nextDms.find((dm) => dm.messages && dm.messages.length > 0);
+      const nextActiveDmId = dmWithMessages?.id || nextDms[0]?.id || "";
+      if (nextActiveDmId) {
+        setActiveDmId(nextActiveDmId);
+        localStorage.setItem(ACTIVE_DM_KEY, nextActiveDmId);
+      }
+    }
+    
     setFriendRequests({ incoming: requestData.incoming || [], outgoing: requestData.outgoing || [] });
     setAllowFriendRequests(socialSettingsData.allowFriendRequests !== false);
   }
@@ -449,6 +467,10 @@ export function App() {
   useEffect(() => {
     localStorage.setItem(PINNED_DM_KEY, JSON.stringify(pinnedDmMessages));
   }, [pinnedDmMessages]);
+
+  useEffect(() => {
+    if (activeDmId) localStorage.setItem(ACTIVE_DM_KEY, activeDmId);
+  }, [activeDmId]);
 
   useEffect(() => () => {
     dmCallStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -1866,48 +1888,7 @@ export function App() {
       )}
       <aside className="server-rail">
         <div className="rail-header" title="OpenCom">
-          <svg className="logo-svg" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-            {/* Shark body - white with blue gradients */}
-            <defs>
-              <linearGradient id="sharkTopGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" style={{stopColor:"#87CEEB", stopOpacity:1}} />
-                <stop offset="100%" style={{stopColor:"#FFFFFF", stopOpacity:1}} />
-              </linearGradient>
-              <linearGradient id="sharkBottomGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" style={{stopColor:"#FFFFFF", stopOpacity:1}} />
-                <stop offset="100%" style={{stopColor:"#4A90E2", stopOpacity:1}} />
-              </linearGradient>
-            </defs>
-            
-            {/* Main body */}
-            <path d="M 20 50 Q 25 30, 35 35 Q 45 40, 50 45 Q 55 50, 60 55 Q 70 60, 75 55 Q 80 50, 78 45 Q 75 40, 70 35 Q 65 30, 60 25 Q 55 20, 50 22 Q 45 20, 40 25 Q 35 30, 30 35 Q 25 40, 22 45 Z" fill="url(#sharkTopGrad)" />
-            
-            {/* Lower body with darker gradient */}
-            <path d="M 20 50 Q 25 60, 35 65 Q 45 70, 50 75 Q 55 80, 60 75 Q 70 70, 75 65 Q 80 60, 78 55 Q 75 50, 70 45 Q 65 50, 60 55 Q 55 50, 50 45 Q 45 50, 40 55 Q 35 50, 30 45 Q 25 50, 22 55 Z" fill="url(#sharkBottomGrad)" />
-            
-            {/* Central circle */}
-            <circle cx="50" cy="50" r="12" fill="#000000" stroke="#FFFFFF" strokeWidth="2" />
-            
-            {/* Eye */}
-            <polygon points="42,42 45,40 48,42 45,44" fill="#000000" />
-            
-            {/* Gills */}
-            <path d="M 28 48 Q 30 46, 32 48" stroke="#000000" strokeWidth="1.5" fill="none" />
-            <path d="M 28 52 Q 30 50, 32 52" stroke="#000000" strokeWidth="1.5" fill="none" />
-            <path d="M 28 50 Q 30 48, 32 50" stroke="#000000" strokeWidth="1.5" fill="none" />
-            
-            {/* Mouth */}
-            <path d="M 20 50 Q 22 52, 25 50" stroke="#000000" strokeWidth="1.5" fill="none" />
-            <ellipse cx="23" cy="52" rx="3" ry="2" fill="#87CEEB" />
-            <polygon points="20,54 22,52 24,54" fill="#FFFFFF" stroke="#000000" strokeWidth="0.5" />
-            
-            {/* Tail fin */}
-            <path d="M 75 55 Q 85 50, 88 60 Q 85 65, 80 60" fill="url(#sharkBottomGrad)" stroke="#000000" strokeWidth="1" />
-            <path d="M 75 45 Q 85 50, 88 40 Q 85 35, 80 40" fill="#FFFFFF" stroke="#000000" strokeWidth="1" />
-            
-            {/* Pectoral fin */}
-            <path d="M 40 60 Q 45 70, 50 65 Q 48 60, 45 58" fill="url(#sharkBottomGrad)" stroke="#000000" strokeWidth="1" />
-          </svg>
+          <img src="logo.png" alt="OpenCom" className="logo-img" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
         </div>
         <button className={`server-pill nav-pill ${navMode === "friends" ? "active" : ""}`} onClick={() => setNavMode("friends")} title="Friends">👥</button>
         <button className={`server-pill nav-pill ${navMode === "dms" ? "active" : ""}`} onClick={() => setNavMode("dms")} title="Direct messages">💬</button>
