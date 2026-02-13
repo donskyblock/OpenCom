@@ -15,7 +15,10 @@ const Env = z.object({
   
   // Profile image storage
   PROFILE_IMAGE_STORAGE_DIR: z.string().default("./storage/profiles"),
-  PROFILE_IMAGE_BASE_URL: z.string().default("/v1/profile-images")
+  PROFILE_IMAGE_BASE_URL: z.string().default("/v1/profile-images"),
+
+  // Official server node (one server per user hosted by the platform)
+  OFFICIAL_NODE_BASE_URL: z.string().url().optional()
 });
 
 export const env = Env.parse(process.env);

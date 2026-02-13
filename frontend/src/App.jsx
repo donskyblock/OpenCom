@@ -156,58 +156,6 @@ function playNotificationBeep() {
   }
 }
 
-function playRingtone() {
-  try {
-    const audioCtx = new window.AudioContext();
-    // Discord-like ringtone - repeating pattern
-    let time = audioCtx.currentTime;
-    const gain = audioCtx.createGain();
-    gain.gain.setValueAtTime(0.2, time);
-    gain.connect(audioCtx.destination);
-    
-    // Create a pleasant ring pattern
-    const frequencies = [523.25, 659.25, 783.99]; // C5, E5, G5
-    let ringCount = 0;
-    const maxRings = 20; // Stop after 20 rings
-    
-    function playRing() {
-      if (ringCount >= maxRings) {
-        gain.gain.linearRampToValueAtTime(0, time + 0.1);
-        setTimeout(() => audioCtx.close(), 200);
-        return;
-      }
-      
-      frequencies.forEach((freq, idx) => {
-        const osc = audioCtx.createOscillator();
-        osc.type = "sine";
-        osc.frequency.value = freq;
-        osc.connect(gain);
-        osc.start(time + idx * 0.05);
-        osc.stop(time + 0.3 + idx * 0.05);
-      });
-      
-      ringCount++;
-      time += 0.5;
-      
-      if (ringCount < maxRings) {
-        setTimeout(playRing, 500);
-      }
-    }
-    
-    playRing();
-    
-    // Return function to stop ringing
-    return () => {
-      ringCount = maxRings;
-      gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
-      setTimeout(() => audioCtx.close(), 200);
-    };
-  } catch {
-    return () => {}; // Return no-op function if audio fails
-  }
-}
-
-
 export function App() {
   const storedActiveDmId = localStorage.getItem(ACTIVE_DM_KEY) || "";
   const [accessToken, setAccessToken] = useState(localStorage.getItem("opencom_access_token") || "");
@@ -259,12 +207,8 @@ export function App() {
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
   const [selfStatus, setSelfStatus] = useState(localStorage.getItem(SELF_STATUS_KEY) || "online");
-  const [dmCallActive, setDmCallActive] = useState(false);
-  const [dmCallMuted, setDmCallMuted] = useState(false);
-  const [incomingCall, setIncomingCall] = useState(null);
-  const [callParticipants, setCallParticipants] = useState([]);
-  const [callStatus, setCallStatus] = useState("idle"); // idle, ringing, active
   const [showPinned, setShowPinned] = useState(false);
+  const [newOfficialServerName, setNewOfficialServerName] = useState("");
   const [pinnedServerMessages, setPinnedServerMessages] = useState(getStoredJson(PINNED_SERVER_KEY, {}));
   const [pinnedDmMessages, setPinnedDmMessages] = useState(getStoredJson(PINNED_DM_KEY, {}));
   const [newRoleName, setNewRoleName] = useState("");
@@ -303,28 +247,6 @@ export function App() {
   const isAtBottomRef = useRef(true);
   const lastDmMessageCountRef = useRef(0);
   const previousDmIdRef = useRef("");
-  // Voice call state - completely isolated and simple
-  const callRef = useRef({
-    // Call identity
-    dmId: null,              // Which DM this call is for
-    remoteUserId: null,       // Who we're calling / who called us
-    role: null,               // 'caller' | 'callee' | null
-    
-    // WebRTC resources
-    peer: null,               // RTCPeerConnection
-    localStream: null,        // Local audio stream
-    
-    // Incoming call state
-    incomingOffer: null,      // Offer from remote when we're callee
-    
-    // ICE handling
-    pendingIce: []            // ICE candidates received before remote description
-  });
-  const remoteAudioRef = useRef(null);
-  const ringtoneStopRef = useRef(null);
-  const gatewayWsRef = useRef(null);       // Current WebSocket for call signals
-  const signalPollingRef = useRef({ lastIds: new Map(), processed: new Map() });
-  const [gatewayReconnect, setGatewayReconnect] = useState(0); // Bump to force reconnect
   const profileCardDragOffsetRef = useRef({ x: 0, y: 0 });
   const storageScope = me?.id || "anonymous";
 
@@ -421,9 +343,6 @@ export function App() {
       return nextDms;
     });
     
-    endCall(false);
-    signalPollingRef.current.lastIds.clear();
-    signalPollingRef.current.processed.clear();
     
     // Preserve current DM selection if it still exists, otherwise find last DM with messages
     if (!nextDms.some((item) => item.id === activeDmId)) {
@@ -483,16 +402,7 @@ export function App() {
     if (activeDmId) localStorage.setItem(ACTIVE_DM_KEY, activeDmId);
   }, [activeDmId]);
 
-  useEffect(() => () => {
-    endCall(false);
-  }, []);
 
-  useEffect(() => {
-    const call = callRef.current;
-    if (dmCallActive && call.dmId && call.dmId !== activeDmId) {
-      endCall(false);
-    }
-  }, [activeDmId]);
 
   useEffect(() => {
     if (!draggingProfileCard) return;
@@ -1430,385 +1340,27 @@ export function App() {
     return false;
   }
 
-  // Send a call signal to remote user
-  async function sendSignal(type, payload, dmId, targetUserId) {
-    if (!accessToken || !dmId || !targetUserId) return;
+  async function createOfficialServer() {
+    const name = newOfficialServerName.trim();
+    if (!name || !accessToken) return;
     try {
-      await api(`/v1/social/dms/${dmId}/call-signals`, {
+      const data = await api("/v1/servers/official", {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ type, targetUserId, payload })
+        body: JSON.stringify({ name })
       });
-    } catch (err) {
-      console.warn("Signal send failed:", err);
-    }
-  }
-
-  // Stop ringtone if playing
-  function stopRingtone() {
-    if (ringtoneStopRef.current) {
-      ringtoneStopRef.current();
-      ringtoneStopRef.current = null;
-    }
-  }
-
-  // Clean up all call resources and reset state
-  function endCall(notifyRemote = false) {
-    const call = callRef.current;
-    
-    stopRingtone();
-    
-    if (notifyRemote && call.dmId && call.remoteUserId) {
-      sendSignal("end", {}, call.dmId, call.remoteUserId);
-    }
-    
-    if (call.localStream) {
-      call.localStream.getTracks().forEach(t => { t.stop(); t.enabled = false; });
-    }
-    
-    if (call.peer) {
-      call.peer.close();
-    }
-    
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.srcObject = null;
-    }
-    
-    callRef.current = {
-      dmId: null,
-      remoteUserId: null,
-      role: null,
-      peer: null,
-      localStream: null,
-      incomingOffer: null,
-      pendingIce: []
-    };
-    
-    setDmCallActive(false);
-    setDmCallMuted(false);
-    setCallStatus("idle");
-    setCallParticipants([]);
-    setIncomingCall(null);
-  }
-
-  // Keep latest handler so WebSocket/polling always use current me/dms
-  const handleCallSignalRef = useRef(null);
-  function handleCallSignal(signal, dmList) {
-    if (!signal?.type || signal.fromUserId === me?.id) return;
-    const call = callRef.current;
-    const signalAge = signal.createdAt ? Date.now() - new Date(signal.createdAt).getTime() : 0;
-    const list = dmList || dms;
-    const dm = list.find(d => d.id === signal.threadId);
-
-    if (signal.type === "offer") {
-      if (call.dmId) return;
-      if (signalAge > 30_000) return;
-      call.incomingOffer = { offer: signal.payload.offer, fromUserId: signal.fromUserId, dmId: signal.threadId };
-      stopRingtone();
-      setIncomingCall({ fromUserId: signal.fromUserId, fromUsername: dm?.name || "Unknown", dmId: signal.threadId });
-      setCallStatus("ringing");
-      ringtoneStopRef.current = playRingtone();
-      return;
-    }
-    if (call.dmId !== signal.threadId) return;
-    if (signal.type === "answer" && call.role === "caller" && call.peer && signal.payload?.answer) {
-      (async () => {
-        try {
-          await call.peer.setRemoteDescription(new RTCSessionDescription(signal.payload.answer));
-          for (const c of call.pendingIce) { try { await call.peer.addIceCandidate(new RTCIceCandidate(c)); } catch {} }
-          call.pendingIce = [];
-          setDmCallActive(true);
-          setCallStatus("active");
-          const dmObj = list.find(d => d.id === signal.threadId);
-          setCallParticipants(prev => prev.find(p => p.id === signal.fromUserId) ? prev : [...prev, { id: signal.fromUserId, username: dmObj?.name || "Unknown", muted: false }]);
-        } catch (e) { console.error("Answer handling failed:", e); }
-      })();
-      return;
-    }
-    if (signal.type === "ice" && call.peer && signal.payload?.candidate) {
-      (async () => {
-        try {
-          if (call.peer.remoteDescription) await call.peer.addIceCandidate(new RTCIceCandidate(signal.payload.candidate));
-          else call.pendingIce.push(signal.payload.candidate);
-        } catch {}
-      })();
-      return;
-    }
-    // Only process "end" if it's from the last 8s so an old end from a previous call doesn't kill the new one
-    if (signal.type === "end" && signalAge < 8_000) endCall(false);
-  }
-  handleCallSignalRef.current = handleCallSignal;
-
-  // WebSocket gateway – connect when logged in (so we receive call signals from any tab)
-  useEffect(() => {
-    if (!accessToken || !me?.id) return;
-
-    const wsUrl = (CORE_API.replace(/^https/, "wss").replace(/^http/, "ws")) + "/gateway";
-    const ws = new WebSocket(wsUrl);
-    gatewayWsRef.current = ws;
-    let heartbeatInterval = null;
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ op: "IDENTIFY", d: { accessToken, deviceId: localStorage.getItem("opencom_device_id") || undefined } }));
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.op === "HELLO") {
-          const interval = msg.d?.heartbeat_interval || 25000;
-          heartbeatInterval = window.setInterval(() => {
-            if (gatewayWsRef.current?.readyState === WebSocket.OPEN)
-              gatewayWsRef.current.send(JSON.stringify({ op: "HEARTBEAT" }));
-          }, interval);
-        }
-        if (msg.op === "DISPATCH" && msg.t === "CALL_SIGNAL_CREATE" && handleCallSignalRef.current)
-          handleCallSignalRef.current(msg.d, dms);
-      } catch (err) { console.error("WebSocket message error:", err); }
-    };
-
-    ws.onerror = () => { /* reconnect on close */ };
-    ws.onclose = () => {
-      gatewayWsRef.current = null;
-      if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
-      window.setTimeout(() => setGatewayReconnect((k) => k + 1), 2000);
-    };
-
-    return () => {
-      ws.close();
-      gatewayWsRef.current = null;
-      if (heartbeatInterval) clearInterval(heartbeatInterval);
-    };
-  }, [accessToken, me?.id, gatewayReconnect]);
-
-  // Call signals: poll every 3s when on DMs so calls work even if WebSocket never connects (e.g. proxy doesn't forward /gateway)
-  useEffect(() => {
-    if (!accessToken || !me?.id || navMode !== "dms" || !dms?.length) return;
-
-    const poll = async () => {
-      try {
-        for (const dm of dms) {
-          if (!dm.id) continue;
-          const polling = signalPollingRef.current;
-          const lastId = polling.lastIds.get(dm.id) || "";
-          const query = lastId ? `?afterId=${encodeURIComponent(lastId)}` : "";
-          const data = await api(`/v1/social/dms/${dm.id}/call-signals${query}`, { headers: { Authorization: `Bearer ${accessToken}` } }).catch(() => ({ signals: [] }));
-          const processed = polling.processed.get(dm.id) || new Set();
-          for (const signal of data.signals || []) {
-            if (processed.has(signal.id)) continue;
-            processed.add(signal.id);
-            polling.processed.set(dm.id, processed);
-            polling.lastIds.set(dm.id, signal.id);
-            if (handleCallSignalRef.current) handleCallSignalRef.current(signal, dms);
-          }
-        }
-      } catch (err) { console.error("Call signal poll error:", err); }
-    };
-
-    poll();
-    const timer = setInterval(poll, 3000);
-    return () => clearInterval(timer);
-  }, [accessToken, dms, me?.id, navMode]);
-
-  async function startDmCall() {
-    if (!activeDm?.participantId || !activeDmId) return;
-    
-    const call = callRef.current;
-    if (call.dmId) {
-      setStatus("Call already active.");
-      return;
-    }
-    
-    try {
-      endCall(false);
-      
-      // Claim caller state immediately (before any async)
-      call.dmId = activeDmId;
-      call.remoteUserId = activeDm.participantId;
-      call.role = "caller";
-      setIncomingCall(null);
-      
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const peer = new RTCPeerConnection({ 
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" }
-        ] 
-      });
-      
-      stream.getTracks().forEach(t => peer.addTrack(t, stream));
-      
-      peer.ontrack = (e) => {
-        if (remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = e.streams[0];
-        }
-        const dmObj = dms.find(d => d.id === call.dmId);
-        setCallParticipants(prev => {
-          if (prev.find(p => p.id === activeDm?.participantId)) return prev;
-          return [...prev, { 
-            id: activeDm?.participantId, 
-            username: dmObj?.name || activeDm?.name || "Unknown", 
-            muted: false 
-          }];
-        });
-      };
-      
-      peer.onicecandidate = (e) => {
-        if (e.candidate && call.dmId && call.remoteUserId) {
-          sendSignal("ice", { candidate: e.candidate }, call.dmId, call.remoteUserId);
-        }
-      };
-      
-      peer.onconnectionstatechange = () => {
-        if (peer.connectionState === "closed") {
-          setStatus("Call ended.");
-          endCall(true);
-        } else if (peer.connectionState === "connected") {
-          setCallStatus("active");
-        } else if (peer.connectionState === "failed") {
-          setStatus("Connection problem – try hanging up and calling again.");
-        }
-      };
-      
-      const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
-      await peer.setLocalDescription(offer);
-      
-      call.peer = peer;
-      call.localStream = stream;
-      
-      await sendSignal("offer", { offer }, activeDmId, activeDm.participantId);
-      
-      setDmCallActive(true);
-      setCallStatus("ringing");
-      setCallParticipants([{ id: me?.id, username: me?.username || "You", muted: dmCallMuted }]);
-      setStatus(`Calling ${activeDm?.name || "friend"}...`);
-    } catch (err) {
-      console.error("Start call failed:", err);
-      setStatus("Could not start call. Microphone permission may be blocked.");
-      endCall(false);
-    }
-  }
-
-  function endDmCall(notifyRemote = true) {
-    endCall(notifyRemote);
-  }
-
-  async function acceptCall() {
-    const call = callRef.current;
-    const offer = call.incomingOffer;
-    
-    if (!offer) {
-      setIncomingCall(null);
-      return;
-    }
-    
-    stopRingtone();
-    
-    try {
-      endCall(false);
-      
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const peer = new RTCPeerConnection({ 
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" }
-        ] 
-      });
-      
-      stream.getTracks().forEach(t => peer.addTrack(t, stream));
-      
-      peer.ontrack = (e) => {
-        if (remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = e.streams[0];
-        }
-        const dmObj = dms.find(d => d.id === call.dmId);
-        setCallParticipants(prev => {
-          if (prev.find(p => p.id === offer.fromUserId)) return prev;
-          return [...prev, { 
-            id: offer.fromUserId, 
-            username: dmObj?.name || "Unknown", 
-            muted: false 
-          }];
-        });
-      };
-      
-      peer.onicecandidate = (e) => {
-        if (e.candidate && call.dmId && call.remoteUserId) {
-          sendSignal("ice", { candidate: e.candidate }, call.dmId, call.remoteUserId);
-        }
-      };
-      
-      peer.onconnectionstatechange = () => {
-        if (peer.connectionState === "closed") {
-          setStatus("Call ended.");
-          endCall(true);
-        } else if (peer.connectionState === "connected") {
-          setCallStatus("active");
-        } else if (peer.connectionState === "failed") {
-          setStatus("Connection problem – try hanging up and calling again.");
-        }
-      };
-
-        await peer.setRemoteDescription(new RTCSessionDescription(offer.offer));
-      
-      for (const candidate of call.pendingIce) {
-        try {
-          await peer.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch {}
+      setNewOfficialServerName("");
+      setStatus("Your server was created.");
+      const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
+      const next = refreshed.servers || [];
+      setServers(next);
+      if (data.serverId && next.length) {
+        setActiveServerId(data.serverId);
+        setNavMode("servers");
       }
-      call.pendingIce = [];
-      
-      const answer = await peer.createAnswer();
-      await peer.setLocalDescription(answer);
-      
-      call.dmId = offer.dmId;
-      call.remoteUserId = offer.fromUserId;
-      call.role = "callee";
-      call.peer = peer;
-      call.localStream = stream;
-      call.incomingOffer = null;
-      
-      await sendSignal("answer", { answer }, offer.dmId, offer.fromUserId);
-      
-      const dmObj = dms.find(d => d.id === offer.dmId);
-      setDmCallActive(true);
-      setCallStatus("active");
-      setIncomingCall(null);
-      setCallParticipants([
-        { id: me?.id, username: me?.username || "You", muted: dmCallMuted },
-        { id: offer.fromUserId, username: dmObj?.name || "Unknown", muted: false }
-      ]);
     } catch (err) {
-      console.error("Accept call failed:", err);
-      setStatus("Could not accept call.");
-      endCall(false);
+      setStatus(err.message?.includes("SERVER_LIMIT") ? "You already have a server." : `Failed: ${err.message}`);
     }
-  }
-
-  function declineCall() {
-    stopRingtone();
-    
-    if (incomingCall?.dmId && incomingCall?.fromUserId) {
-      sendSignal("end", {}, incomingCall.dmId, incomingCall.fromUserId);
-    }
-    
-    callRef.current.incomingOffer = null;
-    setIncomingCall(null);
-    setCallStatus("idle");
-  }
-
-  function toggleDmCallMute() {
-    const call = callRef.current;
-    const stream = call.localStream;
-    if (!stream) return;
-    
-    const nextMuted = !dmCallMuted;
-    stream.getAudioTracks().forEach(t => { t.enabled = !nextMuted; });
-    
-    setDmCallMuted(nextMuted);
-    setCallParticipants(prev => 
-      prev.map(p => p.id === me?.id ? { ...p, muted: nextMuted } : p)
-    );
   }
 
   function openMessageContextMenu(event, message) {
@@ -1894,20 +1446,6 @@ export function App() {
 
   return (
     <div className="opencom-shell">
-      {incomingCall && !(dmCallActive && callRef.current.role === "caller") && (
-        <div className="call-notification">
-          <div className="call-notification-content">
-            <div className="call-notification-info">
-              <strong>📞 Incoming call from {incomingCall.fromUsername}</strong>
-              <span className="hint">Voice call</span>
-            </div>
-            <div className="call-notification-actions">
-              <button className="danger" onClick={declineCall}>Decline</button>
-              <button onClick={() => { acceptCall(); setNavMode("dms"); setActiveDmId(incomingCall.dmId); }}>Accept</button>
-            </div>
-          </div>
-        </div>
-      )}
       <aside className="server-rail">
         <div className="rail-header" title="OpenCom">
           <img src="logo.png" alt="OpenCom" className="logo-img" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
@@ -1983,11 +1521,7 @@ export function App() {
 
         {navMode === "dms" && (
           <section className="sidebar-block channels-container">
-            {dms.map((dm) => {
-              const call = callRef.current;
-              const isInCallWithThisDm = dmCallActive && call.dmId === dm.id;
-              const hasIncomingCall = incomingCall && incomingCall.dmId === dm.id;
-              return (
+            {dms.map((dm) => (
                 <button key={dm.id} className={`channel-row dm-sidebar-row ${dm.id === activeDmId ? "active" : ""}`} onClick={() => setActiveDmId(dm.id)} title={`DM ${dm.name}`} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   {dm.pfp_url ? (
                     <img src={dm.pfp_url} alt={dm.name} style={{ width: "28px", height: "28px", borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
@@ -1998,11 +1532,8 @@ export function App() {
                   )}
                   <span className="channel-hash">@</span> 
                   <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{dm.name}</span>
-                  {isInCallWithThisDm && <span style={{ fontSize: "12px", color: "var(--green)" }}>🔊</span>}
-                  {hasIncomingCall && <span style={{ fontSize: "12px", color: "var(--brand)", animation: "pulse 1s infinite" }}>📞</span>}
                 </button>
-              );
-            })}
+              ))}
             {!dms.length && <p className="hint">Add friends to open direct message threads.</p>}
           </section>
         )}
@@ -2070,7 +1601,21 @@ export function App() {
       </aside>
 
       <main className="chat-pane">
-        {navMode === "servers" && (
+        {navMode === "servers" && servers.length === 0 && (
+          <div className="create-server-empty" style={{ padding: "2rem", maxWidth: "420px", margin: "auto" }}>
+            <h3 style={{ marginBottom: "0.5rem" }}>Create your server</h3>
+            <p className="hint" style={{ marginBottom: "1rem" }}>You get one server hosted by us. Name it and start customising channels and roles.</p>
+            <input
+              type="text"
+              value={newOfficialServerName}
+              onChange={(e) => setNewOfficialServerName(e.target.value)}
+              placeholder="Server name"
+              style={{ width: "100%", marginBottom: "0.75rem", padding: "0.5rem" }}
+            />
+            <button onClick={createOfficialServer} disabled={!newOfficialServerName.trim()}>Create your server</button>
+          </div>
+        )}
+        {navMode === "servers" && servers.length > 0 && (
           <div className="chat-layout">
             <section className="chat-main">
               <header className="chat-header">
@@ -2166,24 +1711,8 @@ export function App() {
               <h3>{activeDm ? `@ ${activeDm.name}` : "Direct Messages"}</h3>
               <div className="chat-actions">
                 <button className="icon-btn ghost" onClick={() => setShowPinned((value) => !value)} title="Pinned DMs">📌</button>
-                {!dmCallActive && <button className="ghost" onClick={startDmCall} disabled={!activeDm}>Start Voice</button>}
-                {dmCallActive && <button className="ghost" onClick={toggleDmCallMute}>{dmCallMuted ? "Unmute" : "Mute"}</button>}
-                {dmCallActive && <button className="danger" onClick={endDmCall}>End Call</button>}
               </div>
             </header>
-            {dmCallActive && (
-              <div className="call-banner">
-                <div className="call-participants">
-                  <span>🔊 In call with:</span>
-                  {callParticipants.map((participant) => (
-                    <span key={participant.id} className="call-participant">
-                      {participant.id === me?.id ? "You" : participant.username}
-                      {participant.muted && " 🔇"}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
             {showPinned && activePinnedDmMessages.length > 0 && (
               <div className="pinned-strip">
                 {activePinnedDmMessages.slice(0, 3).map((item) => (
@@ -2226,7 +1755,6 @@ export function App() {
               <input ref={dmComposerInputRef} value={dmText} onChange={(event) => setDmText(event.target.value)} placeholder={`Message ${activeDm?.name || "friend"}`} onKeyDown={(event) => event.key === "Enter" && sendDm()} />
               <button className="send-btn" onClick={sendDm} disabled={!activeDm || !dmText.trim()}>Send</button>
             </footer>
-            <audio ref={remoteAudioRef} autoPlay playsInline />
           </>
         )}
 

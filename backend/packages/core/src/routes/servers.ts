@@ -6,9 +6,15 @@ import { SignJWT, importJWK } from "jose";
 import { env } from "../env.js";
 import { parseBody } from "../validation.js";
 
+const OFFICIAL_NODE_BASE_URL = env.OFFICIAL_NODE_BASE_URL;
+
 const CreateServer = z.object({
   name: z.string().min(2).max(64),
   baseUrl: z.string().url()
+});
+
+const CreateOfficialServer = z.object({
+  name: z.string().min(2).max(64)
 });
 
 async function getPlatformRole(userId: string): Promise<"user" | "admin" | "owner"> {
@@ -62,6 +68,43 @@ async function ensureDefaultGuildOnServerNode(serverId: string, serverName: stri
 }
 
 export async function serverRoutes(app: FastifyInstance) {
+  // Create one server per user hosted on the platform's official node (no baseUrl needed)
+  app.post("/v1/servers/official", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const body = parseBody(CreateOfficialServer, req.body);
+
+    if (!OFFICIAL_NODE_BASE_URL) {
+      return rep.code(503).send({ error: "OFFICIAL_SERVER_UNAVAILABLE" });
+    }
+
+    const platformRole = await getPlatformRole(userId);
+    if (platformRole === "user") {
+      const owned = await q<{ count: number }>(`SELECT COUNT(*) as count FROM servers WHERE owner_user_id=:userId`, { userId });
+      if (Number(owned[0]?.count || 0) >= 1) {
+        return rep.code(403).send({ error: "SERVER_LIMIT_REACHED" });
+      }
+    }
+
+    const id = ulidLike();
+    await q(`INSERT INTO servers (id,name,base_url,owner_user_id) VALUES (:id,:name,:baseUrl,:userId)`,
+      { id, name: body.name, baseUrl: OFFICIAL_NODE_BASE_URL, userId }
+    );
+    await q(`INSERT INTO memberships (server_id,user_id,roles) VALUES (:id,:userId,:roles)`,
+      { id, userId, roles: JSON.stringify(["owner"]) }
+    );
+
+    try {
+      await ensureDefaultGuildOnServerNode(id, body.name, OFFICIAL_NODE_BASE_URL, userId);
+    } catch (error: any) {
+      app.log.error({ err: error, serverId: id }, "Failed to create default guild on official node");
+      await q(`DELETE FROM memberships WHERE server_id=:id`, { id });
+      await q(`DELETE FROM servers WHERE id=:id`, { id });
+      return rep.code(502).send({ error: "DEFAULT_GUILD_CREATE_FAILED" });
+    }
+
+    return rep.send({ serverId: id });
+  });
+
   app.post("/v1/servers", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
     const body = parseBody(CreateServer, req.body);
