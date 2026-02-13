@@ -308,11 +308,12 @@ export function App() {
   const lastDmCallSignalIdRef = useRef("");
   const remoteAudioRef = useRef(null);
   const lastDmMessageIdRef = useRef("");
-  const pendingIceCandidatesRef = useRef([]);
-  const processedSignalIdsRef = useRef(new Set());
+  const pendingIceCandidatesRef = useRef(new Map()); // Track ICE candidates per DM
+  const processedSignalIdsRef = useRef(new Map()); // Track processed signal IDs per DM
   const profileCardDragOffsetRef = useRef({ x: 0, y: 0 });
   const ringtoneStopRef = useRef(null);
   const lastDmCallSignalIdsRef = useRef(new Map()); // Track last signal ID per DM
+  const activeCallDmIdRef = useRef(null); // Which DM the current call is for (so we don't process other DMs' signals)
   const storageScope = me?.id || "anonymous";
 
   const activeServer = useMemo(() => servers.find((server) => server.id === activeServerId) || null, [servers, activeServerId]);
@@ -412,7 +413,7 @@ export function App() {
     endDmCall(false);
     lastDmCallSignalIdsRef.current.clear();
     processedSignalIdsRef.current.clear();
-    pendingIceCandidatesRef.current = [];
+    pendingIceCandidatesRef.current.clear();
     
     // Preserve current DM selection if it still exists, otherwise find last DM with messages
     if (!nextDms.some((item) => item.id === activeDmId)) {
@@ -479,8 +480,6 @@ export function App() {
 
   useEffect(() => {
     lastDmCallSignalIdRef.current = "";
-    processedSignalIdsRef.current.clear();
-    pendingIceCandidatesRef.current = [];
     // Clean up call when switching DMs
     if (dmCallActive) {
       endDmCall(false);
@@ -1423,13 +1422,15 @@ export function App() {
     return false;
   }
 
-  async function sendDmCallSignal(type, payload, targetUserId = activeDm?.participantId) {
-    if (!accessToken || !activeDmId || !targetUserId) return;
+  async function sendDmCallSignal(type, payload, targetUserId, dmId) {
+    const threadId = dmId ?? activeDmId;
+    const toUserId = targetUserId ?? activeDm?.participantId;
+    if (!accessToken || !threadId || !toUserId) return;
     try {
-      await api(`/v1/social/dms/${activeDmId}/call-signals`, {
+      await api(`/v1/social/dms/${threadId}/call-signals`, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ type, targetUserId, payload })
+        body: JSON.stringify({ type, targetUserId: toUserId, payload })
       });
     } catch {
       // best effort signaling
@@ -1453,9 +1454,12 @@ export function App() {
           }).catch(() => ({ signals: [] })); // Ignore errors for individual DMs
 
           for (const signal of data.signals || []) {
-            // Skip already processed signals
-            if (processedSignalIdsRef.current.has(signal.id)) continue;
-            processedSignalIdsRef.current.add(signal.id);
+            // Skip already processed signals (per-DM tracking)
+            const dmProcessedIds = processedSignalIdsRef.current.get(dm.id) || new Set();
+            if (dmProcessedIds.has(signal.id)) continue;
+            dmProcessedIds.add(signal.id);
+            processedSignalIdsRef.current.set(dm.id, dmProcessedIds);
+            
             lastDmCallSignalIdsRef.current.set(dm.id, signal.id);
             if (!signal?.type) continue;
 
@@ -1463,13 +1467,13 @@ export function App() {
             if (signal.fromUserId === me?.id) continue;
 
             if (signal.type === "offer") {
+              activeCallDmIdRef.current = dm.id; // Claim this DM as our call so answer/ice/end are tied to it
               // Stop any existing ringtone
               if (ringtoneStopRef.current) {
                 ringtoneStopRef.current();
                 ringtoneStopRef.current = null;
               }
               
-              // Show incoming call notification
               setIncomingCall({
                 fromUserId: signal.fromUserId,
                 fromUsername: dm.name || "Unknown",
@@ -1477,152 +1481,158 @@ export function App() {
               });
               setCallStatus("ringing");
               
-              // Play ringtone
               ringtoneStopRef.current = playRingtone();
               
-              // Auto-answer the call (Discord-like behavior)
               try {
-              // Stop ringtone
-              if (ringtoneStopRef.current) {
-                ringtoneStopRef.current();
-                ringtoneStopRef.current = null;
-              }
-              
-              // Clean up existing connection
-              dmCallPeerRef.current?.close();
-              pendingIceCandidatesRef.current = [];
-
-              const stream = dmCallStreamRef.current || await navigator.mediaDevices.getUserMedia({ audio: true });
-              dmCallStreamRef.current = stream;
-
-              const peer = new RTCPeerConnection({ 
-                iceServers: [
-                  { urls: "stun:stun.l.google.com:19302" },
-                  { urls: "stun:stun1.l.google.com:19302" }
-                ] 
-              });
-              dmCallPeerRef.current = peer;
-
-              stream.getTracks().forEach((track) => peer.addTrack(track, stream));
-              
-              peer.ontrack = (remoteEvent) => {
-                if (remoteAudioRef.current) {
-                  remoteAudioRef.current.srcObject = remoteEvent.streams[0];
+                // Stop ringtone
+                if (ringtoneStopRef.current) {
+                  ringtoneStopRef.current();
+                  ringtoneStopRef.current = null;
                 }
-                // Update participants when remote track is received
+                
+                // Clean up existing connection
+                dmCallPeerRef.current?.close();
+                dmCallPeerRef.current = null;
+                
+                // Get per-DM ICE candidates
+                let dmIceCandidates = pendingIceCandidatesRef.current.get(dm.id) || [];
+
+                const stream = dmCallStreamRef.current || await navigator.mediaDevices.getUserMedia({ audio: true });
+                dmCallStreamRef.current = stream;
+
+                const peer = new RTCPeerConnection({ 
+                  iceServers: [
+                    { urls: "stun:stun.l.google.com:19302" },
+                    { urls: "stun:stun1.l.google.com:19302" }
+                  ] 
+                });
+                dmCallPeerRef.current = peer;
+
+                stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+                
+                peer.ontrack = (remoteEvent) => {
+                  if (remoteAudioRef.current) {
+                    remoteAudioRef.current.srcObject = remoteEvent.streams[0];
+                  }
+                  // Update participants when remote track is received
+                  setCallParticipants((prev) => {
+                    const exists = prev.find(p => p.id === signal.fromUserId);
+                    if (!exists) {
+                      return [...prev, { id: signal.fromUserId, username: dm.name || "Unknown", muted: false }];
+                    }
+                    return prev;
+                  });
+                };
+                
+                peer.onicecandidate = (event) => {
+                  if (event.candidate && signal.fromUserId) {
+                    sendDmCallSignal("ice", { candidate: event.candidate }, signal.fromUserId, dm.id);
+                  }
+                };
+
+                peer.onconnectionstatechange = () => {
+                  if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
+                    setStatus("Call connection lost.");
+                    endDmCall(true);
+                  } else if (peer.connectionState === "connected") {
+                    setCallStatus("active");
+                    setIncomingCall(null);
+                  }
+                };
+
+                await peer.setRemoteDescription(new RTCSessionDescription(signal.payload.offer));
+                
+                // Add any pending ICE candidates for this DM
+                for (const candidate of dmIceCandidates) {
+                  try {
+                    await peer.addIceCandidate(new RTCIceCandidate(candidate));
+                  } catch (err) {
+                    console.warn("Failed to add pending ICE candidate:", err);
+                  }
+                }
+                pendingIceCandidatesRef.current.delete(dm.id);
+
+                const answer = await peer.createAnswer();
+                await peer.setLocalDescription(answer);
+                await sendDmCallSignal("answer", { answer }, signal.fromUserId, dm.id);
+                setDmCallActive(true);
+                setCallParticipants([{ id: me?.id, username: me?.username || "You", muted: dmCallMuted }, { id: signal.fromUserId, username: dm.name || "Unknown", muted: false }]);
+              } catch (err) {
+                console.error("Failed to handle offer:", err);
+                setStatus("Could not join DM call.");
+                setIncomingCall(null);
+                setCallStatus("idle");
+                // Stop ringtone on error
+                if (ringtoneStopRef.current) {
+                  ringtoneStopRef.current();
+                  ringtoneStopRef.current = null;
+                }
+              }
+              continue; // Move to next signal
+            }
+
+            if (signal.type === "answer" && dmCallPeerRef.current && signal.payload?.answer) {
+              // Only accept answer for the DM we placed the call to
+              if (activeCallDmIdRef.current !== dm.id) continue;
+              try {
+                await dmCallPeerRef.current.setRemoteDescription(new RTCSessionDescription(signal.payload.answer));
+                
+                const dmIceCandidates = pendingIceCandidatesRef.current.get(dm.id) || [];
+                for (const candidate of dmIceCandidates) {
+                  try {
+                    await dmCallPeerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+                  } catch (err) {
+                    console.warn("Failed to add pending ICE candidate:", err);
+                  }
+                }
+                pendingIceCandidatesRef.current.delete(dm.id);
+                
+                setDmCallActive(true);
+                setCallStatus("active");
+                const dmForAnswer = dms.find(d => d.id === dm.id);
                 setCallParticipants((prev) => {
                   const exists = prev.find(p => p.id === signal.fromUserId);
                   if (!exists) {
-                    return [...prev, { id: signal.fromUserId, username: dm.name || "Unknown", muted: false }];
+                    return [...prev, { id: signal.fromUserId, username: dmForAnswer?.name || dm.name || "Unknown", muted: false }];
                   }
                   return prev;
                 });
-              };
-              
-              peer.onicecandidate = (event) => {
-                if (event.candidate && signal.fromUserId) {
-                  sendDmCallSignal("ice", { candidate: event.candidate }, signal.fromUserId);
-                }
-              };
+              } catch (err) {
+                console.error("Failed to handle answer:", err);
+              }
+              continue;
+            }
 
-              peer.onconnectionstatechange = () => {
-                if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
-                  setStatus("Call connection lost.");
-                  endDmCall(true);
-                } else if (peer.connectionState === "connected") {
-                  setCallStatus("active");
-                  setIncomingCall(null);
-                }
-              };
-
-              await peer.setRemoteDescription(new RTCSessionDescription(signal.payload.offer));
-              
-              // Add any pending ICE candidates
-              for (const candidate of pendingIceCandidatesRef.current) {
+            if (signal.type === "ice" && signal.payload?.candidate) {
+              if (activeCallDmIdRef.current !== dm.id) continue;
+              const candidate = signal.payload.candidate;
+              if (dmCallPeerRef.current) {
                 try {
-                  await peer.addIceCandidate(new RTCIceCandidate(candidate));
+                  if (dmCallPeerRef.current.remoteDescription) {
+                    await dmCallPeerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+                  } else {
+                    let dmCandidates = pendingIceCandidatesRef.current.get(dm.id) || [];
+                    dmCandidates.push(candidate);
+                    pendingIceCandidatesRef.current.set(dm.id, dmCandidates);
+                  }
                 } catch (err) {
-                  console.warn("Failed to add pending ICE candidate:", err);
+                  console.warn("Failed to add ICE candidate:", err);
                 }
               }
-              pendingIceCandidatesRef.current = [];
+              continue;
+            }
 
-              const answer = await peer.createAnswer();
-              await peer.setLocalDescription(answer);
-              await sendDmCallSignal("answer", { answer }, signal.fromUserId);
-              setDmCallActive(true);
-              setCallParticipants([{ id: me?.id, username: me?.username || "You", muted: dmCallMuted }, { id: signal.fromUserId, username: dm.name || "Unknown", muted: false }]);
-            } catch (err) {
-              console.error("Failed to handle offer:", err);
-              setStatus("Could not join DM call.");
-              setIncomingCall(null);
-              setCallStatus("idle");
-              // Stop ringtone on error
+            if (signal.type === "end") {
+              // Only end our call if this "end" is for the DM we're in a call with
+              if (activeCallDmIdRef.current !== dm.id) continue;
               if (ringtoneStopRef.current) {
                 ringtoneStopRef.current();
                 ringtoneStopRef.current = null;
               }
+              endDmCall(false);
+              continue;
             }
-            continue; // Move to next signal
           }
-
-          if (signal.type === "answer" && dmCallPeerRef.current && signal.payload?.answer) {
-            try {
-              await dmCallPeerRef.current.setRemoteDescription(new RTCSessionDescription(signal.payload.answer));
-              
-              // Add any pending ICE candidates
-              for (const candidate of pendingIceCandidatesRef.current) {
-                try {
-                  await dmCallPeerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-                } catch (err) {
-                  console.warn("Failed to add pending ICE candidate:", err);
-                }
-              }
-              pendingIceCandidatesRef.current = [];
-              
-              setDmCallActive(true);
-              setCallStatus("active");
-              const dmForAnswer = dms.find(d => d.id === dm.id);
-              setCallParticipants((prev) => {
-                const exists = prev.find(p => p.id === signal.fromUserId);
-                if (!exists) {
-                  return [...prev, { id: signal.fromUserId, username: dmForAnswer?.name || dm.name || "Unknown", muted: false }];
-                }
-                return prev;
-              });
-            } catch (err) {
-              console.error("Failed to handle answer:", err);
-            }
-            continue;
-          }
-
-          if (signal.type === "ice" && signal.payload?.candidate) {
-            const candidate = signal.payload.candidate;
-            if (dmCallPeerRef.current) {
-              try {
-                if (dmCallPeerRef.current.remoteDescription) {
-                  await dmCallPeerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-                } else {
-                  // Store for later if remote description not set yet
-                  pendingIceCandidatesRef.current.push(candidate);
-                }
-              } catch (err) {
-                console.warn("Failed to add ICE candidate:", err);
-              }
-            }
-            continue;
-          }
-
-          if (signal.type === "end") {
-            // Stop ringtone if ending
-            if (ringtoneStopRef.current) {
-              ringtoneStopRef.current();
-              ringtoneStopRef.current = null;
-            }
-            endDmCall(false);
-            continue;
-          }
-        }
         }
       } catch (err) {
         console.error("Call signal polling error:", err);
@@ -1646,9 +1656,8 @@ export function App() {
       return;
     }
     try {
-      // Clean up any existing connection
       dmCallPeerRef.current?.close();
-      pendingIceCandidatesRef.current = [];
+      pendingIceCandidatesRef.current = new Map();
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       dmCallStreamRef.current = stream;
@@ -1692,6 +1701,7 @@ export function App() {
         }
       };
 
+      activeCallDmIdRef.current = activeDmId;
       const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
       await peer.setLocalDescription(offer);
       await sendDmCallSignal("offer", { offer });
@@ -1717,12 +1727,12 @@ export function App() {
       ringtoneStopRef.current = null;
     }
     
-    if (notifyRemote) {
-      sendDmCallSignal("end", {}).catch(() => {
-        // Ignore errors when ending call
-      });
+    if (notifyRemote && activeCallDmIdRef.current) {
+      const dm = dms.find((d) => d.id === activeCallDmIdRef.current);
+      sendDmCallSignal("end", {}, dm?.participantId, activeCallDmIdRef.current).catch(() => {});
     }
-    
+    activeCallDmIdRef.current = null;
+
     // Stop local stream
     if (dmCallStreamRef.current) {
       dmCallStreamRef.current.getTracks().forEach((track) => {
@@ -1743,9 +1753,8 @@ export function App() {
       remoteAudioRef.current.srcObject = null;
     }
     
-    // Clear pending ICE candidates
-    pendingIceCandidatesRef.current = [];
-    
+    pendingIceCandidatesRef.current = new Map();
+
     setDmCallActive(false);
     setDmCallMuted(false);
     setCallStatus("idle");
@@ -1764,12 +1773,13 @@ export function App() {
   }
 
   function declineCall() {
-    // Stop ringtone
     if (ringtoneStopRef.current) {
       ringtoneStopRef.current();
       ringtoneStopRef.current = null;
     }
-    sendDmCallSignal("end", {}).catch(() => {});
+    if (incomingCall?.dmId != null && incomingCall?.fromUserId != null) {
+      sendDmCallSignal("end", {}, incomingCall.fromUserId, incomingCall.dmId).catch(() => {});
+    }
     setIncomingCall(null);
     setCallStatus("idle");
     endDmCall(false);
