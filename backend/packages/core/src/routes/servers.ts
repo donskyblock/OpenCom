@@ -147,8 +147,8 @@ export async function serverRoutes(app: FastifyInstance) {
     const userId = req.user.sub as string;
     const platformRole = await getPlatformRole(userId);
 
-    const rows = await q<{ id: string; name: string; base_url: string; roles: string }>(
-      `SELECT s.id, s.name, s.base_url, m.roles
+    const rows = await q<{ id: string; name: string; base_url: string; default_guild_id: string | null; roles: string }>(
+      `SELECT s.id, s.name, s.base_url, s.default_guild_id, m.roles
        FROM memberships m
        JOIN servers s ON s.id = m.server_id
        WHERE m.user_id = :userId
@@ -174,11 +174,46 @@ export async function serverRoutes(app: FastifyInstance) {
         id: r.id,
         name: r.name,
         baseUrl: r.base_url,
+        defaultGuildId: r.default_guild_id ?? undefined,
         roles: membershipRoles,
         membershipToken
       };
     }));
 
     return { servers };
+  });
+
+  // Leave server (remove membership; client should also call node POST /v1/guilds/:guildId/leave if it has defaultGuildId)
+  app.post("/v1/servers/:serverId/leave", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const { serverId } = z.object({ serverId: z.string().min(3) }).parse(req.params);
+
+    const member = await q<{ user_id: string }>(
+      `SELECT user_id FROM memberships WHERE server_id=:serverId AND user_id=:userId`,
+      { serverId, userId }
+    );
+    if (!member.length) return rep.code(403).send({ error: "NOT_A_MEMBER" });
+
+    const server = await q<{ id: string }>(`SELECT id FROM servers WHERE id=:serverId`, { serverId });
+    if (!server.length) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
+
+    await q(`DELETE FROM memberships WHERE server_id=:serverId AND user_id=:userId`, { serverId, userId });
+
+    return rep.send({ ok: true });
+  });
+
+  // Delete server (owner only); removes server and all memberships
+  app.delete("/v1/servers/:serverId", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const { serverId } = z.object({ serverId: z.string().min(3) }).parse(req.params);
+
+    const server = await q<{ owner_user_id: string }>(`SELECT owner_user_id FROM servers WHERE id=:serverId`, { serverId });
+    if (!server.length) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
+    if (server[0].owner_user_id !== userId) return rep.code(403).send({ error: "NOT_OWNER" });
+
+    await q(`DELETE FROM memberships WHERE server_id=:serverId`, { serverId });
+    await q(`DELETE FROM servers WHERE id=:serverId`, { serverId });
+
+    return rep.send({ ok: true });
   });
 }

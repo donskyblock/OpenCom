@@ -20,4 +20,17 @@ export async function guildJoinRoutes(app: FastifyInstance) {
 
     return rep.send({ ok: true });
   });
+
+  // Leave guild (remove self from guild_members)
+  app.post("/v1/guilds/:guildId/leave", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { guildId } = z.object({ guildId: z.string().min(3) }).parse(req.params);
+    const userId = req.auth.userId as string;
+
+    const g = await q<{ id: string }>(`SELECT id FROM guilds WHERE id=:guildId`, { guildId });
+    if (!g.length) return rep.code(404).send({ error: "GUILD_NOT_FOUND" });
+
+    await q(`DELETE FROM guild_members WHERE guild_id=:guildId AND user_id=:userId`, { guildId, userId });
+
+    return rep.send({ ok: true });
+  });
 }
