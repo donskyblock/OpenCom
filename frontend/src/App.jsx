@@ -124,18 +124,85 @@ function formatMessageTime(value) {
 function playNotificationBeep() {
   try {
     const audioCtx = new window.AudioContext();
-    const oscillator = audioCtx.createOscillator();
+    // More pleasant notification sound - two-tone chime
+    const osc1 = audioCtx.createOscillator();
+    const osc2 = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
-    oscillator.type = "sine";
-    oscillator.frequency.value = 880;
-    gain.gain.value = 0.05;
-    oscillator.connect(gain);
+    
+    osc1.type = "sine";
+    osc1.frequency.value = 523.25; // C5
+    osc2.type = "sine";
+    osc2.frequency.value = 659.25; // E5
+    
+    gain.gain.setValueAtTime(0, audioCtx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.15, audioCtx.currentTime + 0.05);
+    gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.25);
+    
+    osc1.connect(gain);
+    osc2.connect(gain);
     gain.connect(audioCtx.destination);
-    oscillator.start();
-    oscillator.stop(audioCtx.currentTime + 0.12);
-    oscillator.onended = () => audioCtx.close();
+    
+    osc1.start();
+    osc2.start();
+    osc1.stop(audioCtx.currentTime + 0.25);
+    osc2.stop(audioCtx.currentTime + 0.25);
+    
+    osc1.onended = () => {
+      osc2.onended = () => audioCtx.close();
+    };
   } catch {
     // ignore audio limitations
+  }
+}
+
+function playRingtone() {
+  try {
+    const audioCtx = new window.AudioContext();
+    // Discord-like ringtone - repeating pattern
+    let time = audioCtx.currentTime;
+    const gain = audioCtx.createGain();
+    gain.gain.setValueAtTime(0.2, time);
+    gain.connect(audioCtx.destination);
+    
+    // Create a pleasant ring pattern
+    const frequencies = [523.25, 659.25, 783.99]; // C5, E5, G5
+    let ringCount = 0;
+    const maxRings = 20; // Stop after 20 rings
+    
+    function playRing() {
+      if (ringCount >= maxRings) {
+        gain.gain.linearRampToValueAtTime(0, time + 0.1);
+        setTimeout(() => audioCtx.close(), 200);
+        return;
+      }
+      
+      frequencies.forEach((freq, idx) => {
+        const osc = audioCtx.createOscillator();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        osc.start(time + idx * 0.05);
+        osc.stop(time + 0.3 + idx * 0.05);
+      });
+      
+      ringCount++;
+      time += 0.5;
+      
+      if (ringCount < maxRings) {
+        setTimeout(playRing, 500);
+      }
+    }
+    
+    playRing();
+    
+    // Return function to stop ringing
+    return () => {
+      ringCount = maxRings;
+      gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+      setTimeout(() => audioCtx.close(), 200);
+    };
+  } catch {
+    return () => {}; // Return no-op function if audio fails
   }
 }
 
@@ -242,6 +309,8 @@ export function App() {
   const pendingIceCandidatesRef = useRef([]);
   const processedSignalIdsRef = useRef(new Set());
   const profileCardDragOffsetRef = useRef({ x: 0, y: 0 });
+  const ringtoneStopRef = useRef(null);
+  const lastDmCallSignalIdsRef = useRef(new Map()); // Track last signal ID per DM
   const storageScope = me?.id || "anonymous";
 
   const activeServer = useMemo(() => servers.find((server) => server.id === activeServerId) || null, [servers, activeServerId]);
@@ -614,6 +683,7 @@ export function App() {
     }
   }, [navMode, dms, activeDmId]);
 
+  // Separate DM message polling - does NOT touch call state
   useEffect(() => {
     if (!accessToken || navMode !== "dms") return;
 
@@ -626,7 +696,15 @@ export function App() {
 
         setDms((current) => {
           const prevMap = new Map(current.map((item) => [item.id, item]));
-          return (dmsData.dms || []).map((item) => ({ ...item, messages: prevMap.get(item.id)?.messages || [] }));
+          // Preserve existing messages and call state - only update DM metadata
+          return (dmsData.dms || []).map((item) => {
+            const existing = prevMap.get(item.id);
+            return { 
+              ...item, 
+              messages: existing?.messages || [],
+              // Preserve any call-related state if it exists
+            };
+          });
         });
         setFriendRequests({ incoming: requestsData.incoming || [], outgoing: requestsData.outgoing || [] });
 
@@ -1336,37 +1414,58 @@ export function App() {
     }
   }
 
+  // Separate call signal polling - checks ALL DMs, independent of DM message polling
   useEffect(() => {
-    if (!accessToken || !activeDmId || !me?.id) return;
+    if (!accessToken || !me?.id || navMode !== "dms") return;
 
     const timer = window.setInterval(async () => {
       try {
-        const query = lastDmCallSignalIdRef.current ? `?afterId=${encodeURIComponent(lastDmCallSignalIdRef.current)}` : "";
-        const data = await api(`/v1/social/dms/${activeDmId}/call-signals${query}`, {
-          headers: { Authorization: `Bearer ${accessToken}` }
-        });
+        // Check call signals for ALL DMs
+        for (const dm of dms) {
+          if (!dm.id) continue;
+          
+          const lastSignalId = lastDmCallSignalIdsRef.current.get(dm.id) || "";
+          const query = lastSignalId ? `?afterId=${encodeURIComponent(lastSignalId)}` : "";
+          const data = await api(`/v1/social/dms/${dm.id}/call-signals${query}`, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+          }).catch(() => ({ signals: [] })); // Ignore errors for individual DMs
 
-        for (const signal of data.signals || []) {
-          // Skip already processed signals
-          if (processedSignalIdsRef.current.has(signal.id)) continue;
-          processedSignalIdsRef.current.add(signal.id);
-          lastDmCallSignalIdRef.current = signal.id;
-          if (!signal?.type) continue;
+          for (const signal of data.signals || []) {
+            // Skip already processed signals
+            if (processedSignalIdsRef.current.has(signal.id)) continue;
+            processedSignalIdsRef.current.add(signal.id);
+            lastDmCallSignalIdsRef.current.set(dm.id, signal.id);
+            if (!signal?.type) continue;
 
-          // Ignore signals from self
-          if (signal.fromUserId === me?.id) continue;
+            // Ignore signals from self
+            if (signal.fromUserId === me?.id) continue;
 
-          if (signal.type === "offer") {
-            // Show incoming call notification
-            setIncomingCall({
-              fromUserId: signal.fromUserId,
-              fromUsername: activeDm?.name || "Unknown",
-              dmId: activeDmId
-            });
-            setCallStatus("ringing");
-            
-            // Auto-answer the call (Discord-like behavior)
-            try {
+            if (signal.type === "offer") {
+              // Stop any existing ringtone
+              if (ringtoneStopRef.current) {
+                ringtoneStopRef.current();
+                ringtoneStopRef.current = null;
+              }
+              
+              // Show incoming call notification
+              setIncomingCall({
+                fromUserId: signal.fromUserId,
+                fromUsername: dm.name || "Unknown",
+                dmId: dm.id
+              });
+              setCallStatus("ringing");
+              
+              // Play ringtone
+              ringtoneStopRef.current = playRingtone();
+              
+              // Auto-answer the call (Discord-like behavior)
+              try {
+              // Stop ringtone
+              if (ringtoneStopRef.current) {
+                ringtoneStopRef.current();
+                ringtoneStopRef.current = null;
+              }
+              
               // Clean up existing connection
               dmCallPeerRef.current?.close();
               pendingIceCandidatesRef.current = [];
@@ -1392,7 +1491,7 @@ export function App() {
                 setCallParticipants((prev) => {
                   const exists = prev.find(p => p.id === signal.fromUserId);
                   if (!exists) {
-                    return [...prev, { id: signal.fromUserId, username: activeDm?.name || "Unknown", muted: false }];
+                    return [...prev, { id: signal.fromUserId, username: dm.name || "Unknown", muted: false }];
                   }
                   return prev;
                 });
@@ -1430,13 +1529,19 @@ export function App() {
               await peer.setLocalDescription(answer);
               await sendDmCallSignal("answer", { answer }, signal.fromUserId);
               setDmCallActive(true);
-              setCallParticipants([{ id: me?.id, username: me?.username || "You", muted: dmCallMuted }, { id: signal.fromUserId, username: activeDm?.name || "Unknown", muted: false }]);
+              setCallParticipants([{ id: me?.id, username: me?.username || "You", muted: dmCallMuted }, { id: signal.fromUserId, username: dm.name || "Unknown", muted: false }]);
             } catch (err) {
               console.error("Failed to handle offer:", err);
               setStatus("Could not join DM call.");
               setIncomingCall(null);
               setCallStatus("idle");
+              // Stop ringtone on error
+              if (ringtoneStopRef.current) {
+                ringtoneStopRef.current();
+                ringtoneStopRef.current = null;
+              }
             }
+            continue; // Move to next signal
           }
 
           if (signal.type === "answer" && dmCallPeerRef.current && signal.payload?.answer) {
@@ -1455,16 +1560,18 @@ export function App() {
               
               setDmCallActive(true);
               setCallStatus("active");
+              const dmForAnswer = dms.find(d => d.id === dm.id);
               setCallParticipants((prev) => {
                 const exists = prev.find(p => p.id === signal.fromUserId);
                 if (!exists) {
-                  return [...prev, { id: signal.fromUserId, username: activeDm?.name || "Unknown", muted: false }];
+                  return [...prev, { id: signal.fromUserId, username: dmForAnswer?.name || dm.name || "Unknown", muted: false }];
                 }
                 return prev;
               });
             } catch (err) {
               console.error("Failed to handle answer:", err);
             }
+            continue;
           }
 
           if (signal.type === "ice" && signal.payload?.candidate) {
@@ -1481,19 +1588,34 @@ export function App() {
                 console.warn("Failed to add ICE candidate:", err);
               }
             }
+            continue;
           }
 
           if (signal.type === "end") {
+            // Stop ringtone if ending
+            if (ringtoneStopRef.current) {
+              ringtoneStopRef.current();
+              ringtoneStopRef.current = null;
+            }
             endDmCall(false);
+            continue;
           }
+        }
         }
       } catch (err) {
         console.error("Call signal polling error:", err);
       }
     }, 1000);
 
-    return () => window.clearInterval(timer);
-  }, [accessToken, activeDmId, me?.id]);
+    return () => {
+      window.clearInterval(timer);
+      // Stop ringtone on cleanup
+      if (ringtoneStopRef.current) {
+        ringtoneStopRef.current();
+        ringtoneStopRef.current = null;
+      }
+    };
+  }, [accessToken, dms, me?.id, navMode]);
 
   async function startDmCall() {
     if (!activeDm?.participantId || !activeDmId) return;
@@ -1567,6 +1689,12 @@ export function App() {
   }
 
   function endDmCall(notifyRemote = true) {
+    // Stop ringtone
+    if (ringtoneStopRef.current) {
+      ringtoneStopRef.current();
+      ringtoneStopRef.current = null;
+    }
+    
     if (notifyRemote) {
       sendDmCallSignal("end", {}).catch(() => {
         // Ignore errors when ending call
@@ -1604,11 +1732,21 @@ export function App() {
   }
 
   function acceptCall() {
+    // Stop ringtone
+    if (ringtoneStopRef.current) {
+      ringtoneStopRef.current();
+      ringtoneStopRef.current = null;
+    }
     setIncomingCall(null);
     setCallStatus("active");
   }
 
   function declineCall() {
+    // Stop ringtone
+    if (ringtoneStopRef.current) {
+      ringtoneStopRef.current();
+      ringtoneStopRef.current = null;
+    }
     sendDmCallSignal("end", {}).catch(() => {});
     setIncomingCall(null);
     setCallStatus("idle");
@@ -1727,7 +1865,50 @@ export function App() {
         </div>
       )}
       <aside className="server-rail">
-        <div className="rail-header" title="OpenCom">OC</div>
+        <div className="rail-header" title="OpenCom">
+          <svg className="logo-svg" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+            {/* Shark body - white with blue gradients */}
+            <defs>
+              <linearGradient id="sharkTopGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" style={{stopColor:"#87CEEB", stopOpacity:1}} />
+                <stop offset="100%" style={{stopColor:"#FFFFFF", stopOpacity:1}} />
+              </linearGradient>
+              <linearGradient id="sharkBottomGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" style={{stopColor:"#FFFFFF", stopOpacity:1}} />
+                <stop offset="100%" style={{stopColor:"#4A90E2", stopOpacity:1}} />
+              </linearGradient>
+            </defs>
+            
+            {/* Main body */}
+            <path d="M 20 50 Q 25 30, 35 35 Q 45 40, 50 45 Q 55 50, 60 55 Q 70 60, 75 55 Q 80 50, 78 45 Q 75 40, 70 35 Q 65 30, 60 25 Q 55 20, 50 22 Q 45 20, 40 25 Q 35 30, 30 35 Q 25 40, 22 45 Z" fill="url(#sharkTopGrad)" />
+            
+            {/* Lower body with darker gradient */}
+            <path d="M 20 50 Q 25 60, 35 65 Q 45 70, 50 75 Q 55 80, 60 75 Q 70 70, 75 65 Q 80 60, 78 55 Q 75 50, 70 45 Q 65 50, 60 55 Q 55 50, 50 45 Q 45 50, 40 55 Q 35 50, 30 45 Q 25 50, 22 55 Z" fill="url(#sharkBottomGrad)" />
+            
+            {/* Central circle */}
+            <circle cx="50" cy="50" r="12" fill="#000000" stroke="#FFFFFF" strokeWidth="2" />
+            
+            {/* Eye */}
+            <polygon points="42,42 45,40 48,42 45,44" fill="#000000" />
+            
+            {/* Gills */}
+            <path d="M 28 48 Q 30 46, 32 48" stroke="#000000" strokeWidth="1.5" fill="none" />
+            <path d="M 28 52 Q 30 50, 32 52" stroke="#000000" strokeWidth="1.5" fill="none" />
+            <path d="M 28 50 Q 30 48, 32 50" stroke="#000000" strokeWidth="1.5" fill="none" />
+            
+            {/* Mouth */}
+            <path d="M 20 50 Q 22 52, 25 50" stroke="#000000" strokeWidth="1.5" fill="none" />
+            <ellipse cx="23" cy="52" rx="3" ry="2" fill="#87CEEB" />
+            <polygon points="20,54 22,52 24,54" fill="#FFFFFF" stroke="#000000" strokeWidth="0.5" />
+            
+            {/* Tail fin */}
+            <path d="M 75 55 Q 85 50, 88 60 Q 85 65, 80 60" fill="url(#sharkBottomGrad)" stroke="#000000" strokeWidth="1" />
+            <path d="M 75 45 Q 85 50, 88 40 Q 85 35, 80 40" fill="#FFFFFF" stroke="#000000" strokeWidth="1" />
+            
+            {/* Pectoral fin */}
+            <path d="M 40 60 Q 45 70, 50 65 Q 48 60, 45 58" fill="url(#sharkBottomGrad)" stroke="#000000" strokeWidth="1" />
+          </svg>
+        </div>
         <button className={`server-pill nav-pill ${navMode === "friends" ? "active" : ""}`} onClick={() => setNavMode("friends")} title="Friends">👥</button>
         <button className={`server-pill nav-pill ${navMode === "dms" ? "active" : ""}`} onClick={() => setNavMode("dms")} title="Direct messages">💬</button>
         <button className={`server-pill nav-pill ${navMode === "profile" ? "active" : ""}`} onClick={() => setNavMode("profile")} title="Profile">🪪</button>
