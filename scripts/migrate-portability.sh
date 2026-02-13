@@ -168,6 +168,37 @@ JSON
   echo "Backup exported to $out_file"
 }
 
+drop_all_tables() {
+  local db_url="$1"
+
+  local lines
+  mapfile -t lines < <(parse_mysql_url "$db_url")
+
+  local user="" password="" host="" port="" dbname=""
+  for kv in "${lines[@]}"; do
+    case "$kv" in
+      USER=*) user="${kv#USER=}" ;;
+      PASSWORD=*) password="${kv#PASSWORD=}" ;;
+      HOST=*) host="${kv#HOST=}" ;;
+      PORT=*) port="${kv#PORT=}" ;;
+      DB=*) dbname="${kv#DB=}" ;;
+    esac
+  done
+
+  local args=(--protocol=TCP --host="$host" --port="$port")
+  [[ -n "$user" ]] && args+=(--user="$user")
+  [[ -n "$password" ]] && args+=(--password="$password")
+  args+=("$dbname")
+
+  # Drop all tables with foreign key checks disabled
+  mysql "${args[@]}" <<SQL
+SET FOREIGN_KEY_CHECKS=0;
+DROP DATABASE \`${dbname}\`;
+CREATE DATABASE \`${dbname}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci;
+SET FOREIGN_KEY_CHECKS=1;
+SQL
+}
+
 import_bundle() {
   local in_file="$1"
   [[ -f "$in_file" ]] || { echo "Backup file not found: $in_file"; exit 1; }
@@ -180,6 +211,12 @@ import_bundle() {
 
   [[ -f "$tmp_dir/core.sql" ]] || { echo "core.sql missing from bundle"; exit 1; }
   [[ -f "$tmp_dir/node.sql" ]] || { echo "node.sql missing from bundle"; exit 1; }
+
+  echo "Dropping and recreating core database..."
+  drop_all_tables "$CORE_DATABASE_URL"
+
+  echo "Dropping and recreating node database..."
+  drop_all_tables "$NODE_DATABASE_URL"
 
   echo "Importing core database..."
   run_mysql_import "$CORE_DATABASE_URL" "$tmp_dir/core.sql"
