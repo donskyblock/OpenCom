@@ -236,6 +236,8 @@ export function App() {
   const lastDmCallSignalIdRef = useRef("");
   const remoteAudioRef = useRef(null);
   const lastDmMessageIdRef = useRef("");
+  const pendingIceCandidatesRef = useRef([]);
+  const processedSignalIdsRef = useRef(new Set());
   const profileCardDragOffsetRef = useRef({ x: 0, y: 0 });
   const storageScope = me?.id || "anonymous";
 
@@ -383,6 +385,12 @@ export function App() {
 
   useEffect(() => {
     lastDmCallSignalIdRef.current = "";
+    processedSignalIdsRef.current.clear();
+    pendingIceCandidatesRef.current = [];
+    // Clean up call when switching DMs
+    if (dmCallActive) {
+      endDmCall(false);
+    }
   }, [activeDmId]);
 
   useEffect(() => {
@@ -1336,51 +1344,116 @@ export function App() {
         });
 
         for (const signal of data.signals || []) {
+          // Skip already processed signals
+          if (processedSignalIdsRef.current.has(signal.id)) continue;
+          processedSignalIdsRef.current.add(signal.id);
           lastDmCallSignalIdRef.current = signal.id;
           if (!signal?.type) continue;
 
+          // Ignore signals from self
+          if (signal.fromUserId === me?.id) continue;
+
           if (signal.type === "offer") {
             try {
+              // Clean up existing connection
+              dmCallPeerRef.current?.close();
+              pendingIceCandidatesRef.current = [];
+
               const stream = dmCallStreamRef.current || await navigator.mediaDevices.getUserMedia({ audio: true });
               dmCallStreamRef.current = stream;
 
-              dmCallPeerRef.current?.close();
-              const peer = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+              const peer = new RTCPeerConnection({ 
+                iceServers: [
+                  { urls: "stun:stun.l.google.com:19302" },
+                  { urls: "stun:stun1.l.google.com:19302" }
+                ] 
+              });
               dmCallPeerRef.current = peer;
 
               stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+              
               peer.ontrack = (remoteEvent) => {
-                if (remoteAudioRef.current) remoteAudioRef.current.srcObject = remoteEvent.streams[0];
+                if (remoteAudioRef.current) {
+                  remoteAudioRef.current.srcObject = remoteEvent.streams[0];
+                }
               };
+              
               peer.onicecandidate = (event) => {
-                if (event.candidate) sendDmCallSignal("ice", { candidate: event.candidate }, signal.fromUserId);
+                if (event.candidate && signal.fromUserId) {
+                  sendDmCallSignal("ice", { candidate: event.candidate }, signal.fromUserId);
+                }
               };
 
-              await peer.setRemoteDescription(signal.payload.offer);
+              peer.onconnectionstatechange = () => {
+                if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
+                  setStatus("Call connection lost.");
+                }
+              };
+
+              await peer.setRemoteDescription(new RTCSessionDescription(signal.payload.offer));
+              
+              // Add any pending ICE candidates
+              for (const candidate of pendingIceCandidatesRef.current) {
+                try {
+                  await peer.addIceCandidate(new RTCIceCandidate(candidate));
+                } catch (err) {
+                  console.warn("Failed to add pending ICE candidate:", err);
+                }
+              }
+              pendingIceCandidatesRef.current = [];
+
               const answer = await peer.createAnswer();
               await peer.setLocalDescription(answer);
               await sendDmCallSignal("answer", { answer }, signal.fromUserId);
               setDmCallActive(true);
-            } catch {
+            } catch (err) {
+              console.error("Failed to handle offer:", err);
               setStatus("Could not join DM call.");
             }
           }
 
           if (signal.type === "answer" && dmCallPeerRef.current && signal.payload?.answer) {
-            await dmCallPeerRef.current.setRemoteDescription(signal.payload.answer);
-            setDmCallActive(true);
+            try {
+              await dmCallPeerRef.current.setRemoteDescription(new RTCSessionDescription(signal.payload.answer));
+              
+              // Add any pending ICE candidates
+              for (const candidate of pendingIceCandidatesRef.current) {
+                try {
+                  await dmCallPeerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+                } catch (err) {
+                  console.warn("Failed to add pending ICE candidate:", err);
+                }
+              }
+              pendingIceCandidatesRef.current = [];
+              
+              setDmCallActive(true);
+            } catch (err) {
+              console.error("Failed to handle answer:", err);
+            }
           }
 
-          if (signal.type === "ice" && dmCallPeerRef.current && signal.payload?.candidate) {
-            try { await dmCallPeerRef.current.addIceCandidate(signal.payload.candidate); } catch {}
+          if (signal.type === "ice" && signal.payload?.candidate) {
+            const candidate = signal.payload.candidate;
+            if (dmCallPeerRef.current) {
+              try {
+                if (dmCallPeerRef.current.remoteDescription) {
+                  await dmCallPeerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+                } else {
+                  // Store for later if remote description not set yet
+                  pendingIceCandidatesRef.current.push(candidate);
+                }
+              } catch (err) {
+                console.warn("Failed to add ICE candidate:", err);
+              }
+            }
           }
 
           if (signal.type === "end") {
             endDmCall(false);
           }
         }
-      } catch {
-        // ignore poll failures
+      } catch (err) {
+        console.error("Call signal polling error:", err);
       }
     }, 1000);
 
@@ -1389,39 +1462,93 @@ export function App() {
 
   async function startDmCall() {
     if (!activeDm?.participantId || !activeDmId) return;
+    if (dmCallActive) {
+      setStatus("Call already active.");
+      return;
+    }
     try {
+      // Clean up any existing connection
+      dmCallPeerRef.current?.close();
+      pendingIceCandidatesRef.current = [];
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       dmCallStreamRef.current = stream;
 
-      dmCallPeerRef.current?.close();
-      const peer = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+      const peer = new RTCPeerConnection({ 
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" }
+        ] 
+      });
       dmCallPeerRef.current = peer;
 
       stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+      
       peer.ontrack = (remoteEvent) => {
-        if (remoteAudioRef.current) remoteAudioRef.current.srcObject = remoteEvent.streams[0];
+        if (remoteAudioRef.current) {
+          remoteAudioRef.current.srcObject = remoteEvent.streams[0];
+        }
       };
+      
       peer.onicecandidate = (event) => {
-        if (event.candidate) sendDmCallSignal("ice", { candidate: event.candidate });
+        if (event.candidate) {
+          sendDmCallSignal("ice", { candidate: event.candidate });
+        }
       };
 
-      const offer = await peer.createOffer();
+      peer.onconnectionstatechange = () => {
+        if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
+          setStatus("Call connection lost.");
+          endDmCall(true);
+        }
+      };
+
+      const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
       await peer.setLocalDescription(offer);
       await sendDmCallSignal("offer", { offer });
       setDmCallActive(true);
       setStatus(`Voice call started with ${activeDm?.name || "friend"}.`);
-    } catch {
+    } catch (err) {
+      console.error("Failed to start call:", err);
       setStatus("Could not start DM voice call. Microphone permission may be blocked.");
+      // Clean up on error
+      dmCallStreamRef.current?.getTracks().forEach((track) => track.stop());
+      dmCallStreamRef.current = null;
+      dmCallPeerRef.current?.close();
+      dmCallPeerRef.current = null;
     }
   }
 
   function endDmCall(notifyRemote = true) {
-    if (notifyRemote) sendDmCallSignal("end", {});
-    dmCallStreamRef.current?.getTracks().forEach((track) => track.stop());
-    dmCallStreamRef.current = null;
-    dmCallPeerRef.current?.close();
-    dmCallPeerRef.current = null;
-    if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
+    if (notifyRemote) {
+      sendDmCallSignal("end", {}).catch(() => {
+        // Ignore errors when ending call
+      });
+    }
+    
+    // Stop local stream
+    if (dmCallStreamRef.current) {
+      dmCallStreamRef.current.getTracks().forEach((track) => {
+        track.stop();
+        track.enabled = false;
+      });
+      dmCallStreamRef.current = null;
+    }
+    
+    // Close peer connection
+    if (dmCallPeerRef.current) {
+      dmCallPeerRef.current.close();
+      dmCallPeerRef.current = null;
+    }
+    
+    // Clear remote audio
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = null;
+    }
+    
+    // Clear pending ICE candidates
+    pendingIceCandidatesRef.current = [];
+    
     setDmCallActive(false);
     setDmCallMuted(false);
   }
@@ -1815,7 +1942,7 @@ export function App() {
               <input ref={dmComposerInputRef} value={dmText} onChange={(event) => setDmText(event.target.value)} placeholder={`Message ${activeDm?.name || "friend"}`} onKeyDown={(event) => event.key === "Enter" && sendDm()} />
               <button className="send-btn" onClick={sendDm} disabled={!activeDm || !dmText.trim()}>Send</button>
             </footer>
-            <audio ref={remoteAudioRef} autoPlay />
+            <audio ref={remoteAudioRef} autoPlay playsInline />
           </>
         )}
 
