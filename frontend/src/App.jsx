@@ -192,6 +192,9 @@ export function App() {
   const [selfStatus, setSelfStatus] = useState(localStorage.getItem(SELF_STATUS_KEY) || "online");
   const [dmCallActive, setDmCallActive] = useState(false);
   const [dmCallMuted, setDmCallMuted] = useState(false);
+  const [incomingCall, setIncomingCall] = useState(null);
+  const [callParticipants, setCallParticipants] = useState([]);
+  const [callStatus, setCallStatus] = useState("idle"); // idle, ringing, active
   const [showPinned, setShowPinned] = useState(false);
   const [pinnedServerMessages, setPinnedServerMessages] = useState(getStoredJson(PINNED_SERVER_KEY, {}));
   const [pinnedDmMessages, setPinnedDmMessages] = useState(getStoredJson(PINNED_DM_KEY, {}));
@@ -1354,6 +1357,15 @@ export function App() {
           if (signal.fromUserId === me?.id) continue;
 
           if (signal.type === "offer") {
+            // Show incoming call notification
+            setIncomingCall({
+              fromUserId: signal.fromUserId,
+              fromUsername: activeDm?.name || "Unknown",
+              dmId: activeDmId
+            });
+            setCallStatus("ringing");
+            
+            // Auto-answer the call (Discord-like behavior)
             try {
               // Clean up existing connection
               dmCallPeerRef.current?.close();
@@ -1376,6 +1388,14 @@ export function App() {
                 if (remoteAudioRef.current) {
                   remoteAudioRef.current.srcObject = remoteEvent.streams[0];
                 }
+                // Update participants when remote track is received
+                setCallParticipants((prev) => {
+                  const exists = prev.find(p => p.id === signal.fromUserId);
+                  if (!exists) {
+                    return [...prev, { id: signal.fromUserId, username: activeDm?.name || "Unknown", muted: false }];
+                  }
+                  return prev;
+                });
               };
               
               peer.onicecandidate = (event) => {
@@ -1387,6 +1407,10 @@ export function App() {
               peer.onconnectionstatechange = () => {
                 if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
                   setStatus("Call connection lost.");
+                  endDmCall(true);
+                } else if (peer.connectionState === "connected") {
+                  setCallStatus("active");
+                  setIncomingCall(null);
                 }
               };
 
@@ -1406,9 +1430,12 @@ export function App() {
               await peer.setLocalDescription(answer);
               await sendDmCallSignal("answer", { answer }, signal.fromUserId);
               setDmCallActive(true);
+              setCallParticipants([{ id: me?.id, username: me?.username || "You", muted: dmCallMuted }, { id: signal.fromUserId, username: activeDm?.name || "Unknown", muted: false }]);
             } catch (err) {
               console.error("Failed to handle offer:", err);
               setStatus("Could not join DM call.");
+              setIncomingCall(null);
+              setCallStatus("idle");
             }
           }
 
@@ -1427,6 +1454,14 @@ export function App() {
               pendingIceCandidatesRef.current = [];
               
               setDmCallActive(true);
+              setCallStatus("active");
+              setCallParticipants((prev) => {
+                const exists = prev.find(p => p.id === signal.fromUserId);
+                if (!exists) {
+                  return [...prev, { id: signal.fromUserId, username: activeDm?.name || "Unknown", muted: false }];
+                }
+                return prev;
+              });
             } catch (err) {
               console.error("Failed to handle answer:", err);
             }
@@ -1488,6 +1523,14 @@ export function App() {
         if (remoteAudioRef.current) {
           remoteAudioRef.current.srcObject = remoteEvent.streams[0];
         }
+        // Update participants when remote track is received
+        setCallParticipants((prev) => {
+          const exists = prev.find(p => p.id === activeDm?.participantId);
+          if (!exists) {
+            return [...prev, { id: activeDm?.participantId, username: activeDm?.name || "Unknown", muted: false }];
+          }
+          return prev;
+        });
       };
       
       peer.onicecandidate = (event) => {
@@ -1500,6 +1543,8 @@ export function App() {
         if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
           setStatus("Call connection lost.");
           endDmCall(true);
+        } else if (peer.connectionState === "connected") {
+          setCallStatus("active");
         }
       };
 
@@ -1507,7 +1552,9 @@ export function App() {
       await peer.setLocalDescription(offer);
       await sendDmCallSignal("offer", { offer });
       setDmCallActive(true);
-      setStatus(`Voice call started with ${activeDm?.name || "friend"}.`);
+      setCallStatus("ringing");
+      setCallParticipants([{ id: me?.id, username: me?.username || "You", muted: dmCallMuted }]);
+      setStatus(`Calling ${activeDm?.name || "friend"}...`);
     } catch (err) {
       console.error("Failed to start call:", err);
       setStatus("Could not start DM voice call. Microphone permission may be blocked.");
@@ -1551,6 +1598,21 @@ export function App() {
     
     setDmCallActive(false);
     setDmCallMuted(false);
+    setCallStatus("idle");
+    setCallParticipants([]);
+    setIncomingCall(null);
+  }
+
+  function acceptCall() {
+    setIncomingCall(null);
+    setCallStatus("active");
+  }
+
+  function declineCall() {
+    sendDmCallSignal("end", {}).catch(() => {});
+    setIncomingCall(null);
+    setCallStatus("idle");
+    endDmCall(false);
   }
 
   function toggleDmCallMute() {
@@ -1561,6 +1623,10 @@ export function App() {
       track.enabled = !nextMuted;
     });
     setDmCallMuted(nextMuted);
+    // Update participant mute status
+    setCallParticipants((prev) => 
+      prev.map(p => p.id === me?.id ? { ...p, muted: nextMuted } : p)
+    );
   }
 
   function openMessageContextMenu(event, message) {
@@ -1646,6 +1712,20 @@ export function App() {
 
   return (
     <div className="opencom-shell">
+      {incomingCall && (
+        <div className="call-notification">
+          <div className="call-notification-content">
+            <div className="call-notification-info">
+              <strong>📞 Incoming call from {incomingCall.fromUsername}</strong>
+              <span className="hint">Voice call</span>
+            </div>
+            <div className="call-notification-actions">
+              <button className="danger" onClick={declineCall}>Decline</button>
+              <button onClick={() => { acceptCall(); setNavMode("dms"); setActiveDmId(incomingCall.dmId); }}>Accept</button>
+            </div>
+          </div>
+        </div>
+      )}
       <aside className="server-rail">
         <div className="rail-header" title="OpenCom">OC</div>
         <button className={`server-pill nav-pill ${navMode === "friends" ? "active" : ""}`} onClick={() => setNavMode("friends")} title="Friends">👥</button>
@@ -1719,18 +1799,25 @@ export function App() {
 
         {navMode === "dms" && (
           <section className="sidebar-block channels-container">
-            {dms.map((dm) => (
-              <button key={dm.id} className={`channel-row dm-sidebar-row ${dm.id === activeDmId ? "active" : ""}`} onClick={() => setActiveDmId(dm.id)} title={`DM ${dm.name}`} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                {dm.pfp_url ? (
-                  <img src={dm.pfp_url} alt={dm.name} style={{ width: "28px", height: "28px", borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
-                ) : (
-                  <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: `hsl(${Math.abs((dm.participantId || dm.id || "").charCodeAt(0) * 7) % 360}, 70%, 60%)`, display: "grid", placeItems: "center", fontSize: "12px", fontWeight: "bold", flexShrink: 0 }}>
-                    {dm.name?.substring(0, 1).toUpperCase()}
-                  </div>
-                )}
-                <span className="channel-hash">@</span> <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{dm.name}</span>
-              </button>
-            ))}
+            {dms.map((dm) => {
+              const isInCallWithThisDm = dmCallActive && activeDmId === dm.id;
+              const hasIncomingCall = incomingCall && incomingCall.dmId === dm.id;
+              return (
+                <button key={dm.id} className={`channel-row dm-sidebar-row ${dm.id === activeDmId ? "active" : ""}`} onClick={() => setActiveDmId(dm.id)} title={`DM ${dm.name}`} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  {dm.pfp_url ? (
+                    <img src={dm.pfp_url} alt={dm.name} style={{ width: "28px", height: "28px", borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+                  ) : (
+                    <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: `hsl(${Math.abs((dm.participantId || dm.id || "").charCodeAt(0) * 7) % 360}, 70%, 60%)`, display: "grid", placeItems: "center", fontSize: "12px", fontWeight: "bold", flexShrink: 0 }}>
+                      {dm.name?.substring(0, 1).toUpperCase()}
+                    </div>
+                  )}
+                  <span className="channel-hash">@</span> 
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>{dm.name}</span>
+                  {isInCallWithThisDm && <span style={{ fontSize: "12px", color: "var(--green)" }}>🔊</span>}
+                  {hasIncomingCall && <span style={{ fontSize: "12px", color: "var(--brand)", animation: "pulse 1s infinite" }}>📞</span>}
+                </button>
+              );
+            })}
             {!dms.length && <p className="hint">Add friends to open direct message threads.</p>}
           </section>
         )}
@@ -1899,7 +1986,19 @@ export function App() {
                 {dmCallActive && <button className="danger" onClick={endDmCall}>End Call</button>}
               </div>
             </header>
-            {dmCallActive && <div className="call-banner">In voice call with {activeDm?.name || "friend"}</div>}
+            {dmCallActive && (
+              <div className="call-banner">
+                <div className="call-participants">
+                  <span>🔊 In call with:</span>
+                  {callParticipants.map((participant) => (
+                    <span key={participant.id} className="call-participant">
+                      {participant.id === me?.id ? "You" : participant.username}
+                      {participant.muted && " 🔇"}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             {showPinned && activePinnedDmMessages.length > 0 && (
               <div className="pinned-strip">
                 {activePinnedDmMessages.slice(0, 3).map((item) => (
