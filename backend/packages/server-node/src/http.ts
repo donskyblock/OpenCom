@@ -3,7 +3,7 @@ import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 
 export function buildHttp() {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: true, bodyLimit: 10 * 1024 * 1024 }); // 10MB limit
   app.register(cors, { origin: true, credentials: true });
   app.register(rateLimit, { max: 300, timeWindow: "1 minute" });
 

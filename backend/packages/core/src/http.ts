@@ -6,7 +6,7 @@ import { ZodError } from "zod";
 import { env } from "./env.js";
 
 export function buildHttp() {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: true, bodyLimit: 10 * 1024 * 1024 }); // 10MB limit for profile images
 
   app.register(cors, { origin: true, credentials: true });
   app.register(rateLimit, { max: 240, timeWindow: "1 minute" });
