@@ -116,4 +116,71 @@ export async function authRoutes(app: FastifyInstance) {
     return rows[0] ?? null;
   });
 
+  app.get("/v1/auth/sessions", { preHandler: [app.authenticate] } as any, async (req: any) => {
+    const userId = req.user.sub as string;
+
+    const rows = await q<{ id: string; created_at: string; expires_at: string; revoked_at: string | null; device_id: string | null }>(
+      `SELECT id, created_at, expires_at, revoked_at, device_id 
+       FROM refresh_tokens 
+       WHERE user_id=:userId AND revoked_at IS NULL AND expires_at > NOW()
+       ORDER BY created_at DESC`,
+      { userId }
+    );
+
+    const sessions = rows.map((row, index) => ({
+      id: row.id,
+      deviceName: row.device_id ? `Device ${row.device_id.slice(0, 8)}` : `Session ${index + 1}`,
+      lastActive: row.created_at,
+      expiresAt: row.expires_at,
+      isCurrent: index === 0 // Most recent session is considered current
+    }));
+
+    return { sessions };
+  });
+
+  app.delete("/v1/auth/sessions/:sessionId", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const { sessionId } = z.object({ sessionId: z.string().min(3) }).parse(req.params);
+
+    const rows = await q<{ user_id: string }>(
+      `SELECT user_id FROM refresh_tokens WHERE id=:sessionId`,
+      { sessionId }
+    );
+
+    if (!rows.length) return rep.code(404).send({ error: "SESSION_NOT_FOUND" });
+    if (rows[0].user_id !== userId) return rep.code(403).send({ error: "FORBIDDEN" });
+
+    await q(
+      `UPDATE refresh_tokens SET revoked_at=NOW() WHERE id=:sessionId`,
+      { sessionId }
+    );
+
+    return rep.send({ success: true });
+  });
+
+  app.patch("/v1/auth/password", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const body = parseBody(z.object({
+      currentPassword: z.string().min(1),
+      newPassword: z.string().min(8).max(200)
+    }), req.body);
+
+    const users = await q<{ password_hash: string }>(
+      `SELECT password_hash FROM users WHERE id=:userId`,
+      { userId }
+    );
+    if (!users.length) return rep.code(404).send({ error: "USER_NOT_FOUND" });
+
+    const ok = await verifyPassword(users[0].password_hash, body.currentPassword);
+    if (!ok) return rep.code(401).send({ error: "INVALID_PASSWORD" });
+
+    const newHash = await hashPassword(body.newPassword);
+    await q(
+      `UPDATE users SET password_hash=:newHash WHERE id=:userId`,
+      { userId, newHash }
+    );
+
+    return rep.send({ success: true });
+  });
+
 }

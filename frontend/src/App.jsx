@@ -208,6 +208,8 @@ export function App() {
   const [replyTarget, setReplyTarget] = useState(null);
   const [memberProfileCard, setMemberProfileCard] = useState(null);
   const [themeCss, setThemeCss, themeEnabled, setThemeEnabled] = useThemeCss();
+  const [sessions, setSessions] = useState([]);
+  const [passwordForm, setPasswordForm] = useState({ current: "", new: "", confirm: "" });
 
   const messagesRef = useRef(null);
   const composerInputRef = useRef(null);
@@ -713,6 +715,57 @@ export function App() {
       setStatus("Privacy settings saved.");
     } catch (error) {
       setStatus(`Could not save privacy settings: ${error.message}`);
+    }
+  }
+
+  async function loadSessions() {
+    if (!accessToken) return;
+    try {
+      const data = await api("/v1/auth/sessions", {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      setSessions(data.sessions || []);
+    } catch (error) {
+      setStatus(`Could not load sessions: ${error.message}`);
+    }
+  }
+
+  async function revokeSession(sessionId) {
+    if (!accessToken) return;
+    try {
+      await api(`/v1/auth/sessions/${sessionId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      setStatus("Session revoked.");
+      await loadSessions();
+    } catch (error) {
+      setStatus(`Could not revoke session: ${error.message}`);
+    }
+  }
+
+  async function changePassword() {
+    if (!passwordForm.current || !passwordForm.new || passwordForm.new !== passwordForm.confirm) {
+      setStatus("Please fill all fields and ensure passwords match.");
+      return;
+    }
+    if (passwordForm.new.length < 8) {
+      setStatus("New password must be at least 8 characters.");
+      return;
+    }
+    try {
+      await api("/v1/auth/password", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          currentPassword: passwordForm.current,
+          newPassword: passwordForm.new
+        })
+      });
+      setPasswordForm({ current: "", new: "", confirm: "" });
+      setStatus("Password changed successfully.");
+    } catch (error) {
+      setStatus(`Could not change password: ${error.message}`);
     }
   }
 
@@ -1625,6 +1678,7 @@ export function App() {
             <aside className="settings-nav">
               <h3>Settings</h3>
               <button className={settingsTab === "profile" ? "active" : "ghost"} onClick={() => setSettingsTab("profile")}>Profile</button>
+              <button className={settingsTab === "security" ? "active" : "ghost"} onClick={() => { setSettingsTab("security"); loadSessions(); }}>Security</button>
               <button className={settingsTab === "server" ? "active" : "ghost"} onClick={() => setSettingsTab("server")}>Server</button>
               <button className={settingsTab === "roles" ? "active" : "ghost"} onClick={() => setSettingsTab("roles")}>Roles</button>
               <button className={settingsTab === "invites" ? "active" : "ghost"} onClick={() => setSettingsTab("invites")}>Invites</button>
@@ -1742,12 +1796,46 @@ export function App() {
                 </section>
               )}
 
-              {settingsTab === "profile" && (
-                <section className="card">
-                  <h4>Social Privacy</h4>
-                  <label><input type="checkbox" checked={allowFriendRequests} onChange={(event) => setAllowFriendRequests(event.target.checked)} /> Allow incoming friend requests</label>
-                  <button onClick={saveSocialSettings}>Save Privacy</button>
-                </section>
+              {settingsTab === "security" && (
+                <>
+                  <section className="card security-card">
+                    <h4>Active Sessions</h4>
+                    <p className="hint">Manage your active login sessions. Revoke any session you don't recognize.</p>
+                    <div className="security-info">
+                      {sessions.length === 0 ? (
+                        <p className="hint">Loading sessions...</p>
+                      ) : (
+                        sessions.map((session) => (
+                          <div key={session.id} className="session-item">
+                            <div>
+                              <strong>{session.deviceName || "Unknown Device"}</strong>
+                              <span className="hint">
+                                {session.isCurrent ? "Current session" : `Last active: ${new Date(session.lastActive).toLocaleString()}`}
+                              </span>
+                            </div>
+                            {!session.isCurrent && (
+                              <button className="ghost" onClick={() => revokeSession(session.id)}>Revoke</button>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </section>
+
+                  <section className="card security-card">
+                    <h4>Privacy Settings</h4>
+                    <label><input type="checkbox" checked={allowFriendRequests} onChange={(event) => setAllowFriendRequests(event.target.checked)} /> Allow incoming friend requests</label>
+                    <button onClick={saveSocialSettings}>Save Privacy</button>
+                  </section>
+
+                  <section className="card security-card">
+                    <h4>Change Password</h4>
+                    <label>Current Password<input type="password" value={passwordForm.current} onChange={(event) => setPasswordForm((current) => ({ ...current, current: event.target.value }))} /></label>
+                    <label>New Password<input type="password" value={passwordForm.new} onChange={(event) => setPasswordForm((current) => ({ ...current, new: event.target.value }))} /></label>
+                    <label>Confirm New Password<input type="password" value={passwordForm.confirm} onChange={(event) => setPasswordForm((current) => ({ ...current, confirm: event.target.value }))} /></label>
+                    <button onClick={changePassword} disabled={!passwordForm.current || !passwordForm.new || passwordForm.new !== passwordForm.confirm}>Change Password</button>
+                  </section>
+                </>
               )}
 
               <p className="status">{status}</p>
