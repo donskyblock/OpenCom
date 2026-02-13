@@ -78,11 +78,14 @@ export async function serverRoutes(app: FastifyInstance) {
     const body = parseBody(CreateOfficialServer, req.body);
 
     if (!OFFICIAL_NODE_BASE_URL) {
-      return rep.code(503).send({ error: "OFFICIAL_SERVER_UNAVAILABLE" });
+      return rep.code(503).send({ error: "OFFICIAL_SERVER_UNAVAILABLE", message: "Official server node URL is not configured." });
     }
     if (!OFFICIAL_NODE_SERVER_ID) {
       app.log.warn("OFFICIAL_NODE_SERVER_ID is not set; set it to the same value as NODE_SERVER_ID on the official node");
-      return rep.code(503).send({ error: "OFFICIAL_SERVER_NOT_CONFIGURED" });
+      return rep.code(503).send({
+        error: "OFFICIAL_SERVER_NOT_CONFIGURED",
+        message: "Set OFFICIAL_NODE_SERVER_ID on the API server to the same value as NODE_SERVER_ID on your node."
+      });
     }
 
     const platformRole = await getPlatformRole(userId);

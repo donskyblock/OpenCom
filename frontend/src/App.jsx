@@ -231,6 +231,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState("profile");
   const [addServerModalOpen, setAddServerModalOpen] = useState(false);
+  const [addServerTab, setAddServerTab] = useState("create");
   const [serverContextMenu, setServerContextMenu] = useState(null);
   const [messageContextMenu, setMessageContextMenu] = useState(null);
   const [replyTarget, setReplyTarget] = useState(null);
@@ -1409,7 +1410,7 @@ export function App() {
     } catch (err) {
       const msg = err?.message || "";
       if (msg.includes("SERVER_LIMIT")) setStatus("You already have a server.");
-      else if (msg.includes("OFFICIAL_SERVER_NOT_CONFIGURED")) setStatus("Official server is not configured yet. Please try again later.");
+      else if (msg.includes("OFFICIAL_SERVER_NOT_CONFIGURED")) setStatus("Server creation isn’t set up yet. The site admin needs to set OFFICIAL_NODE_SERVER_ID on the API server (same value as NODE_SERVER_ID on the node).");
       else if (msg.includes("OFFICIAL_SERVER_UNAVAILABLE")) setStatus("Official server is unavailable. Please try again later.");
       else setStatus(`Failed: ${msg}`);
     }
@@ -1974,42 +1975,50 @@ export function App() {
       {addServerModalOpen && (
         <div className="settings-overlay" onClick={() => setAddServerModalOpen(false)}>
           <div className="add-server-modal" onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ marginTop: 0, marginBottom: "1rem" }}>Create or join a server</h3>
-
-            <section className="card" style={{ marginBottom: "1rem" }}>
-              <h4 style={{ marginTop: 0 }}>Join a server</h4>
-              <p className="hint" style={{ marginBottom: "0.5rem" }}>Enter an invite code to join an existing server.</p>
-              <input placeholder="Invite code" value={joinInviteCode ?? ""} onChange={(e) => setJoinInviteCode(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
-              <div className="row-actions" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                <button className="ghost" onClick={previewInvite}>Preview</button>
-                <button onClick={joinInvite}>Join</button>
+            <header className="add-server-modal-header">
+              <h3 style={{ margin: 0 }}>Create or join a server</h3>
+              <div className="add-server-tabs">
+                <button type="button" className={addServerTab === "join" ? "active" : "ghost"} onClick={() => setAddServerTab("join")}>Join</button>
+                <button type="button" className={addServerTab === "custom" ? "active" : "ghost"} onClick={() => setAddServerTab("custom")}>Add host</button>
+                <button type="button" className={addServerTab === "create" ? "active" : "ghost"} onClick={() => setAddServerTab("create")}>Create yours</button>
+                {servers.some((s) => s?.roles?.includes?.("owner")) && (
+                  <a href="/server-admin.html" target="_blank" rel="noopener noreferrer" className="add-server-admin-link" onClick={(e) => e.stopPropagation()}>🔧 Admin</a>
+                )}
               </div>
-              {invitePreview && <p className="hint" style={{ marginTop: "0.5rem" }}>Invite: {invitePreview.code} · Uses: {invitePreview.uses}</p>}
-            </section>
+            </header>
 
-            <section className="card" style={{ marginBottom: "1rem" }}>
-              <h4 style={{ marginTop: 0 }}>Add custom host</h4>
-              <p className="hint" style={{ marginBottom: "0.5rem" }}>Connect to a server node by URL (self-hosted or provider).</p>
-              <input placeholder="Server name" value={newServerName ?? ""} onChange={(e) => setNewServerName(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
-              <input placeholder="https://node.example.com" value={newServerBaseUrl ?? "https://"} onChange={(e) => setNewServerBaseUrl(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
-              <button onClick={createServer}>Add Server</button>
-            </section>
+            <div className="add-server-content">
+              {addServerTab === "join" && (
+                <section className="card">
+                  <p className="hint" style={{ marginBottom: "0.5rem" }}>Enter an invite code to join an existing server.</p>
+                  <input placeholder="Invite code" value={joinInviteCode ?? ""} onChange={(e) => setJoinInviteCode(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+                  <div className="row-actions" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    <button className="ghost" onClick={previewInvite}>Preview</button>
+                    <button onClick={joinInvite}>Join</button>
+                  </div>
+                  {invitePreview && <p className="hint" style={{ marginTop: "0.5rem" }}>Invite: {invitePreview.code} · Uses: {invitePreview.uses}</p>}
+                </section>
+              )}
 
-            <section className="card" style={{ marginBottom: "1rem" }}>
-              <h4 style={{ marginTop: 0 }}>Create your server</h4>
-              <p className="hint" style={{ marginBottom: "0.5rem" }}>One server hosted by us—name it and customize channels and roles.</p>
-              <input placeholder="Server name" value={newOfficialServerName ?? ""} onChange={(e) => setNewOfficialServerName(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
-              <button onClick={createOfficialServer} disabled={!newOfficialServerName?.trim()}>Create your server</button>
-            </section>
+              {addServerTab === "custom" && (
+                <section className="card">
+                  <p className="hint" style={{ marginBottom: "0.5rem" }}>Connect to a server node by URL (self-hosted or provider).</p>
+                  <input placeholder="Server name" value={newServerName ?? ""} onChange={(e) => setNewServerName(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+                  <input placeholder="https://node.example.com" value={newServerBaseUrl ?? "https://"} onChange={(e) => setNewServerBaseUrl(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+                  <button onClick={createServer}>Add Server</button>
+                </section>
+              )}
 
-            {servers.some((s) => s?.roles?.includes?.("owner")) && (
-              <section className="card" style={{ marginBottom: "1rem" }}>
-                <h4 style={{ marginTop: 0 }}>Configure platform</h4>
-                <a href="/server-admin.html" target="_blank" rel="noopener noreferrer" className="ghost" style={{ display: "inline-block", padding: "0.5rem 1rem", borderRadius: "var(--radius)", color: "var(--text-main)", textDecoration: "none", border: "1px solid var(--border-subtle)", fontSize: "0.95em" }}>🔧 Open Server Admin Panel</a>
-              </section>
-            )}
+              {addServerTab === "create" && (
+                <section className="card">
+                  <p className="hint" style={{ marginBottom: "0.5rem" }}>One server hosted by us—name it and customize channels and roles.</p>
+                  <input placeholder="Server name" value={newOfficialServerName ?? ""} onChange={(e) => setNewOfficialServerName(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+                  <button onClick={createOfficialServer} disabled={!newOfficialServerName?.trim()}>Create your server</button>
+                </section>
+              )}
+            </div>
 
-            <button className="ghost" style={{ width: "100%", marginTop: "0.5rem" }} onClick={() => setAddServerModalOpen(false)}>Close</button>
+            <button type="button" className="ghost" style={{ width: "100%", marginTop: "0.5rem" }} onClick={() => setAddServerModalOpen(false)}>Close</button>
           </div>
         </div>
       )}
