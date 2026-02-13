@@ -225,8 +225,12 @@ export function App() {
   const [securitySettings, setSecuritySettings] = useState({ twoFactorEnabled: false });
 
   const messagesRef = useRef(null);
+  const dmMessagesRef = useRef(null);
   const composerInputRef = useRef(null);
   const dmComposerInputRef = useRef(null);
+  const isAtBottomRef = useRef(true);
+  const lastDmMessageCountRef = useRef(0);
+  const previousDmIdRef = useRef("");
   const dmCallStreamRef = useRef(null);
   const dmCallPeerRef = useRef(null);
   const lastDmCallSignalIdRef = useRef("");
@@ -420,10 +424,60 @@ export function App() {
     };
   }, [settingsOpen]);
 
+  // Handle scroll position for server messages
   useEffect(() => {
-    if (!messagesRef.current) return;
+    if (!messagesRef.current || navMode !== "servers") return;
     messagesRef.current.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, activeDmId, dms]);
+  }, [messages, navMode]);
+
+  // Handle scroll position for DM messages - only scroll if at bottom
+  useEffect(() => {
+    if (!dmMessagesRef.current || navMode !== "dms") return;
+    
+    const container = dmMessagesRef.current;
+    const isNewDm = activeDmId !== previousDmIdRef.current;
+    
+    if (isNewDm) {
+      // New DM selected - scroll to bottom
+      previousDmIdRef.current = activeDmId;
+      lastDmMessageCountRef.current = activeDm?.messages?.length || 0;
+      container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+      isAtBottomRef.current = true;
+      return;
+    }
+    
+    // Check if user is near bottom
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    
+    // Check if new messages were added
+    const currentMessageCount = activeDm?.messages?.length || 0;
+    const hasNewMessages = currentMessageCount > lastDmMessageCountRef.current;
+    
+    // Only auto-scroll if user is at bottom and new messages arrived
+    if (hasNewMessages && isNearBottom) {
+      container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+      isAtBottomRef.current = true;
+    } else if (hasNewMessages) {
+      // New messages but user scrolled up - don't scroll, just update count
+      isAtBottomRef.current = false;
+    }
+    
+    lastDmMessageCountRef.current = currentMessageCount;
+  }, [activeDm?.messages, activeDmId, navMode]);
+
+  // Track scroll position for DMs
+  useEffect(() => {
+    if (!dmMessagesRef.current || navMode !== "dms") return;
+    
+    const container = dmMessagesRef.current;
+    const handleScroll = () => {
+      const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+      isAtBottomRef.current = isNearBottom;
+    };
+    
+    container.addEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [navMode, activeDmId]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -1726,7 +1780,7 @@ export function App() {
                 ))}
               </div>
             )}
-            <div className="messages" ref={messagesRef}>
+            <div className="messages" ref={dmMessagesRef}>
               {groupedDmMessages.map((group) => (
                 <article key={group.id} className="msg dm-msg grouped-msg">
                   <div className="msg-avatar">
