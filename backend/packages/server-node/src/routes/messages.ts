@@ -37,9 +37,8 @@ export async function messageRoutes(
     let rows: any[];
     if (qs.before) {
       rows = await q<any>(
-        `SELECT m.id, m.author_id, u.username, u.pfp_url, m.content, m.created_at
+        `SELECT m.id, m.author_id, m.content, m.created_at
          FROM messages m
-         LEFT JOIN users u ON m.author_id = u.id
          WHERE m.channel_id=:channelId AND m.created_at < :before
          ORDER BY m.created_at DESC
          LIMIT :limit`,
@@ -47,15 +46,15 @@ export async function messageRoutes(
       );
     } else {
       rows = await q<any>(
-        `SELECT m.id, m.author_id, u.username, u.pfp_url, m.content, m.created_at
+        `SELECT m.id, m.author_id, m.content, m.created_at
          FROM messages m
-         LEFT JOIN users u ON m.author_id = u.id
          WHERE m.channel_id=:channelId
          ORDER BY m.created_at DESC
          LIMIT :limit`,
         { channelId, limit: qs.limit }
       );
     }
+    rows = rows.map((r: any) => ({ ...r, username: r.author_id, pfp_url: null }));
 
     // Attachments for returned messages
     if (rows.length) {

@@ -43,10 +43,9 @@ export async function guildStateRoutes(app: FastifyInstance) {
       { guildId, userId }
     );
 
-    const members = await q<{ user_id: string; nick: string | null; pfp_url: string | null }>(
-      `SELECT gm.user_id, gm.nick, u.pfp_url
+    const members = await q<{ user_id: string; nick: string | null }>(
+      `SELECT gm.user_id, gm.nick
        FROM guild_members gm
-       LEFT JOIN users u ON gm.user_id = u.id
        WHERE gm.guild_id=:guildId
        ORDER BY gm.joined_at ASC`,
       { guildId }
@@ -60,7 +59,7 @@ export async function guildStateRoutes(app: FastifyInstance) {
       members: members.map((member) => ({
         id: member.user_id,
         username: member.nick || member.user_id,
-        pfp_url: member.pfp_url,
+        pfp_url: null,
         status: "online"
       })),
       me: { userId, roleIds: myRoleIds.map(r => r.role_id) }
