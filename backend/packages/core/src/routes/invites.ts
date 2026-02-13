@@ -2,6 +2,8 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { q } from "../db.js";
+import { env } from "../env.js";
+import { signMembershipToken } from "../membershipToken.js";
 import { parseBody } from "../validation.js";
 
 function inviteCode(): string {
@@ -81,6 +83,37 @@ export async function inviteRoutes(app: FastifyInstance) {
     );
 
     await q(`UPDATE invites SET uses = uses + 1 WHERE code=:code`, { code });
+
+    // Add user to the node's guild so they see channels and can use the server
+    const serverRow = await q<{ base_url: string; default_guild_id: string | null }>(
+      `SELECT base_url, default_guild_id FROM servers WHERE id=:id`,
+      { id: inv.server_id }
+    );
+    if (serverRow.length && serverRow[0].default_guild_id) {
+      const baseUrl = (serverRow[0].base_url || "").replace(/\/$/, "");
+      const defaultGuildId = serverRow[0].default_guild_id;
+      const platformRole = await getPlatformRole(userId);
+      const officialBase = (env.OFFICIAL_NODE_BASE_URL || "").replace(/\/$/, "");
+      const audience =
+        officialBase && env.OFFICIAL_NODE_SERVER_ID && baseUrl === officialBase
+          ? env.OFFICIAL_NODE_SERVER_ID
+          : inv.server_id;
+      try {
+        const joinToken = await signMembershipToken(audience, userId, ["member"], platformRole);
+        const joinRes = await fetch(`${baseUrl}/v1/guilds/${defaultGuildId}/join`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${joinToken}`
+          }
+        });
+        if (!joinRes.ok) {
+          req.log.warn({ serverId: inv.server_id, userId, status: joinRes.status }, "Invite join: failed to add user to node guild");
+        }
+      } catch (err) {
+        req.log.warn({ err, serverId: inv.server_id, userId }, "Invite join: error calling node guild join");
+      }
+    }
 
     return { ok: true, serverId: inv.server_id };
   });

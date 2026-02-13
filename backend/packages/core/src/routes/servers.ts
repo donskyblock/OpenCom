@@ -2,8 +2,8 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { ulidLike } from "@ods/shared/ids.js";
 import { q } from "../db.js";
-import { SignJWT, importJWK } from "jose";
 import { env } from "../env.js";
+import { signMembershipToken } from "../membershipToken.js";
 import { parseBody } from "../validation.js";
 
 const OFFICIAL_NODE_BASE_URL = env.OFFICIAL_NODE_BASE_URL;
@@ -28,24 +28,7 @@ async function getPlatformRole(userId: string): Promise<"user" | "admin" | "owne
   return "user";
 }
 
-async function signMembershipToken(serverId: string, userId: string, roles: string[], platformRole: "user" | "admin" | "owner") {
-  const privateJwk = JSON.parse(env.CORE_MEMBERSHIP_PRIVATE_JWK);
-  const priv = await importJWK(privateJwk, "RS256");
-
-  return new SignJWT({
-    server_id: serverId,
-    roles,
-    platform_role: platformRole
-  })
-    .setProtectedHeader({ alg: "RS256", kid: privateJwk.kid })
-    .setIssuer(env.CORE_ISSUER)
-    .setAudience(serverId)
-    .setSubject(userId)
-    .setExpirationTime("10m")
-    .sign(priv);
-}
-
-async function ensureDefaultGuildOnServerNode(serverId: string, serverName: string, baseUrl: string, ownerUserId: string, tokenServerId?: string) {
+async function ensureDefaultGuildOnServerNode(serverId: string, serverName: string, baseUrl: string, ownerUserId: string, tokenServerId?: string): Promise<string> {
   const platformRole = await getPlatformRole(ownerUserId);
   const ownerRoles = ["owner"];
   if (platformRole === "admin") ownerRoles.push("platform_admin");
@@ -55,7 +38,7 @@ async function ensureDefaultGuildOnServerNode(serverId: string, serverName: stri
   const idForToken = tokenServerId ?? serverId;
   const membershipToken = await signMembershipToken(idForToken, ownerUserId, ownerRoles, platformRole);
 
-  const response = await fetch(`${baseUrl}/v1/guilds`, {
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/guilds`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -68,6 +51,9 @@ async function ensureDefaultGuildOnServerNode(serverId: string, serverName: stri
     const errorBody = await response.text().catch(() => "");
     throw new Error(`DEFAULT_GUILD_CREATE_FAILED_${response.status}${errorBody ? `:${errorBody}` : ""}`);
   }
+
+  const data = (await response.json()) as { guildId?: string };
+  return data.guildId ?? "";
 }
 
 export async function serverRoutes(app: FastifyInstance) {
@@ -104,7 +90,10 @@ export async function serverRoutes(app: FastifyInstance) {
       await q(`INSERT INTO memberships (server_id,user_id,roles) VALUES (:id,:userId,:roles)`,
         { id, userId, roles: JSON.stringify(["owner"]) }
       );
-      await ensureDefaultGuildOnServerNode(id, body.name, OFFICIAL_NODE_BASE_URL, userId, OFFICIAL_NODE_SERVER_ID);
+      const defaultGuildId = await ensureDefaultGuildOnServerNode(id, body.name, OFFICIAL_NODE_BASE_URL, userId, OFFICIAL_NODE_SERVER_ID);
+      if (defaultGuildId) {
+        await q(`UPDATE servers SET default_guild_id = :defaultGuildId WHERE id = :id`, { id, defaultGuildId });
+      }
     } catch (error: any) {
       if (error.message?.startsWith("DEFAULT_GUILD_CREATE_FAILED_")) {
         app.log.error({ err: error, serverId: id }, "Failed to create default guild on official node");
@@ -141,7 +130,10 @@ export async function serverRoutes(app: FastifyInstance) {
     );
 
     try {
-      await ensureDefaultGuildOnServerNode(id, body.name, body.baseUrl, userId);
+      const defaultGuildId = await ensureDefaultGuildOnServerNode(id, body.name, body.baseUrl, userId);
+      if (defaultGuildId) {
+        await q(`UPDATE servers SET default_guild_id = :defaultGuildId WHERE id = :id`, { id, defaultGuildId });
+      }
     } catch (error: any) {
       app.log.error({ err: error, serverId: id, baseUrl: body.baseUrl }, "Failed to create default guild on server node");
       return rep.code(502).send({ error: "DEFAULT_GUILD_CREATE_FAILED" });
