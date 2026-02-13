@@ -1345,7 +1345,7 @@ export function App() {
   async function assignRoleToMember() {
     if (!activeServer || !activeGuildId || !selectedMemberId || !selectedRoleId) return;
     try {
-      await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/members/${selectedMemberId}/roles/${selectedRoleId}`, activeServer.membershipToken, { method: "PUT" });
+      await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/members/${selectedMemberId}/roles/${selectedRoleId}`, activeServer.membershipToken, { method: "PUT", body: "{}" });
       setStatus("Role assigned.");
     } catch (error) {
       setStatus(`Assign role failed: ${error.message}`);

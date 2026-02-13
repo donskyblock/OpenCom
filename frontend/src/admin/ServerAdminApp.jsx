@@ -207,7 +207,8 @@ export function ServerAdminApp() {
       // Use the first selected role
       const roleId = memberRoles[0];
       await nodeApi(server.baseUrl, `/v1/guilds/${selectedGuildId}/members/${selectedMemberId}/roles/${roleId}`, server.membershipToken, {
-        method: "PUT"
+        method: "PUT",
+        body: "{}"
       });
       setMemberRoles([]);
       setSelectedMemberId("");
