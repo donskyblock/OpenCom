@@ -139,38 +139,29 @@ function formatMessageTime(value) {
   return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-function playNotificationBeep() {
+function playNotificationBeep(mute = false) {
+  if (mute) return;
   try {
     const audioCtx = new window.AudioContext();
-    // More pleasant notification sound - two-tone chime
     const osc1 = audioCtx.createOscillator();
     const osc2 = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
-    
     osc1.type = "sine";
-    osc1.frequency.value = 523.25; // C5
+    osc1.frequency.value = 523.25;
     osc2.type = "sine";
-    osc2.frequency.value = 659.25; // E5
-    
+    osc2.frequency.value = 659.25;
     gain.gain.setValueAtTime(0, audioCtx.currentTime);
-    gain.gain.linearRampToValueAtTime(0.15, audioCtx.currentTime + 0.05);
-    gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.25);
-    
+    gain.gain.linearRampToValueAtTime(0.12, audioCtx.currentTime + 0.04);
+    gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.22);
     osc1.connect(gain);
     osc2.connect(gain);
     gain.connect(audioCtx.destination);
-    
     osc1.start();
     osc2.start();
-    osc1.stop(audioCtx.currentTime + 0.25);
-    osc2.stop(audioCtx.currentTime + 0.25);
-    
-    osc1.onended = () => {
-      osc2.onended = () => audioCtx.close();
-    };
-  } catch {
-    // ignore audio limitations
-  }
+    osc1.stop(audioCtx.currentTime + 0.22);
+    osc2.stop(audioCtx.currentTime + 0.22);
+    osc1.onended = () => { osc2.onended = () => audioCtx.close(); };
+  } catch (_) {}
 }
 
 export function App() {
@@ -265,10 +256,14 @@ export function App() {
   const [channelPermsChannelId, setChannelPermsChannelId] = useState("");
   const [presenceByUserId, setPresenceByUserId] = useState({});
   const [showClientFlow, setShowClientFlow] = useState(false);
+  const [gatewayConnected, setGatewayConnected] = useState(false);
+  const [dmNotification, setDmNotification] = useState(null);
 
   const messagesRef = useRef(null);
   const gatewayWsRef = useRef(null);
   const gatewayHeartbeatRef = useRef(null);
+  const selfStatusRef = useRef(selfStatus);
+  selfStatusRef.current = selfStatus;
 
   function getPresence(userId) {
     if (!userId) return "offline";
@@ -652,6 +647,7 @@ export function App() {
   // Core gateway: connect for presence updates, send SET_PRESENCE when self status changes
   useEffect(() => {
     if (!accessToken || !me?.id) {
+      setGatewayConnected(false);
       if (gatewayWsRef.current) {
         gatewayWsRef.current.close();
         gatewayWsRef.current = null;
@@ -683,6 +679,7 @@ export function App() {
           }, msg.d.heartbeat_interval);
         }
         if (msg.op === "READY") {
+          setGatewayConnected(true);
           if (gatewayWsRef.current?.readyState === WebSocket.OPEN) {
             gatewayWsRef.current.send(JSON.stringify({ op: "DISPATCH", t: "SET_PRESENCE", d: { status: selfStatus, customStatus: null } }));
           }
@@ -693,6 +690,7 @@ export function App() {
       } catch (_) {}
     };
     ws.onclose = () => {
+      setGatewayConnected(false);
       gatewayWsRef.current = null;
       if (gatewayHeartbeatRef.current) {
         clearInterval(gatewayHeartbeatRef.current);
@@ -701,6 +699,7 @@ export function App() {
     };
     ws.onerror = () => {};
     return () => {
+      setGatewayConnected(false);
       if (gatewayHeartbeatRef.current) clearInterval(gatewayHeartbeatRef.current);
       gatewayHeartbeatRef.current = null;
       ws.close();
@@ -855,7 +854,10 @@ export function App() {
           const isNewMessage = newestId && lastDmMessageIdRef.current && newestId !== lastDmMessageIdRef.current;
           if (isNewMessage) {
             const newest = messagesData.messages?.[messagesData.messages.length - 1];
-            if (newest?.authorId !== me?.id) playNotificationBeep();
+            if (newest?.authorId !== me?.id) {
+              playNotificationBeep(selfStatusRef.current === "dnd");
+              setDmNotification({ dmId: activeDmId, at: Date.now() });
+            }
           }
           if (newestId) lastDmMessageIdRef.current = newestId;
           setDms((current) => current.map((item) => item.id === activeDmId ? { ...item, messages: messagesData.messages || [] } : item));
@@ -867,6 +869,12 @@ export function App() {
 
     return () => window.clearInterval(timer);
   }, [accessToken, navMode, activeDmId]);
+
+  useEffect(() => {
+    if (!dmNotification) return;
+    const t = setTimeout(() => setDmNotification(null), 4000);
+    return () => clearTimeout(t);
+  }, [dmNotification]);
 
   useEffect(() => {
     if (!accessToken || (navMode !== "friends" && navMode !== "dms")) return;
@@ -893,9 +901,9 @@ export function App() {
       .catch((error) => setStatus(`Message fetch failed: ${error.message}`));
   }, [activeServer, activeChannelId, navMode]);
 
-  // Server channel message polling - keep messages in sync (backup when no real-time)
+  // Server channel message polling - only when gateway not connected; when connected we skip to avoid hammering the node
   useEffect(() => {
-    if (navMode !== "servers" || !activeServer?.baseUrl || !activeChannelId) return;
+    if (navMode !== "servers" || !activeServer?.baseUrl || !activeChannelId || gatewayConnected) return;
 
     const channelId = activeChannelId;
     const baseUrl = activeServer.baseUrl;
@@ -911,7 +919,7 @@ export function App() {
     }, 5000);
 
     return () => window.clearInterval(timer);
-  }, [navMode, activeServer, activeChannelId]);
+  }, [navMode, activeServer, activeChannelId, gatewayConnected]);
 
   async function handleAuthSubmit(event) {
     event.preventDefault();
@@ -2001,6 +2009,23 @@ export function App() {
         <div className="rail-header" title="OpenCom">
           <img src="logo.png" alt="OpenCom" className="logo-img" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
         </div>
+        {dmNotification && (() => {
+          const notifDm = dms.find((d) => d.id === dmNotification.dmId);
+          return notifDm ? (
+            <button
+              type="button"
+              className="dm-notification-popup"
+              onClick={() => { setNavMode("dms"); setActiveDmId(dmNotification.dmId); setDmNotification(null); }}
+            >
+              {notifDm.pfp_url ? (
+                <img src={profileImageUrl(notifDm.pfp_url)} alt="" className="dm-notification-avatar" />
+              ) : (
+                <div className="dm-notification-avatar dm-notification-avatar-initials">{getInitials(notifDm.name || notifDm.username || "?")}</div>
+              )}
+              <span className="dm-notification-text">New message from {notifDm.name || notifDm.username || "Someone"}</span>
+            </button>
+          ) : null;
+        })()}
         <button className={`server-pill nav-pill ${navMode === "friends" ? "active" : ""}`} onClick={() => setNavMode("friends")} title="Friends">👥</button>
         <button className={`server-pill nav-pill ${navMode === "dms" ? "active" : ""}`} onClick={() => setNavMode("dms")} title="Direct messages">💬</button>
         <button className={`server-pill nav-pill ${navMode === "profile" ? "active" : ""}`} onClick={() => setNavMode("profile")} title="Profile">🪪</button>
