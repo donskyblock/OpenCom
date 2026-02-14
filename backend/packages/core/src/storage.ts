@@ -37,8 +37,47 @@ export function parseBase64Image(dataUrl: string): { buffer: Buffer; ext: string
   }
 }
 
+const MIME_TO_EXT: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/svg+xml": "svg",
+  "image/bmp": "bmp"
+};
+
 /**
- * Save an image to storage and return the relative path for URL construction
+ * Save a raw image buffer to storage. Returns relative path users/{userId}/{filename}.
+ */
+export function saveProfileImageFromBuffer(
+  storageDir: string,
+  userId: string,
+  imageType: "pfp" | "banner",
+  buffer: Buffer,
+  mimeType: string
+): string | null {
+  const ext = MIME_TO_EXT[mimeType?.toLowerCase()] ?? "png";
+
+  ensureDir(storageDir);
+  const usersDir = path.join(storageDir, "users");
+  ensureDir(usersDir);
+  const userDir = path.join(usersDir, userId);
+  ensureDir(userDir);
+
+  const filename = `${imageType}_${randomId(8)}.${ext}`;
+  const filepath = path.join(userDir, filename);
+
+  try {
+    fs.writeFileSync(filepath, buffer, { flag: "w" });
+    return `users/${userId}/${filename}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Save an image to storage and return the relative path for URL construction (base64 path, kept for backward compat)
  */
 export function saveProfileImage(
   storageDir: string,
@@ -48,23 +87,7 @@ export function saveProfileImage(
 ): string | null {
   const parsed = parseBase64Image(base64Data);
   if (!parsed) return null;
-
-  ensureDir(storageDir);
-  const usersDir = path.join(storageDir, "users");
-  ensureDir(usersDir);
-  const userDir = path.join(usersDir, userId);
-  ensureDir(userDir);
-
-  const filename = `${imageType}_${randomId(8)}.${parsed.ext}`;
-  const filepath = path.join(userDir, filename);
-
-  try {
-    fs.writeFileSync(filepath, parsed.buffer, { flag: "w" });
-    // Return relative path for URL construction: users/{userId}/{filename} (matches serve route)
-    return `users/${userId}/${filename}`;
-  } catch {
-    return null;
-  }
+  return saveProfileImageFromBuffer(storageDir, userId, imageType, parsed.buffer, parsed.mimeType);
 }
 
 /**

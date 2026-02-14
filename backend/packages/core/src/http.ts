@@ -1,15 +1,19 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
+import multipart from "@fastify/multipart";
 import rateLimit from "@fastify/rate-limit";
 import { ZodError } from "zod";
 import { env } from "./env.js";
 
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // 25MB for raw image uploads
+
 export function buildHttp() {
-  const app = Fastify({ logger: true, bodyLimit: 10 * 1024 * 1024 }); // 10MB limit for profile images
+  const app = Fastify({ logger: true, bodyLimit: MAX_IMAGE_BYTES });
 
   app.register(cors, { origin: true, credentials: true });
   app.register(rateLimit, { max: 240, timeWindow: "1 minute" });
+  app.register(multipart, { limits: { fileSize: MAX_IMAGE_BYTES } });
 
   app.register(jwt, { secret: env.CORE_JWT_ACCESS_SECRET });
 
