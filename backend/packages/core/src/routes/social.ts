@@ -60,10 +60,11 @@ export async function socialRoutes(app: FastifyInstance, broadcastCallSignal?: (
   app.get("/v1/social/friends", { preHandler: [app.authenticate] } as any, async (req: any) => {
     const userId = req.user.sub as string;
 
-    const rows = await q<{ id: string; username: string; display_name: string | null; pfp_url: string | null }>(
-      `SELECT u.id, u.username, u.display_name, u.pfp_url
+    const rows = await q<{ id: string; username: string; display_name: string | null; pfp_url: string | null; status: string }>(
+      `SELECT u.id, u.username, u.display_name, u.pfp_url, COALESCE(p.status, 'offline') AS status
        FROM friendships f
        JOIN users u ON u.id=f.friend_user_id
+       LEFT JOIN presence p ON p.user_id=u.id
        WHERE f.user_id=:userId
        ORDER BY f.created_at DESC`,
       { userId }
@@ -74,7 +75,7 @@ export async function socialRoutes(app: FastifyInstance, broadcastCallSignal?: (
         id: row.id,
         username: row.display_name || row.username,
         pfp_url: row.pfp_url,
-        status: "online"
+        status: row.status
       }))
     };
   });

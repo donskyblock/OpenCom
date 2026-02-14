@@ -17,6 +17,13 @@ const SELF_STATUS_KEY = "opencom_self_status";
 const PINNED_SERVER_KEY = "opencom_pinned_server_messages";
 const PINNED_DM_KEY = "opencom_pinned_dm_messages";
 const ACTIVE_DM_KEY = "opencom_active_dm";
+const GATEWAY_DEVICE_ID_KEY = "opencom_gateway_device_id";
+
+function getGatewayWsUrl() {
+  const base = import.meta.env.VITE_CORE_API_URL || "https://openapi.donskyblock.xyz";
+  const url = base.startsWith("https") ? base.replace(/^https/, "wss") : base.replace(/^http/, "ws");
+  return url.replace(/\/$/, "") + "/gateway";
+}
 
 function useThemeCss() {
   const [css, setCss] = useState(localStorage.getItem(THEME_STORAGE_KEY) || "");
@@ -256,8 +263,23 @@ export function App() {
   const [securitySettings, setSecuritySettings] = useState({ twoFactorEnabled: false });
   const [channelDragId, setChannelDragId] = useState(null);
   const [channelPermsChannelId, setChannelPermsChannelId] = useState("");
+  const [presenceByUserId, setPresenceByUserId] = useState({});
+  const [showClientFlow, setShowClientFlow] = useState(false);
 
   const messagesRef = useRef(null);
+  const gatewayWsRef = useRef(null);
+  const gatewayHeartbeatRef = useRef(null);
+
+  function getPresence(userId) {
+    if (!userId) return "offline";
+    if (userId === me?.id) return selfStatus;
+    return presenceByUserId[userId]?.status ?? "offline";
+  }
+  const presenceLabels = { online: "Online", idle: "Idle", dnd: "Do Not Disturb", offline: "Offline" };
+  function presenceLabel(status) {
+    return presenceLabels[status] || status || "Offline";
+  }
+
   const dmMessagesRef = useRef(null);
   const composerInputRef = useRef(null);
   const dmComposerInputRef = useRef(null);
@@ -346,11 +368,11 @@ export function App() {
     for (const message of messages) {
       const id = message.author_id || message.authorId;
       if (!id || members.has(id)) continue;
-      members.set(id, { id, username: message.username || id, status: "online", pfp_url: message.pfp_url || null, roleIds: [] });
+      members.set(id, { id, username: message.username || id, status: "offline", pfp_url: message.pfp_url || null, roleIds: [] });
     }
 
     if (me?.id && !members.has(me.id)) {
-      members.set(me.id, { id: me.id, username: me.username || me.id, status: "online", pfp_url: profile?.pfpUrl || null, roleIds: guildState?.me?.roleIds || [] });
+      members.set(me.id, { id: me.id, username: me.username || me.id, status: "offline", pfp_url: profile?.pfpUrl || null, roleIds: guildState?.me?.roleIds || [] });
     }
 
     return Array.from(members.values());
@@ -625,6 +647,87 @@ export function App() {
 
     loadSession();
   }, [accessToken]);
+
+  // Core gateway: connect for presence updates, send SET_PRESENCE when self status changes
+  useEffect(() => {
+    if (!accessToken || !me?.id) {
+      if (gatewayWsRef.current) {
+        gatewayWsRef.current.close();
+        gatewayWsRef.current = null;
+      }
+      if (gatewayHeartbeatRef.current) {
+        clearInterval(gatewayHeartbeatRef.current);
+        gatewayHeartbeatRef.current = null;
+      }
+      return;
+    }
+    let deviceId = localStorage.getItem(GATEWAY_DEVICE_ID_KEY);
+    if (!deviceId) {
+      deviceId = "web-" + Math.random().toString(36).slice(2) + "-" + Date.now();
+      localStorage.setItem(GATEWAY_DEVICE_ID_KEY, deviceId);
+    }
+    const wsUrl = getGatewayWsUrl();
+    const ws = new WebSocket(wsUrl);
+    gatewayWsRef.current = ws;
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ op: "IDENTIFY", d: { accessToken, deviceId } }));
+    };
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.op === "HELLO" && msg.d?.heartbeat_interval) {
+          if (gatewayHeartbeatRef.current) clearInterval(gatewayHeartbeatRef.current);
+          gatewayHeartbeatRef.current = setInterval(() => {
+            if (gatewayWsRef.current?.readyState === WebSocket.OPEN) gatewayWsRef.current.send(JSON.stringify({ op: "HEARTBEAT" }));
+          }, msg.d.heartbeat_interval);
+        }
+        if (msg.op === "READY") {
+          if (gatewayWsRef.current?.readyState === WebSocket.OPEN) {
+            gatewayWsRef.current.send(JSON.stringify({ op: "DISPATCH", t: "SET_PRESENCE", d: { status: selfStatus, customStatus: null } }));
+          }
+        }
+        if (msg.op === "DISPATCH" && msg.t === "PRESENCE_UPDATE" && msg.d?.userId) {
+          setPresenceByUserId((prev) => ({ ...prev, [msg.d.userId]: { status: msg.d.status ?? "offline", customStatus: msg.d.customStatus ?? null } }));
+        }
+      } catch (_) {}
+    };
+    ws.onclose = () => {
+      gatewayWsRef.current = null;
+      if (gatewayHeartbeatRef.current) {
+        clearInterval(gatewayHeartbeatRef.current);
+        gatewayHeartbeatRef.current = null;
+      }
+    };
+    ws.onerror = () => {};
+    return () => {
+      if (gatewayHeartbeatRef.current) clearInterval(gatewayHeartbeatRef.current);
+      gatewayHeartbeatRef.current = null;
+      ws.close();
+      gatewayWsRef.current = null;
+    };
+  }, [accessToken, me?.id]);
+
+  useEffect(() => {
+    if (!accessToken || !me?.id || gatewayWsRef.current?.readyState !== WebSocket.OPEN) return;
+    gatewayWsRef.current.send(JSON.stringify({ op: "DISPATCH", t: "SET_PRESENCE", d: { status: selfStatus, customStatus: null } }));
+  }, [selfStatus, accessToken, me?.id]);
+
+  // Fetch initial presence for guild members and friends
+  useEffect(() => {
+    if (!accessToken) return;
+    const ids = new Set();
+    (guildState?.members || []).forEach((m) => m.id && ids.add(m.id));
+    (friends || []).forEach((f) => f.id && ids.add(f.id));
+    const userIds = [...ids];
+    if (userIds.length === 0) return;
+    const params = new URLSearchParams({ userIds: userIds.join(",") });
+    fetch(`${CORE_API}/v1/presence?${params}`, { headers: { Authorization: `Bearer ${accessToken}` } })
+      .then((r) => r.ok ? r.json() : {})
+      .then((data) => {
+        if (data && typeof data === "object") setPresenceByUserId((prev) => ({ ...prev, ...data }));
+      })
+      .catch(() => {});
+  }, [accessToken, guildState?.members, friends]);
 
   // Handle invite link: ?join=CODE — pre-fill join form; if logged in, auto-join and clear URL
   useEffect(() => {
@@ -1759,7 +1862,7 @@ export function App() {
       setMemberProfileCard({
         ...profileData,
         username: profileData.username || member.username,
-        status: member.status || "online",
+        status: getPresence(member.id) || "offline",
         roleIds: member.roleIds || []
       });
     } catch {
@@ -1769,7 +1872,7 @@ export function App() {
         displayName: member.username || member.id,
         bio: "Profile details are private or unavailable.",
         badges: [],
-        status: member.status || "online",
+        status: getPresence(member.id) || "offline",
         platformTitle: null,
         createdAt: null,
         roleIds: member.roleIds || []
@@ -1796,9 +1899,62 @@ export function App() {
   }
 
   if (!accessToken) {
+    if (!showClientFlow) {
+      return (
+        <div className="landing-page">
+          <header className="landing-header">
+            <img src="logo.png" alt="OpenCom" className="landing-logo" />
+            <span className="landing-brand">OpenCom</span>
+          </header>
+          <main className="landing-main">
+            <section className="landing-hero">
+              <h1 className="landing-headline">The best way to communicate.</h1>
+              <p className="landing-sub">One place for your servers, friends, and communities. Chat, voice, and stay in sync—without the noise.</p>
+            </section>
+            <section className="landing-features">
+              <div className="landing-feature">
+                <span className="landing-feature-icon">💬</span>
+                <h3>Servers & channels</h3>
+                <p>Organize conversations by topic. Create spaces that scale from a few friends to large communities.</p>
+              </div>
+              <div className="landing-feature">
+                <span className="landing-feature-icon">👥</span>
+                <h3>Friends & DMs</h3>
+                <p>Add friends, send direct messages, and see who’s online. Simple and private.</p>
+              </div>
+              <div className="landing-feature">
+                <span className="landing-feature-icon">🔊</span>
+                <h3>Voice & presence</h3>
+                <p>Jump into voice channels when you need to talk. Status and presence keep everyone in the loop.</p>
+              </div>
+            </section>
+            <section className="landing-cta">
+              <div className="landing-cta-download">
+                <h3>Get the desktop app</h3>
+                <p className="landing-hint">Windows, macOS, and Linux — one install, all your chats.</p>
+                <button type="button" className="landing-btn landing-btn-secondary" disabled title="Coming soon">
+                  Download — Coming soon
+                </button>
+              </div>
+              <div className="landing-cta-client">
+                <h3>Use OpenCom now</h3>
+                <p className="landing-hint">Open the client in your browser. No install required.</p>
+                <button type="button" className="landing-btn landing-btn-primary" onClick={() => setShowClientFlow(true)}>
+                  Open client
+                </button>
+              </div>
+            </section>
+          </main>
+          <footer className="landing-footer">
+            <p>OpenCom — one place for teams, communities, and friends.</p>
+          </footer>
+        </div>
+      );
+    }
     return (
       <div className="auth-shell">
         <div className="auth-card">
+          <button type="button" className="link-btn auth-back" onClick={() => setShowClientFlow(false)}>← Back to home</button>
           <h1>Welcome back</h1>
           <p className="sub">OpenCom keeps your teams, communities, and updates in one place.</p>
           <form onSubmit={handleAuthSubmit}>
@@ -2037,7 +2193,7 @@ export function App() {
                     </div>
                     <div className="msg-body">
                       <strong className="msg-author">
-                        <button className="name-btn" style={roleColor ? { color: roleColor } : undefined} onClick={() => openMemberProfile({ id: group.authorId, username: group.author, status: "online", pfp_url: group.pfpUrl })}>{group.author}</button>
+                        <button className="name-btn" style={roleColor ? { color: roleColor } : undefined} onClick={() => openMemberProfile({ id: group.authorId, username: group.author, status: getPresence(group.authorId), pfp_url: group.pfpUrl })}>{group.author}</button>
                         {topRole && <span className="msg-role-tag">{topRole.name}</span>}
                         <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span>
                       </strong>
@@ -2109,7 +2265,7 @@ export function App() {
                             )}
                             <div>
                               <strong style={color ? { color } : undefined}>{member.username}</strong>
-                              <span>{member.id === me?.id ? selfStatus : member.status}</span>
+                              <span>{presenceLabel(getPresence(member.id))}</span>
                             </div>
                           </button>
                         );
@@ -2150,7 +2306,7 @@ export function App() {
                   </div>
                   <div className="msg-body">
                     <strong className="msg-author">
-                      <button className="name-btn" onClick={() => openMemberProfile({ id: group.authorId, username: group.author, status: "online", pfp_url: group.pfpUrl })}>{group.author}</button>
+                      <button className="name-btn" onClick={() => openMemberProfile({ id: group.authorId, username: group.author, status: getPresence(group.authorId), pfp_url: group.pfpUrl })}>{group.author}</button>
                       <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span>
                     </strong>
                     {group.messages.map((message) => (
@@ -2223,11 +2379,11 @@ export function App() {
                 </div>
               )}
 
-              {(friendView === "online" ? filteredFriends.filter((friend) => friend.status !== "offline") : filteredFriends).map((friend) => (
+              {(friendView === "online" ? filteredFriends.filter((friend) => getPresence(friend.id) !== "offline") : filteredFriends).map((friend) => (
                 <div key={friend.id} className="friend-row">
                   <div className="friend-meta">
                     <strong>{friend.username}</strong>
-                    <span>{friend.status}</span>
+                    <span>{presenceLabel(getPresence(friend.id))}</span>
                   </div>
                   <button className="ghost" onClick={(event) => { event.stopPropagation(); openDmFromFriend(friend); }}>Message</button>
                 </div>
@@ -2239,7 +2395,7 @@ export function App() {
               {filteredFriends.slice(0, 5).map((friend) => (
                 <button key={`active-${friend.id}`} className="active-card" onClick={(event) => { event.stopPropagation(); openMemberProfile(friend); }}>
                   <strong>{friend.username}</strong>
-                  <span>{friend.status === "online" ? "Available now" : "Recently active"}</span>
+                  <span>{getPresence(friend.id) === "online" ? "Available now" : presenceLabel(getPresence(friend.id))}</span>
                 </button>
               ))}
               {!filteredFriends.length && <p className="hint">When friends are active, they will appear here.</p>}
@@ -2355,7 +2511,7 @@ export function App() {
           <div className="popout-content">
             <div className="avatar popout-avatar">{memberProfileCard.pfpUrl ? <img src={profileImageUrl(memberProfileCard.pfpUrl)} alt="Profile avatar" className="avatar-image" /> : getInitials(memberProfileCard.displayName || memberProfileCard.username || "User")}</div>
             <h4>{memberProfileCard.displayName || memberProfileCard.username}</h4>
-            <p className="hint">@{memberProfileCard.username} · {memberProfileCard.status || "online"}</p>
+            <p className="hint">@{memberProfileCard.username} · {presenceLabel(getPresence(memberProfileCard?.id) || memberProfileCard?.status || "offline")}</p>
             {memberProfileCard.platformTitle && <p className="hint">{memberProfileCard.platformTitle}</p>}
             {formatAccountCreated(memberProfileCard.createdAt) && <p className="hint">Account created: {formatAccountCreated(memberProfileCard.createdAt)}</p>}
             {(memberProfileCard.roleIds?.length > 0) && guildState?.roles && (

@@ -147,11 +147,182 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
   font-size: 1em;
 }
 
+.auth-back { display: block; margin: 0 0 var(--space-sm); text-align: left; font-size: 0.9em;}
 .auth-card h1 { margin: 0; text-align: center; font-size: 2em;}
 .auth-card .sub, .auth-card p { margin: 0; text-align: center; color: var(--text-soft);}
 .auth-card form { display: grid; gap: var(--space-xs);}
 .auth-card label { display: grid; gap: 6px; font-size: 0.92em; color: var(--text-soft);}
 .link-btn { border: none; background: transparent; color: #9db0ff; padding: 0; }
+
+/* Landing / homepage */
+.landing-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(ellipse 120% 80% at 50% -20%, rgba(45, 70, 130, 0.35) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(30, 50, 100, 0.2) 0%, transparent 40%),
+    radial-gradient(circle at 15% 10%, #1d3058 0%, #121d36 46%, #0a1120 100%);
+  color: var(--text-main);
+}
+
+.landing-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.landing-logo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+}
+
+.landing-brand {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-main);
+}
+
+.landing-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+  text-align: center;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.landing-hero {
+  margin-bottom: clamp(2rem, 5vw, 3.5rem);
+}
+
+.landing-headline {
+  font-size: clamp(2rem, 5vw, 3.25rem);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  margin: 0 0 var(--space-md);
+  background: linear-gradient(180deg, var(--text-main) 0%, var(--text-soft) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.landing-sub {
+  font-size: clamp(1rem, 2vw, 1.2rem);
+  color: var(--text-soft);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.landing-features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-lg);
+  width: 100%;
+  margin-bottom: clamp(2rem, 5vw, 3.5rem);
+}
+
+.landing-feature {
+  padding: var(--space-md);
+  border-radius: var(--radius);
+  background: rgba(17, 30, 53, 0.5);
+  border: 1px solid var(--border-subtle);
+  text-align: center;
+}
+
+.landing-feature-icon {
+  font-size: 2rem;
+  display: block;
+  margin-bottom: var(--space-sm);
+}
+
+.landing-feature h3 {
+  font-size: 1.1rem;
+  margin: 0 0 var(--space-xs);
+  color: var(--text-main);
+}
+
+.landing-feature p {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  margin: 0;
+  line-height: 1.45;
+}
+
+.landing-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-lg);
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.landing-cta-download,
+.landing-cta-client {
+  padding: var(--space-lg);
+  border-radius: var(--radius);
+  background: rgba(17, 30, 53, 0.7);
+  border: 1px solid var(--border-subtle);
+  min-width: 260px;
+}
+
+.landing-cta h3 {
+  margin: 0 0 var(--space-xs);
+  font-size: 1.1rem;
+}
+
+.landing-cta .landing-hint {
+  margin: 0 0 var(--space-md);
+  font-size: 0.9rem;
+  color: var(--text-dim);
+}
+
+.landing-btn {
+  padding: var(--space-sm) var(--space-lg);
+  border-radius: var(--radius);
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, opacity 0.2s;
+}
+
+.landing-btn-primary {
+  background: var(--brand);
+  color: #fff;
+  border: 1px solid color-mix(in srgb, var(--brand) 80%, transparent);
+}
+
+.landing-btn-primary:hover {
+  background: var(--brand-strong);
+  border-color: var(--brand-strong);
+}
+
+.landing-btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-dim);
+  border: 1px solid var(--border-subtle);
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
+.landing-footer {
+  padding: var(--space-md) var(--space-lg);
+  border-top: 1px solid var(--border-subtle);
+  text-align: center;
+}
+
+.landing-footer p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-dim);
+}
 
 .opencom-shell {
   height: 100dvh;
