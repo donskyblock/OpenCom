@@ -116,6 +116,22 @@ function getGatewayWsCandidates() {
   return candidates;
 }
 
+
+function getNodeGatewayWsUrl(baseUrl) {
+  if (!baseUrl || typeof baseUrl !== "string") return "";
+  try {
+    const url = new URL(baseUrl);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = "/gateway";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    const normalized = String(baseUrl).replace(/^https?:\/\//, (m) => (m === "https://" ? "wss://" : "ws://")).replace(/\/$/, "");
+    return normalized.endsWith("/gateway") ? normalized : `${normalized}/gateway`;
+  }
+}
+
 function useThemeCss() {
   const [css, setCss] = useState(localStorage.getItem(THEME_STORAGE_KEY) || "");
   const [enabled, setEnabled] = useState(localStorage.getItem(THEME_ENABLED_STORAGE_KEY) !== "0");
@@ -349,10 +365,14 @@ export function App() {
   const [showClientFlow, setShowClientFlow] = useState(false);
   const [gatewayConnected, setGatewayConnected] = useState(false);
   const [dmNotification, setDmNotification] = useState(null);
+  const [voiceStatesByGuild, setVoiceStatesByGuild] = useState({});
 
   const messagesRef = useRef(null);
   const gatewayWsRef = useRef(null);
   const gatewayHeartbeatRef = useRef(null);
+  const nodeGatewayWsRef = useRef(null);
+  const nodeGatewayHeartbeatRef = useRef(null);
+  const nodeGatewayReadyRef = useRef(false);
   const selfStatusRef = useRef(selfStatus);
   selfStatusRef.current = selfStatus;
 
@@ -865,6 +885,130 @@ export function App() {
     if (!accessToken || !me?.id || gatewayWsRef.current?.readyState !== WebSocket.OPEN) return;
     gatewayWsRef.current.send(JSON.stringify({ op: "DISPATCH", t: "SET_PRESENCE", d: { status: selfStatus, customStatus: null } }));
   }, [selfStatus, accessToken, me?.id]);
+
+  useEffect(() => {
+    const server = activeServer;
+    if (navMode !== "servers" || !server?.baseUrl || !server?.membershipToken) {
+      nodeGatewayReadyRef.current = false;
+      if (nodeGatewayHeartbeatRef.current) {
+        clearInterval(nodeGatewayHeartbeatRef.current);
+        nodeGatewayHeartbeatRef.current = null;
+      }
+      if (nodeGatewayWsRef.current) {
+        nodeGatewayWsRef.current.close();
+        nodeGatewayWsRef.current = null;
+      }
+      return;
+    }
+
+    const wsUrl = getNodeGatewayWsUrl(server.baseUrl);
+    if (!wsUrl) return;
+
+    let disposed = false;
+    const ws = new WebSocket(wsUrl);
+    nodeGatewayWsRef.current = ws;
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ op: "IDENTIFY", d: { membershipToken: server.membershipToken } }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.op === "HELLO" && msg.d?.heartbeat_interval) {
+          if (nodeGatewayHeartbeatRef.current) clearInterval(nodeGatewayHeartbeatRef.current);
+          nodeGatewayHeartbeatRef.current = setInterval(() => {
+            if (nodeGatewayWsRef.current?.readyState === WebSocket.OPEN) {
+              nodeGatewayWsRef.current.send(JSON.stringify({ op: "HEARTBEAT" }));
+            }
+          }, msg.d.heartbeat_interval);
+          return;
+        }
+
+        if (msg.op === "READY") {
+          nodeGatewayReadyRef.current = true;
+          if (activeGuildId) {
+            ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_GUILD", d: { guildId: activeGuildId } }));
+          }
+          if (activeChannelId) {
+            ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_CHANNEL", d: { channelId: activeChannelId } }));
+          }
+          return;
+        }
+
+        if (msg.op === "DISPATCH" && msg.t === "MESSAGE_CREATE" && msg.d?.channelId && msg.d?.message) {
+          const channelId = msg.d.channelId;
+          if (channelId !== activeChannelIdRef.current) return;
+          const incoming = msg.d.message;
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === incoming.id)) return prev;
+            return [...prev, {
+              id: incoming.id,
+              author_id: incoming.authorId,
+              content: incoming.content,
+              created_at: incoming.createdAt,
+              attachments: incoming.attachments || []
+            }];
+          });
+          return;
+        }
+
+        if (msg.op === "DISPATCH" && msg.t === "VOICE_STATE_UPDATE" && msg.d?.guildId && msg.d?.userId) {
+          setVoiceStatesByGuild((prev) => {
+            const guildId = msg.d.guildId;
+            const byUser = { ...(prev[guildId] || {}) };
+            if (!msg.d.channelId) delete byUser[msg.d.userId];
+            else byUser[msg.d.userId] = { channelId: msg.d.channelId, muted: !!msg.d.muted, deafened: !!msg.d.deafened };
+            return { ...prev, [guildId]: byUser };
+          });
+          return;
+        }
+
+        if (msg.op === "DISPATCH" && msg.t === "VOICE_JOINED" && msg.d?.channelId) {
+          setVoiceConnectedChannelId(msg.d.channelId);
+          return;
+        }
+
+        if (msg.op === "DISPATCH" && msg.t === "VOICE_LEFT") {
+          setVoiceConnectedChannelId("");
+          return;
+        }
+      } catch (_) {}
+    };
+
+    ws.onclose = () => {
+      if (disposed) return;
+      nodeGatewayReadyRef.current = false;
+      if (nodeGatewayHeartbeatRef.current) {
+        clearInterval(nodeGatewayHeartbeatRef.current);
+        nodeGatewayHeartbeatRef.current = null;
+      }
+      nodeGatewayWsRef.current = null;
+    };
+
+    ws.onerror = () => {};
+
+    return () => {
+      disposed = true;
+      nodeGatewayReadyRef.current = false;
+      if (nodeGatewayHeartbeatRef.current) {
+        clearInterval(nodeGatewayHeartbeatRef.current);
+        nodeGatewayHeartbeatRef.current = null;
+      }
+      if (nodeGatewayWsRef.current) {
+        nodeGatewayWsRef.current.close();
+        nodeGatewayWsRef.current = null;
+      }
+    };
+  }, [navMode, activeServer?.id, activeServer?.baseUrl, activeServer?.membershipToken, activeGuildId, activeChannelId]);
+
+  useEffect(() => {
+    if (!activeGuildId || !activeChannelId) return;
+    const ws = nodeGatewayWsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !nodeGatewayReadyRef.current) return;
+    ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_GUILD", d: { guildId: activeGuildId } }));
+    ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_CHANNEL", d: { channelId: activeChannelId } }));
+  }, [activeGuildId, activeChannelId]);
 
   // Fetch initial presence for guild members and friends
   useEffect(() => {
@@ -2241,8 +2385,19 @@ export function App() {
                             }}
                             onDragEnd={() => setChannelDragId(null)}
                             onClick={() => {
-                              if (channel.type === "text") setActiveChannelId(channel.id);
-                              if (channel.type === "voice") setVoiceConnectedChannelId(channel.id);
+                              if (channel.type === "text") {
+                                setActiveChannelId(channel.id);
+                                return;
+                              }
+                              if (channel.type === "voice") {
+                                const ws = nodeGatewayWsRef.current;
+                                if (ws && ws.readyState === WebSocket.OPEN && nodeGatewayReadyRef.current && activeGuildId) {
+                                  ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_GUILD", d: { guildId: activeGuildId } }));
+                                  ws.send(JSON.stringify({ op: "DISPATCH", t: "VOICE_JOIN", d: { guildId: activeGuildId, channelId: channel.id } }));
+                                } else {
+                                  setStatus("Voice gateway not ready yet. Please wait a second and try again.");
+                                }
+                              }
                             }}
                           >
                             <span className="channel-hash">{channel.type === "voice" ? "🔊" : "#"}</span>
@@ -2317,7 +2472,14 @@ export function App() {
               <div className="voice-top"><strong>Voice connected</strong><span>{voiceConnectedChannelId}</span></div>
               <div className="voice-actions">
                 <button className="ghost" onClick={() => setIsScreenSharing((value) => !value)}>{isScreenSharing ? "Stop Share" : "Share Screen"}</button>
-                <button className="danger" onClick={() => { setVoiceConnectedChannelId(""); setIsScreenSharing(false); }}>Disconnect</button>
+                <button className="danger" onClick={() => {
+                  const ws = nodeGatewayWsRef.current;
+                  if (ws && ws.readyState === WebSocket.OPEN && nodeGatewayReadyRef.current) {
+                    ws.send(JSON.stringify({ op: "DISPATCH", t: "VOICE_LEAVE", d: {} }));
+                  }
+                  setVoiceConnectedChannelId("");
+                  setIsScreenSharing(false);
+                }}>Disconnect</button>
               </div>
             </div>
           )}
