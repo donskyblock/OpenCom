@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ulidLike } from "@ods/shared/ids.js";
 import { q } from "../db.js";
 import { DEFAULT_EVERYONE_PERMS } from "../permissions/defaults.js";
+import { Perm } from "../permissions/bits.js";
 
 export async function guildRoutes(app: FastifyInstance) {
   // List only guilds the authenticated user is a member of (or owns) in this core server tenant.
@@ -72,6 +73,27 @@ export async function guildRoutes(app: FastifyInstance) {
       }
     );
 
+    // Create an explicit owner role with administrator permission and assign it to creator.
+    const ownerRoleId = ulidLike();
+    await q(
+      `INSERT INTO roles (id,guild_id,name,color,position,permissions,is_everyone)
+       VALUES (:id,:guildId,:name,NULL,:position,:permissions,0)`,
+      {
+        id: ownerRoleId,
+        guildId,
+        name: "owner",
+        position: 1,
+        permissions: Perm.ADMINISTRATOR.toString()
+      }
+    );
+
+    await q(
+      `INSERT INTO member_roles (guild_id,user_id,role_id)
+       VALUES (:guildId,:ownerId,:ownerRoleId)
+       ON DUPLICATE KEY UPDATE role_id=role_id`,
+      { guildId, ownerId, ownerRoleId }
+    );
+
     // Create default text channel: general
     const generalTextId = ulidLike();
     await q(
@@ -94,6 +116,7 @@ export async function guildRoutes(app: FastifyInstance) {
     return rep.send({
       guildId,
       everyoneRoleId,
+      ownerRoleId,
       defaultChannels: {
         text: generalTextId,
         voice: generalVoiceId
