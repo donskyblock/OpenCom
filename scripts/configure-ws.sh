@@ -45,6 +45,7 @@ Options:
   --letsencrypt-staging    Use Let's Encrypt staging endpoint (testing only)
   --letsencrypt-webroot <path>
                            Use webroot challenge mode (recommended when nginx uses :80)
+  --skip-acme-probe        Skip local HTTP challenge probe before certbot webroot run
   --backend-env <path>    Backend env file (default: backend/.env)
   --frontend-env <path>   Frontend env file (default: frontend/.env)
   -h, --help              Show this help
@@ -88,6 +89,8 @@ while [[ $# -gt 0 ]]; do
       LETSENCRYPT_STAGING="1"; shift ;;
     --letsencrypt-webroot)
       LETSENCRYPT_MODE="webroot"; LETSENCRYPT_WEBROOT_PATH="${2:-}"; shift 2 ;;
+    --skip-acme-probe)
+      SKIP_ACME_PROBE="1"; shift ;;
     --backend-env)
       BACKEND_ENV="${2:-}"; shift 2 ;;
     --frontend-env)
@@ -175,6 +178,30 @@ if [[ "$GENERATE_LETSENCRYPT_CERT" == "1" ]]; then
     mkdir -p "$LETSENCRYPT_WEBROOT_PATH"
     CERTBOT_ARGS+=(--webroot -w "$LETSENCRYPT_WEBROOT_PATH")
     echo "[ws-config] Requesting Let's Encrypt certificate for ${WS_DOMAIN} using webroot: ${LETSENCRYPT_WEBROOT_PATH}"
+
+    if [[ "$SKIP_ACME_PROBE" != "1" ]]; then
+      if ! command -v curl >/dev/null 2>&1; then
+        echo "[ws-config] WARN: curl not found; skipping webroot challenge probe." >&2
+      else
+        PROBE_DIR="$LETSENCRYPT_WEBROOT_PATH/.well-known/acme-challenge"
+        PROBE_TOKEN="opencom-acme-probe-$$"
+        PROBE_FILE="$PROBE_DIR/$PROBE_TOKEN"
+        PROBE_URL="http://${WS_DOMAIN}/.well-known/acme-challenge/${PROBE_TOKEN}"
+        mkdir -p "$PROBE_DIR"
+        printf '%s\n' "$PROBE_TOKEN" > "$PROBE_FILE"
+        PROBE_BODY="$(curl -fsS --max-time 6 "$PROBE_URL" 2>/dev/null || true)"
+        rm -f "$PROBE_FILE"
+        if [[ "$PROBE_BODY" != "$PROBE_TOKEN" ]]; then
+          echo "[ws-config] ERROR: Webroot probe failed for ${PROBE_URL}." >&2
+          echo "[ws-config] Ensure nginx serves ${LETSENCRYPT_WEBROOT_PATH}/.well-known/acme-challenge/ for host ${WS_DOMAIN}." >&2
+          echo "[ws-config] Example nginx block:" >&2
+          echo "[ws-config]   location ^~ /.well-known/acme-challenge/ { root ${LETSENCRYPT_WEBROOT_PATH}; default_type text/plain; }" >&2
+          echo "[ws-config] After nginx reload, re-run this script or pass --skip-acme-probe to bypass this check." >&2
+          exit 1
+        fi
+        echo "[ws-config] OK: webroot challenge probe succeeded (${PROBE_URL})"
+      fi
+    fi
   else
     CERTBOT_ARGS+=(--standalone)
     echo "[ws-config] Requesting Let's Encrypt certificate for ${WS_DOMAIN} using standalone mode"
