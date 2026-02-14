@@ -5,16 +5,18 @@ import { q } from "../db.js";
 import { DEFAULT_EVERYONE_PERMS } from "../permissions/defaults.js";
 
 export async function guildRoutes(app: FastifyInstance) {
-  // List only guilds the authenticated user is a member of (or owns).
+  // List only guilds the authenticated user is a member of (or owns) in this core server tenant.
   app.get("/v1/guilds", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.auth.userId as string;
+    const coreServerId = req.auth.coreServerId as string;
     const guilds = await q<{ id: string; name: string; owner_user_id: string; created_at: string }>(
       `SELECT g.id, g.name, g.owner_user_id, g.created_at
        FROM guilds g
        LEFT JOIN guild_members gm ON gm.guild_id = g.id AND gm.user_id = :userId
-       WHERE g.owner_user_id = :userId OR gm.user_id = :userId
+       WHERE g.server_id = :coreServerId
+         AND (g.owner_user_id = :userId OR gm.user_id = :userId)
        ORDER BY g.created_at DESC`,
-      { userId }
+      { userId, coreServerId }
     );
     return rep.send(guilds);
   });
@@ -22,6 +24,7 @@ export async function guildRoutes(app: FastifyInstance) {
   // Create guild (auth required)
   app.post("/v1/guilds", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const ownerId = req.auth.userId as string;
+    const coreServerId = req.auth.coreServerId as string;
     const actorRoles = req.auth.roles || [];
 
     if (!actorRoles.includes("owner") && !actorRoles.includes("platform_admin")) {
@@ -35,8 +38,8 @@ export async function guildRoutes(app: FastifyInstance) {
 
     const guildId = ulidLike();
     await q(
-      `INSERT INTO guilds (id,name,owner_user_id) VALUES (:id,:name,:ownerId)`,
-      { id: guildId, name: body.name, ownerId }
+      `INSERT INTO guilds (id,server_id,name,owner_user_id) VALUES (:id,:serverId,:name,:ownerId)`,
+      { id: guildId, serverId: coreServerId, name: body.name, ownerId }
     );
 
     // Ensure owner is a member on this node
