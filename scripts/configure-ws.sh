@@ -10,6 +10,13 @@ WS_PORT="9443"
 FORCE_INSECURE="0"
 DIRECT_IP="0"
 AUTO_FALLBACK_IP="1"
+GENERATE_SELF_SIGNED_CERT="0"
+CERT_DIR="/etc/opencom/ws-certs"
+CERT_DAYS="365"
+FORCE_CERT_OVERWRITE="0"
+GENERATE_LETSENCRYPT_CERT="0"
+LETSENCRYPT_EMAIL=""
+LETSENCRYPT_STAGING="0"
 
 usage() {
   cat <<USAGE
@@ -24,6 +31,16 @@ Options:
   --insecure              Force plain ws:// (sets VITE_GATEWAY_WS_INSECURE=1)
   --direct-ip             Set VITE_GATEWAY_WS_URL directly to the provided --ip endpoint
   --no-auto-fallback-ip   Disable automatic fallback to --ip if domain is unreachable
+  --generate-self-signed-cert
+                           Generate self-signed TLS cert/key for WS host (wss helper)
+  --cert-dir <path>        Cert output directory (default: /etc/opencom/ws-certs)
+  --cert-days <days>       Self-signed cert validity in days (default: 365)
+  --force-cert-overwrite   Overwrite existing cert files in --cert-dir
+  --generate-letsencrypt-cert
+                           Obtain a trusted cert via certbot and wire backend TLS envs
+  --letsencrypt-email <email>
+                           Email for Let's Encrypt registration (required with --generate-letsencrypt-cert)
+  --letsencrypt-staging    Use Let's Encrypt staging endpoint (testing only)
   --backend-env <path>    Backend env file (default: backend/.env)
   --frontend-env <path>   Frontend env file (default: frontend/.env)
   -h, --help              Show this help
@@ -31,6 +48,8 @@ Options:
 Examples:
   ./scripts/configure-ws.sh --domain ws.opencom.online --ip 37.114.58.186
   ./scripts/configure-ws.sh --ip 37.114.58.186 --direct-ip --insecure
+  ./scripts/configure-ws.sh --domain ws.opencom.online --ip 37.114.58.186 --generate-self-signed-cert
+  ./scripts/configure-ws.sh --domain ws.opencom.online --generate-letsencrypt-cert --letsencrypt-email admin@opencom.online
 USAGE
 }
 
@@ -48,6 +67,20 @@ while [[ $# -gt 0 ]]; do
       DIRECT_IP="1"; shift ;;
     --no-auto-fallback-ip)
       AUTO_FALLBACK_IP="0"; shift ;;
+    --generate-self-signed-cert)
+      GENERATE_SELF_SIGNED_CERT="1"; shift ;;
+    --cert-dir)
+      CERT_DIR="${2:-}"; shift 2 ;;
+    --cert-days)
+      CERT_DAYS="${2:-}"; shift 2 ;;
+    --force-cert-overwrite)
+      FORCE_CERT_OVERWRITE="1"; shift ;;
+    --generate-letsencrypt-cert)
+      GENERATE_LETSENCRYPT_CERT="1"; shift ;;
+    --letsencrypt-email)
+      LETSENCRYPT_EMAIL="${2:-}"; shift 2 ;;
+    --letsencrypt-staging)
+      LETSENCRYPT_STAGING="1"; shift ;;
     --backend-env)
       BACKEND_ENV="${2:-}"; shift 2 ;;
     --frontend-env)
@@ -63,6 +96,26 @@ done
 
 if [[ "$DIRECT_IP" == "1" && -z "$WS_IP" ]]; then
   echo "--direct-ip requires --ip <address>" >&2
+  exit 1
+fi
+
+if ! [[ "$CERT_DAYS" =~ ^[0-9]+$ ]] || [[ "$CERT_DAYS" -lt 1 ]]; then
+  echo "--cert-days must be a positive integer" >&2
+  exit 1
+fi
+
+if [[ "$GENERATE_LETSENCRYPT_CERT" == "1" && -z "$LETSENCRYPT_EMAIL" ]]; then
+  echo "--generate-letsencrypt-cert requires --letsencrypt-email <email>" >&2
+  exit 1
+fi
+
+if [[ "$GENERATE_LETSENCRYPT_CERT" == "1" && "$FORCE_INSECURE" == "1" ]]; then
+  echo "--generate-letsencrypt-cert cannot be combined with --insecure" >&2
+  exit 1
+fi
+
+if [[ "$GENERATE_LETSENCRYPT_CERT" == "1" && "$GENERATE_SELF_SIGNED_CERT" == "1" ]]; then
+  echo "Choose only one of --generate-letsencrypt-cert or --generate-self-signed-cert" >&2
   exit 1
 fi
 
@@ -93,10 +146,83 @@ fi
 
 WS_URL="${SCHEME}://${WS_HOST}:${WS_PORT}/gateway"
 
+if [[ "$GENERATE_LETSENCRYPT_CERT" == "1" ]]; then
+  if ! command -v certbot >/dev/null 2>&1; then
+    echo "[ws-config] ERROR: certbot is required for --generate-letsencrypt-cert" >&2
+    echo "[ws-config] Install certbot, then re-run this command." >&2
+    exit 1
+  fi
+
+  if [[ "$WS_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "[ws-config] ERROR: --domain must be a DNS hostname for Let's Encrypt (not a raw IP)." >&2
+    exit 1
+  fi
+
+  CERTBOT_ARGS=(certonly --non-interactive --agree-tos --email "$LETSENCRYPT_EMAIL" --standalone -d "$WS_DOMAIN")
+  if [[ "$LETSENCRYPT_STAGING" == "1" ]]; then
+    CERTBOT_ARGS+=(--staging)
+  fi
+
+  echo "[ws-config] Requesting Let's Encrypt certificate for ${WS_DOMAIN}..."
+  certbot "${CERTBOT_ARGS[@]}"
+
+  LE_CERT_DIR="/etc/letsencrypt/live/${WS_DOMAIN}"
+  LE_CERT_FILE="${LE_CERT_DIR}/fullchain.pem"
+  LE_KEY_FILE="${LE_CERT_DIR}/privkey.pem"
+  if [[ ! -f "$LE_CERT_FILE" || ! -f "$LE_KEY_FILE" ]]; then
+    echo "[ws-config] ERROR: certbot completed but cert files not found under ${LE_CERT_DIR}" >&2
+    exit 1
+  fi
+
+  upsert_env "$BACKEND_ENV" "CORE_GATEWAY_TLS_CERT_FILE" "$LE_CERT_FILE"
+  upsert_env "$BACKEND_ENV" "CORE_GATEWAY_TLS_KEY_FILE" "$LE_KEY_FILE"
+  echo "[ws-config] Using trusted cert files from Let's Encrypt: $LE_CERT_FILE"
+fi
+
+if [[ "$GENERATE_SELF_SIGNED_CERT" == "1" ]]; then
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "[ws-config] ERROR: openssl is required for --generate-self-signed-cert" >&2
+    exit 1
+  fi
+
+  mkdir -p "$CERT_DIR"
+  CERT_FILE="$CERT_DIR/fullchain.pem"
+  KEY_FILE="$CERT_DIR/privkey.pem"
+
+  if [[ "$FORCE_CERT_OVERWRITE" != "1" && ( -f "$CERT_FILE" || -f "$KEY_FILE" ) ]]; then
+    echo "[ws-config] ERROR: cert files already exist in $CERT_DIR. Re-run with --force-cert-overwrite to replace them." >&2
+    exit 1
+  fi
+
+  SAN="DNS:${WS_DOMAIN}"
+  if [[ -n "$WS_IP" ]]; then
+    SAN+=" ,IP:${WS_IP}"
+  fi
+
+  openssl req \
+    -x509 -nodes -newkey rsa:2048 \
+    -keyout "$KEY_FILE" \
+    -out "$CERT_FILE" \
+    -days "$CERT_DAYS" \
+    -subj "/CN=${WS_DOMAIN}" \
+    -addext "subjectAltName = ${SAN// ,/,}" >/dev/null 2>&1
+
+  chmod 600 "$KEY_FILE"
+  chmod 644 "$CERT_FILE"
+  echo "[ws-config] Generated self-signed certificate: $CERT_FILE"
+  echo "[ws-config] Generated private key: $KEY_FILE"
+  echo "[ws-config] NOTE: self-signed certs are not trusted by browsers by default; use ACME/Let's Encrypt for production."
+fi
+
 # Backend: make WS listener reachable externally.
 upsert_env "$BACKEND_ENV" "CORE_GATEWAY_HOST" "0.0.0.0"
 upsert_env "$BACKEND_ENV" "CORE_GATEWAY_PORT" "$WS_PORT"
 upsert_env "$BACKEND_ENV" "NODE_HOST" "0.0.0.0"
+
+if [[ "$GENERATE_SELF_SIGNED_CERT" == "1" ]]; then
+  upsert_env "$BACKEND_ENV" "CORE_GATEWAY_TLS_CERT_FILE" "$CERT_FILE"
+  upsert_env "$BACKEND_ENV" "CORE_GATEWAY_TLS_KEY_FILE" "$KEY_FILE"
+fi
 
 # Frontend: point gateway directly, keep host + fallback IP hints.
 upsert_env "$FRONTEND_ENV" "VITE_GATEWAY_WS_URL" "$WS_URL"
