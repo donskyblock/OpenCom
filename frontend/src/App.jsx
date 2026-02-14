@@ -23,6 +23,8 @@ const MIC_SENSITIVITY_KEY = "opencom_mic_sensitivity";
 const AUDIO_INPUT_DEVICE_KEY = "opencom_audio_input_device";
 const AUDIO_OUTPUT_DEVICE_KEY = "opencom_audio_output_device";
 const SERVER_VOICE_GATEWAY_PREFS_KEY = "opencom_server_voice_gateway_prefs";
+const LAST_CORE_GATEWAY_KEY = "opencom_last_core_gateway";
+const LAST_SERVER_GATEWAY_KEY = "opencom_last_server_gateway";
 
 function getGatewayWsUrl() {
   const explicit = import.meta.env.VITE_GATEWAY_WS_URL;
@@ -168,6 +170,14 @@ function getNodeGatewayWsCandidates({ serverBaseUrl, mode = "core", customUrl = 
   }
 
   return candidates;
+}
+
+function prioritizeLastSuccessfulGateway(candidates, storageKey) {
+  const last = localStorage.getItem(storageKey);
+  if (!last) return candidates;
+  const idx = candidates.indexOf(last);
+  if (idx <= 0) return candidates;
+  return [candidates[idx], ...candidates.slice(0, idx), ...candidates.slice(idx + 1)];
 }
 
 
@@ -867,7 +877,7 @@ export function App() {
     let connected = false;
     let reconnectTimer = null;
     let candidateIndex = 0;
-    const candidates = getGatewayWsCandidates();
+    const candidates = prioritizeLastSuccessfulGateway(getGatewayWsCandidates(), LAST_CORE_GATEWAY_KEY);
 
     const connectNext = () => {
       if (disposed || connected || candidateIndex >= candidates.length) return;
@@ -892,6 +902,7 @@ export function App() {
         if (msg.op === "READY") {
           connected = true;
           setGatewayConnected(true);
+          localStorage.setItem(LAST_CORE_GATEWAY_KEY, wsUrl);
           setStatus("");
           if (gatewayWsRef.current?.readyState === WebSocket.OPEN) {
             gatewayWsRef.current.send(JSON.stringify({ op: "DISPATCH", t: "SET_PRESENCE", d: { status: selfStatus, customStatus: null } }));
@@ -991,11 +1002,11 @@ export function App() {
     }
 
     const pref = serverVoiceGatewayPrefs[server.id] || {};
-    const wsCandidates = getNodeGatewayWsCandidates({
+    const wsCandidates = prioritizeLastSuccessfulGateway(getNodeGatewayWsCandidates({
       serverBaseUrl: server.baseUrl,
       mode: pref.mode === "server" ? "server" : "core",
       customUrl: typeof pref.customUrl === "string" ? pref.customUrl : ""
-    });
+    }), LAST_SERVER_GATEWAY_KEY);
     if (!wsCandidates.length) return;
 
     let disposed = false;
@@ -1030,6 +1041,7 @@ export function App() {
           if (msg.op === "READY") {
             connected = true;
             nodeGatewayReadyRef.current = true;
+            localStorage.setItem(LAST_SERVER_GATEWAY_KEY, wsUrl);
             if (activeGuildId) {
               ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_GUILD", d: { guildId: activeGuildId } }));
             }
@@ -1123,7 +1135,7 @@ export function App() {
         nodeGatewayWsRef.current = null;
       }
     };
-  }, [navMode, activeServer?.id, activeServer?.baseUrl, activeServer?.membershipToken, activeGuildId, activeChannelId, serverVoiceGatewayPrefs]);
+  }, [navMode, activeServer?.id, activeServer?.baseUrl, activeServer?.membershipToken, serverVoiceGatewayPrefs]);
 
   useEffect(() => {
     if (!activeGuildId || !activeChannelId) return;
