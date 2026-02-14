@@ -117,6 +117,13 @@ function getGatewayWsCandidates() {
 }
 
 
+// Backward-compatible shim: older bundles/effects may still reference this helper.
+// We intentionally route server voice via REST right now, so this returns an empty string.
+function getNodeGatewayWsUrl() {
+  return "";
+}
+
+
 function useThemeCss() {
   const [css, setCss] = useState(localStorage.getItem(THEME_STORAGE_KEY) || "");
   const [enabled, setEnabled] = useState(localStorage.getItem(THEME_ENABLED_STORAGE_KEY) !== "0");
