@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createSfuVoiceClient } from "./voice/sfuClient";
 
 const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://openapi.donskyblock.xyz";
 
@@ -383,23 +384,14 @@ export function App() {
   const nodeGatewayHeartbeatRef = useRef(null);
   const nodeGatewayReadyRef = useRef(false);
   const voiceSpeakingDetectorRef = useRef({ audioCtx: null, stream: null, analyser: null, timer: null, lastSpeaking: false });
-  const voiceRtcRef = useRef({
-    localStream: null,
-    peerConnections: new Map(),
-    remoteAudioByUserId: new Map(),
-    pendingIceCandidatesByUserId: new Map(),
-    makingOfferByUserId: new Map()
-  });
-  const voiceRelayRef = useRef({
-    sequence: 0,
-    captureAudioCtx: null,
-    captureNode: null,
-    captureNodePortHandler: null,
-    source: null,
-    audioCtx: null,
-    nextPlaybackByUserId: new Map(),
-    sourceNodesByUserId: new Map()
-  });
+  const pendingVoiceEventsRef = useRef(new Map());
+  const voiceSfuRef = useRef(null);
+  if (!voiceSfuRef.current) {
+    voiceSfuRef.current = createSfuVoiceClient({
+      sendDispatch: (type, data) => sendNodeVoiceDispatch(type, data),
+      waitForEvent: waitForVoiceEvent
+    });
+  }
   const selfStatusRef = useRef(selfStatus);
   selfStatusRef.current = selfStatus;
 
@@ -1117,7 +1109,11 @@ export function App() {
               delete byUser[msg.d.userId];
               return { ...prev, [guildId]: byUser };
             });
-            if (msg.d.userId === me?.id) cleanupVoiceRtc().catch(() => {});
+            voiceSfuRef.current?.closeConsumersForUser(msg.d.userId);
+            if (msg.d.userId === me?.id) {
+              setVoiceConnectedChannelId("");
+              cleanupVoiceRtc().catch(() => {});
+            }
             return;
           }
 
@@ -1131,21 +1127,8 @@ export function App() {
             return;
           }
 
-          if (msg.op === "DISPATCH" && msg.t === "VOICE_WEBRTC_SIGNAL" && msg.d?.fromUserId && msg.d?.payload) {
-            handleIncomingVoiceSignal(msg.d.fromUserId, msg.d.payload).catch(() => {});
-            return;
-          }
-
-          if (msg.op === "DISPATCH" && msg.t === "VOICE_AUDIO_CHUNK" && msg.d?.fromUserId && msg.d?.encoded) {
-            playIncomingVoiceAudioChunk(msg.d).catch(() => {});
-            return;
-          }
-
           if (msg.op === "DISPATCH" && msg.t === "VOICE_JOINED" && msg.d?.channelId) {
             setVoiceConnectedChannelId(msg.d.channelId);
-            ensureLocalVoiceStream().catch(() => {
-              setStatus("Microphone access is required for voice chat.");
-            });
             return;
           }
 
@@ -1162,6 +1145,10 @@ export function App() {
             setStatus(message);
             window.alert(message);
             return;
+          }
+
+          if (msg.op === "DISPATCH" && typeof msg.t === "string") {
+            voiceSfuRef.current?.handleGatewayDispatch(msg.t, msg.d).catch(() => {});
           }
         } catch (_) {}
       };
@@ -1351,7 +1338,7 @@ export function App() {
       const detector = voiceSpeakingDetectorRef.current;
       if (detector.timer) clearInterval(detector.timer);
       detector.timer = null;
-      if (detector.stream && detector.stream !== voiceRtcRef.current.localStream) detector.stream.getTracks().forEach((t) => t.stop());
+      if (detector.stream && detector.stream !== voiceSfuRef.current?.getLocalStream()) detector.stream.getTracks().forEach((t) => t.stop());
       detector.stream = null;
       if (detector.audioCtx) detector.audioCtx.close().catch(() => {});
       detector.audioCtx = null;
@@ -1367,7 +1354,7 @@ export function App() {
     let cancelled = false;
     (async () => {
       try {
-        const stream = voiceRtcRef.current.localStream || await navigator.mediaDevices.getUserMedia({
+        const stream = voiceSfuRef.current?.getLocalStream() || await navigator.mediaDevices.getUserMedia({
           audio: audioInputDeviceId ? { deviceId: { exact: audioInputDeviceId } } : true
         });
         if (cancelled) {
@@ -1418,7 +1405,7 @@ export function App() {
       const detector = voiceSpeakingDetectorRef.current;
       if (detector.timer) clearInterval(detector.timer);
       detector.timer = null;
-      if (detector.stream && detector.stream !== voiceRtcRef.current.localStream) detector.stream.getTracks().forEach((t) => t.stop());
+      if (detector.stream && detector.stream !== voiceSfuRef.current?.getLocalStream()) detector.stream.getTracks().forEach((t) => t.stop());
       detector.stream = null;
       if (detector.audioCtx) detector.audioCtx.close().catch(() => {});
       detector.audioCtx = null;
@@ -1443,129 +1430,18 @@ export function App() {
     localStorage.setItem(AUDIO_OUTPUT_DEVICE_KEY, audioOutputDeviceId || "");
   }, [audioOutputDeviceId]);
 
+  useEffect(() => {
+    voiceSfuRef.current?.setMuted(isMuted);
+  }, [isMuted]);
 
   useEffect(() => {
-    const canStream = !!voiceConnectedChannelId
-      && !!activeGuildId
-      && !isMuted
-      && !isDeafened
-      && !!me?.id
-      && !!navigator.mediaDevices?.getUserMedia
-      && !!window.AudioContext;
+    voiceSfuRef.current?.setDeafened(isDeafened);
+  }, [isDeafened]);
 
-    const stopCapture = () => {
-      const relay = voiceRelayRef.current;
-      if (relay.captureNode) {
-        if (relay.captureNodePortHandler && relay.captureNode.port) {
-          relay.captureNode.port.onmessage = null;
-          relay.captureNodePortHandler = null;
-        }
-        try { relay.captureNode.disconnect(); } catch {}
-        relay.captureNode = null;
-      }
-      if (relay.source) {
-        try { relay.source.disconnect(); } catch {}
-        relay.source = null;
-      }
-      if (relay.captureAudioCtx) {
-        relay.captureAudioCtx.close().catch(() => {});
-        relay.captureAudioCtx = null;
-      }
-    };
+  useEffect(() => {
+    voiceSfuRef.current?.setAudioOutputDevice(audioOutputDeviceId);
+  }, [audioOutputDeviceId]);
 
-    if (!canStream) {
-      stopCapture();
-      return;
-    }
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const stream = await ensureLocalVoiceStream();
-        if (cancelled) return;
-
-        const relay = voiceRelayRef.current;
-        const captureAudioCtx = new window.AudioContext({ sampleRate: 48000 });
-        relay.captureAudioCtx = captureAudioCtx;
-        await captureAudioCtx.resume().catch(() => {});
-
-        const source = captureAudioCtx.createMediaStreamSource(stream);
-        relay.source = source;
-
-        const handleFloat32Chunk = (input) => {
-          if (cancelled || isMuted || isDeafened || !input?.length) return;
-          try {
-            const pcm16 = new Int16Array(input.length);
-            for (let i = 0; i < input.length; i += 1) {
-              const sample = Math.max(-1, Math.min(1, input[i] || 0));
-              pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-            }
-            const bytes = new Uint8Array(pcm16.buffer);
-            let binary = "";
-            for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
-            const encoded = btoa(binary);
-            sendNodeVoiceDispatch("VOICE_AUDIO_CHUNK", {
-              guildId: activeGuildId,
-              channelId: voiceConnectedChannelId,
-              codec: "pcm_s16le",
-              channels: 1,
-              sampleRate: captureAudioCtx.sampleRate || 48000,
-              sequence: relay.sequence++,
-              encoded
-            });
-          } catch {}
-        };
-
-        if (window.AudioWorkletNode && captureAudioCtx.audioWorklet) {
-          const workletSource = `
-            class PcmCaptureProcessor extends AudioWorkletProcessor {
-              process(inputs) {
-                const input = inputs?.[0]?.[0];
-                if (input && input.length) {
-                  this.port.postMessage(input.slice());
-                }
-                return true;
-              }
-            }
-            registerProcessor('pcm-capture-processor', PcmCaptureProcessor);
-          `;
-          const blobUrl = URL.createObjectURL(new Blob([workletSource], { type: "application/javascript" }));
-          try {
-            await captureAudioCtx.audioWorklet.addModule(blobUrl);
-          } finally {
-            URL.revokeObjectURL(blobUrl);
-          }
-
-          const captureNode = new window.AudioWorkletNode(captureAudioCtx, "pcm-capture-processor", {
-            numberOfInputs: 1,
-            numberOfOutputs: 1,
-            channelCount: 1
-          });
-          relay.captureNode = captureNode;
-          const onMessage = (event) => handleFloat32Chunk(event.data);
-          relay.captureNodePortHandler = onMessage;
-          captureNode.port.onmessage = onMessage;
-
-          source.connect(captureNode);
-          captureNode.connect(captureAudioCtx.destination);
-        } else {
-          const processor = captureAudioCtx.createScriptProcessor(1024, 1, 1);
-          relay.captureNode = processor;
-          processor.onaudioprocess = (event) => handleFloat32Chunk(event.inputBuffer.getChannelData(0));
-          source.connect(processor);
-          processor.connect(captureAudioCtx.destination);
-        }
-      } catch {
-        setStatus("Microphone access is required for voice chat.");
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      stopCapture();
-    };
-  }, [voiceConnectedChannelId, activeGuildId, me?.id, isMuted, isDeafened]);
 
   useEffect(() => {
     if (settingsTab !== "voice" || !settingsOpen || !navigator.mediaDevices?.enumerateDevices) return;
@@ -1598,39 +1474,6 @@ export function App() {
     const selfState = mergedVoiceStates.find((vs) => vs.userId === me.id);
     setVoiceConnectedChannelId(selfState?.channelId || "");
   }, [mergedVoiceStates, me?.id]);
-
-  useEffect(() => {
-    if (!voiceConnectedChannelId || !activeGuildId || !me?.id) {
-      cleanupVoiceRtc().catch(() => {});
-      return;
-    }
-
-    const membersInChannel = voiceMembersByChannel.get(voiceConnectedChannelId) || [];
-    const otherMemberIds = membersInChannel
-      .map((member) => member.userId)
-      .filter((userId) => userId && userId !== me.id);
-
-    const currentPeerIds = [...voiceRtcRef.current.peerConnections.keys()];
-    for (const userId of currentPeerIds) {
-      if (otherMemberIds.includes(userId)) continue;
-      const pc = voiceRtcRef.current.peerConnections.get(userId);
-      voiceRtcRef.current.peerConnections.delete(userId);
-      voiceRtcRef.current.pendingIceCandidatesByUserId.delete(userId);
-      voiceRtcRef.current.makingOfferByUserId.delete(userId);
-      try { pc?.close(); } catch {}
-      const audio = voiceRtcRef.current.remoteAudioByUserId.get(userId);
-      if (audio) {
-        voiceRtcRef.current.remoteAudioByUserId.delete(userId);
-        try { audio.pause(); audio.srcObject = null; audio.remove(); } catch {}
-      }
-    }
-
-    for (const userId of otherMemberIds) {
-      const shouldInitiate = me.id < userId;
-      ensureVoicePeerConnection(userId, shouldInitiate).catch(() => {});
-    }
-  }, [voiceConnectedChannelId, activeGuildId, voiceMembersByChannel, me?.id]);
-
 
   useEffect(() => {
     if (!accessToken || (navMode !== "friends" && navMode !== "dms")) return;
@@ -2581,218 +2424,62 @@ export function App() {
     return false;
   }
 
-  function resolvePendingVoiceEvent() {}
+  function waitForVoiceEvent({ type, match = null, timeoutMs = 10000, guildId = null, channelId = null, sessionToken = null }) {
+    return new Promise((resolve, reject) => {
+      const key = type;
+      const bucket = pendingVoiceEventsRef.current.get(key) || [];
+      const pending = {
+        match,
+        guildId,
+        channelId,
+        sessionToken,
+        resolve,
+        reject,
+        timeout: setTimeout(() => {
+          reject(new Error(`${type}_TIMEOUT`));
+          const current = pendingVoiceEventsRef.current.get(key) || [];
+          pendingVoiceEventsRef.current.set(key, current.filter((entry) => entry !== pending));
+        }, timeoutMs)
+      };
+      bucket.push(pending);
+      pendingVoiceEventsRef.current.set(key, bucket);
+    });
+  }
 
-  function rejectPendingVoiceEvents() {}
+  function resolvePendingVoiceEvent(msg) {
+    if (msg?.op !== "DISPATCH" || typeof msg.t !== "string") return;
+    const bucket = pendingVoiceEventsRef.current.get(msg.t);
+    if (!bucket?.length) return;
+    const data = msg.d || {};
+    const remaining = [];
+    for (const pending of bucket) {
+      const guildMatches = !pending.guildId || data.guildId === pending.guildId;
+      const channelMatches = !pending.channelId || data.channelId === pending.channelId;
+      const matchOk = !pending.match || pending.match(data, msg);
+      if (guildMatches && channelMatches && matchOk) {
+        clearTimeout(pending.timeout);
+        pending.resolve(data);
+        continue;
+      }
+      remaining.push(pending);
+    }
+    if (remaining.length) pendingVoiceEventsRef.current.set(msg.t, remaining);
+    else pendingVoiceEventsRef.current.delete(msg.t);
+  }
+
+  function rejectPendingVoiceEvents(reason = "VOICE_REQUEST_CANCELLED") {
+    for (const [key, bucket] of pendingVoiceEventsRef.current.entries()) {
+      for (const pending of bucket) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error(reason));
+      }
+      pendingVoiceEventsRef.current.delete(key);
+    }
+  }
 
   async function cleanupVoiceRtc() {
-    const rtc = voiceRtcRef.current;
-    for (const pc of rtc.peerConnections.values()) {
-      try { pc.close(); } catch {}
-    }
-    rtc.peerConnections.clear();
-    rtc.pendingIceCandidatesByUserId.clear();
-    rtc.makingOfferByUserId.clear();
-
-    if (rtc.localStream) {
-      rtc.localStream.getTracks().forEach((t) => t.stop());
-      rtc.localStream = null;
-    }
-
-    for (const audio of rtc.remoteAudioByUserId.values()) {
-      try { audio.pause(); audio.srcObject = null; audio.remove(); } catch {}
-    }
-    rtc.remoteAudioByUserId.clear();
-
-    const relay = voiceRelayRef.current;
-    if (relay.captureNode) {
-      if (relay.captureNodePortHandler && relay.captureNode.port) {
-        relay.captureNode.port.onmessage = null;
-        relay.captureNodePortHandler = null;
-      }
-      relay.captureNode.onaudioprocess = null;
-      try { relay.captureNode.disconnect(); } catch {}
-      relay.captureNode = null;
-    }
-    if (relay.source) {
-      try { relay.source.disconnect(); } catch {}
-      relay.source = null;
-    }
-    if (relay.captureAudioCtx) {
-      relay.captureAudioCtx.close().catch(() => {});
-      relay.captureAudioCtx = null;
-    }
-    relay.sequence = 0;
-    relay.nextPlaybackByUserId.clear();
-    for (const node of relay.sourceNodesByUserId.values()) {
-      try { node.stop(); } catch {}
-    }
-    relay.sourceNodesByUserId.clear();
-    if (relay.audioCtx) {
-      relay.audioCtx.close().catch(() => {});
-      relay.audioCtx = null;
-    }
-  }
-
-  async function playIncomingVoiceAudioChunk(packet) {
-    const fromUserId = packet?.fromUserId;
-    if (!fromUserId || fromUserId === me?.id || isDeafened) return;
-
-    const encoded = packet?.encoded;
-    const channels = Number(packet?.channels || 1);
-    const sampleRate = Number(packet?.sampleRate || 48000);
-    if (typeof encoded !== "string" || !encoded.length || channels !== 1 || !sampleRate) return;
-
-    const relay = voiceRelayRef.current;
-    if (!relay.audioCtx || relay.audioCtx.state === "closed") {
-      relay.audioCtx = new window.AudioContext({ sampleRate: 48000 });
-    }
-
-    if (relay.audioCtx.state === "suspended") {
-      await relay.audioCtx.resume().catch(() => {});
-    }
-
-    const binary = atob(encoded);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-
-    const pcm16 = new Int16Array(bytes.buffer);
-    const audioBuffer = relay.audioCtx.createBuffer(1, pcm16.length, sampleRate);
-    const channel = audioBuffer.getChannelData(0);
-    for (let i = 0; i < pcm16.length; i += 1) {
-      channel[i] = pcm16[i] / 0x8000;
-    }
-
-    const source = relay.audioCtx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(relay.audioCtx.destination);
-
-    const nextAt = Math.max(relay.audioCtx.currentTime + 0.01, relay.nextPlaybackByUserId.get(fromUserId) || 0);
-    relay.nextPlaybackByUserId.set(fromUserId, nextAt + audioBuffer.duration);
-    relay.sourceNodesByUserId.set(fromUserId, source);
-    source.onended = () => {
-      if (relay.sourceNodesByUserId.get(fromUserId) === source) {
-        relay.sourceNodesByUserId.delete(fromUserId);
-      }
-    };
-    source.start(nextAt);
-  }
-
-  async function ensureLocalVoiceStream() {
-    if (voiceRtcRef.current.localStream) return voiceRtcRef.current.localStream;
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: audioInputDeviceId ? { deviceId: { exact: audioInputDeviceId } } : true
-    });
-    voiceRtcRef.current.localStream = stream;
-    return stream;
-  }
-
-  function sendVoiceWebRtcSignal(targetUserId, payload) {
-    if (!activeGuildId || !voiceConnectedChannelId || !targetUserId) return;
-    sendNodeVoiceDispatch("VOICE_WEBRTC_SIGNAL", {
-      guildId: activeGuildId,
-      channelId: voiceConnectedChannelId,
-      targetUserId,
-      payload
-    });
-  }
-
-  async function ensureVoicePeerConnection(targetUserId, initiator = false) {
-    const rtc = voiceRtcRef.current;
-    if (rtc.peerConnections.has(targetUserId)) return rtc.peerConnections.get(targetUserId);
-
-    const stream = await ensureLocalVoiceStream();
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-    rtc.peerConnections.set(targetUserId, pc);
-
-    stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-
-    pc.onicecandidate = (event) => {
-      if (!event.candidate) return;
-      try { sendVoiceWebRtcSignal(targetUserId, { type: "ice", candidate: event.candidate }); } catch {}
-    };
-
-    pc.ontrack = (event) => {
-      const mediaStream = event.streams?.[0] || new MediaStream([event.track]);
-      let audio = rtc.remoteAudioByUserId.get(targetUserId);
-      if (!audio) {
-        audio = document.createElement("audio");
-        audio.autoplay = true;
-        rtc.remoteAudioByUserId.set(targetUserId, audio);
-      }
-      audio.srcObject = mediaStream;
-      audio.play().catch(() => {});
-    };
-
-    pc.onconnectionstatechange = () => {
-      if (!["failed", "closed", "disconnected"].includes(pc.connectionState)) return;
-      rtc.peerConnections.delete(targetUserId);
-      rtc.pendingIceCandidatesByUserId.delete(targetUserId);
-      rtc.makingOfferByUserId.delete(targetUserId);
-      const audio = rtc.remoteAudioByUserId.get(targetUserId);
-      if (audio) {
-        rtc.remoteAudioByUserId.delete(targetUserId);
-        try { audio.pause(); audio.srcObject = null; audio.remove(); } catch {}
-      }
-    };
-
-    if (initiator) {
-      rtc.makingOfferByUserId.set(targetUserId, true);
-      try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        sendVoiceWebRtcSignal(targetUserId, { type: "offer", sdp: offer.sdp });
-      } finally {
-        rtc.makingOfferByUserId.set(targetUserId, false);
-      }
-    }
-
-    return pc;
-  }
-
-  async function handleIncomingVoiceSignal(fromUserId, payload) {
-    if (!fromUserId || !payload?.type) return;
-    if (fromUserId === me?.id) return;
-
-    if (payload.type === "offer") {
-      const pc = await ensureVoicePeerConnection(fromUserId, false);
-      await pc.setRemoteDescription({ type: "offer", sdp: payload.sdp });
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      sendVoiceWebRtcSignal(fromUserId, { type: "answer", sdp: answer.sdp });
-
-      const pendingCandidates = voiceRtcRef.current.pendingIceCandidatesByUserId.get(fromUserId) || [];
-      voiceRtcRef.current.pendingIceCandidatesByUserId.delete(fromUserId);
-      for (const candidate of pendingCandidates) {
-        await pc.addIceCandidate(candidate).catch(() => {});
-      }
-      return;
-    }
-
-    if (payload.type === "answer") {
-      const pc = voiceRtcRef.current.peerConnections.get(fromUserId);
-      if (!pc) return;
-      await pc.setRemoteDescription({ type: "answer", sdp: payload.sdp });
-
-      const pendingCandidates = voiceRtcRef.current.pendingIceCandidatesByUserId.get(fromUserId) || [];
-      voiceRtcRef.current.pendingIceCandidatesByUserId.delete(fromUserId);
-      for (const candidate of pendingCandidates) {
-        await pc.addIceCandidate(candidate).catch(() => {});
-      }
-      return;
-    }
-
-    if (payload.type === "ice") {
-      const pc = voiceRtcRef.current.peerConnections.get(fromUserId) || await ensureVoicePeerConnection(fromUserId, false);
-      if (!payload.candidate) return;
-      if (!pc.remoteDescription) {
-        const pending = voiceRtcRef.current.pendingIceCandidatesByUserId.get(fromUserId) || [];
-        pending.push(payload.candidate);
-        voiceRtcRef.current.pendingIceCandidatesByUserId.set(fromUserId, pending);
-        return;
-      }
-      await pc.addIceCandidate(payload.candidate).catch(() => {});
-    }
+    rejectPendingVoiceEvents("VOICE_SESSION_CLEANUP");
+    await voiceSfuRef.current?.cleanup();
   }
 
   function sendNodeVoiceDispatch(type, data) {
@@ -2807,10 +2494,23 @@ export function App() {
   async function joinVoiceChannel(channel) {
     if (!channel?.id || !activeGuildId || !activeServer?.baseUrl || !activeServer?.membershipToken) return;
     try {
-      sendNodeVoiceDispatch("VOICE_JOIN", { guildId: activeGuildId, channelId: channel.id });
       setStatus(`Joining ${channel.name}...`);
+      await voiceSfuRef.current?.join({
+        guildId: activeGuildId,
+        channelId: channel.id,
+        audioInputDeviceId,
+        isMuted,
+        isDeafened,
+        audioOutputDeviceId
+      });
+      setVoiceConnectedChannelId(channel.id);
+      setStatus(`Joined ${channel.name}.`);
       return;
-    } catch {}
+    } catch (error) {
+      const message = `Voice connection failed: ${error.message || "VOICE_JOIN_FAILED"}`;
+      setStatus(message);
+      window.alert(message);
+    }
 
     try {
       await nodeApi(activeServer.baseUrl, `/v1/channels/${channel.id}/voice/join`, activeServer.membershipToken, { method: "POST" });
@@ -2828,7 +2528,7 @@ export function App() {
     try {
       sendNodeVoiceDispatch("VOICE_LEAVE", { channelId: voiceConnectedChannelId });
       setIsScreenSharing(false);
-      cleanupVoiceRtc().catch(() => {});
+      await cleanupVoiceRtc();
       return;
     } catch {}
 
@@ -2836,7 +2536,7 @@ export function App() {
       await nodeApi(activeServer.baseUrl, `/v1/channels/${voiceConnectedChannelId}/voice/leave`, activeServer.membershipToken, { method: "POST" });
       setVoiceConnectedChannelId("");
       setIsScreenSharing(false);
-      cleanupVoiceRtc().catch(() => {});
+      await cleanupVoiceRtc();
       setStatus("Disconnected from voice (REST fallback).");
     } catch (error) {
       const message = `Voice disconnect failed: ${error.message || "VOICE_LEAVE_FAILED"}`;
