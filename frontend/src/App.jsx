@@ -982,6 +982,19 @@ export function App() {
       return;
     }
 
+    if (nodeGatewayUnavailableByServer[server.id]) {
+      nodeGatewayReadyRef.current = false;
+      if (nodeGatewayHeartbeatRef.current) {
+        clearInterval(nodeGatewayHeartbeatRef.current);
+        nodeGatewayHeartbeatRef.current = null;
+      }
+      if (nodeGatewayWsRef.current) {
+        nodeGatewayWsRef.current.close();
+        nodeGatewayWsRef.current = null;
+      }
+      return;
+    }
+
     const wsCandidates = prioritizeLastSuccessfulGateway(getNodeGatewayWsCandidates(server.baseUrl), LAST_SERVER_GATEWAY_KEY);
     if (!wsCandidates.length) return;
 
