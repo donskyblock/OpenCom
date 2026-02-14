@@ -72,6 +72,15 @@ export async function profileRoutes(app: FastifyInstance) {
   });
 
   // Raw image upload (multipart), max 25MB, .png .jpg .gif .webp .svg
+  function mimeFromFilename(filename: string): string | null {
+    const ext = path.extname(filename || "").toLowerCase();
+    const map: Record<string, string> = {
+      ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+      ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".bmp": "image/bmp"
+    };
+    return map[ext] ?? null;
+  }
+
   async function handleProfileImageUpload(
     req: any,
     rep: any,
@@ -80,8 +89,8 @@ export async function profileRoutes(app: FastifyInstance) {
   ) {
     const data = await req.file();
     if (!data) return rep.code(400).send({ error: "MISSING_FILE" });
-    const mime = data.mimetype;
-    if (!ALLOWED_IMAGE_MIMES.has(mime)) {
+    let mime = (data.mimetype || "").toLowerCase().trim() || mimeFromFilename(data.filename || "");
+    if (!mime || !ALLOWED_IMAGE_MIMES.has(mime)) {
       return rep.code(400).send({ error: "INVALID_IMAGE_TYPE", allowed: [...ALLOWED_IMAGE_MIMES] });
     }
     const buffer = await data.toBuffer();
