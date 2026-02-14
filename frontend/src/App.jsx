@@ -197,9 +197,10 @@ async function api(path, options = {}) {
 }
 
 async function nodeApi(baseUrl, path, token, options = {}) {
+  const hasBody = options.body !== undefined && options.body !== null;
   const response = await fetch(`${baseUrl}${path}`, {
     headers: {
-      "Content-Type": "application/json",
+      ...(hasBody ? { "Content-Type": "application/json" } : {}),
       Authorization: `Bearer ${token}`,
       ...(options.headers || {})
     },
@@ -2395,7 +2396,8 @@ export function App() {
                                   return;
                                 }
                                 nodeApi(activeServer.baseUrl, `/v1/channels/${channel.id}/voice/join`, activeServer.membershipToken, {
-                                  method: "POST"
+                                  method: "POST",
+                                  body: "{}"
                                 })
                                   .then(() => {
                                     setVoiceConnectedChannelId(channel.id);
