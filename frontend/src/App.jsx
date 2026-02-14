@@ -786,14 +786,24 @@ export function App() {
     }
     let disposed = false;
     let connected = false;
+    let hasEverConnected = false;
     let reconnectTimer = null;
     let candidateIndex = 0;
+    let reconnectAttempts = 0;
     const candidates = prioritizeLastSuccessfulGateway(getGatewayWsCandidates(), LAST_CORE_GATEWAY_KEY);
 
-    const connectNext = () => {
-      if (disposed || connected || candidateIndex >= candidates.length) return;
+    const scheduleReconnect = () => {
+      if (disposed) return;
+      const delay = Math.min(5000, 300 * (2 ** Math.min(reconnectAttempts, 4)));
+      reconnectAttempts += 1;
+      reconnectTimer = setTimeout(connectNext, delay);
+    };
 
-      const wsUrl = candidates[candidateIndex++];
+    const connectNext = () => {
+      if (disposed || connected || !candidates.length) return;
+
+      const wsUrl = candidates[candidateIndex % candidates.length];
+      candidateIndex += 1;
       const ws = new WebSocket(wsUrl);
       gatewayWsRef.current = ws;
 
@@ -812,6 +822,8 @@ export function App() {
         }
         if (msg.op === "READY") {
           connected = true;
+          hasEverConnected = true;
+          reconnectAttempts = 0;
           setGatewayConnected(true);
           localStorage.setItem(LAST_CORE_GATEWAY_KEY, wsUrl);
           setStatus("");
@@ -868,11 +880,13 @@ export function App() {
           gatewayHeartbeatRef.current = null;
         }
 
-        // Try the next websocket endpoint if this one failed before READY.
-        if (!connected && candidateIndex < candidates.length) {
-          reconnectTimer = setTimeout(connectNext, 300);
-        } else if (!connected) {
+        connected = false;
+        scheduleReconnect();
+
+        if (!hasEverConnected) {
           setStatus("Gateway websocket unavailable. Check DNS/TLS or set VITE_GATEWAY_WS_URL/VITE_GATEWAY_WS_IP.");
+        } else {
+          setStatus("Gateway disconnected. Reconnecting...");
         }
       };
 
@@ -917,12 +931,22 @@ export function App() {
 
     let disposed = false;
     let connected = false;
+    let hasEverConnected = false;
     let reconnectTimer = null;
     let candidateIndex = 0;
+    let reconnectAttempts = 0;
+
+    const scheduleReconnect = () => {
+      if (disposed) return;
+      const delay = Math.min(5000, 300 * (2 ** Math.min(reconnectAttempts, 4)));
+      reconnectAttempts += 1;
+      reconnectTimer = setTimeout(connectNext, delay);
+    };
 
     const connectNext = () => {
-      if (disposed || candidateIndex >= wsCandidates.length) return;
-      const wsUrl = wsCandidates[candidateIndex++];
+      if (disposed || !wsCandidates.length) return;
+      const wsUrl = wsCandidates[candidateIndex % wsCandidates.length];
+      candidateIndex += 1;
       const ws = new WebSocket(wsUrl);
       nodeGatewayWsRef.current = ws;
 
@@ -946,6 +970,8 @@ export function App() {
 
           if (msg.op === "READY") {
             connected = true;
+            hasEverConnected = true;
+            reconnectAttempts = 0;
             nodeGatewayReadyRef.current = true;
             localStorage.setItem(LAST_SERVER_GATEWAY_KEY, wsUrl);
             if (activeGuildId) {
@@ -1014,12 +1040,13 @@ export function App() {
         }
         nodeGatewayWsRef.current = null;
 
-        if (!connected && candidateIndex < wsCandidates.length) {
-          reconnectTimer = setTimeout(connectNext, 250);
-        } else if (!connected) {
+        connected = false;
+        scheduleReconnect();
+
+        if (!hasEverConnected) {
           setStatus("Voice gateway unavailable. Using fallback failed. Check server/core gateway settings.");
         } else {
-          setStatus("Server voice gateway disconnected.");
+          setStatus("Server voice gateway disconnected. Reconnecting...");
         }
       };
 
