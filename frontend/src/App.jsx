@@ -2329,7 +2329,7 @@ export function App() {
         )}
 
         {navMode === "dms" && (
-          <>
+          <section className="chat-main">
             <header className="chat-header dm-header-actions">
               <h3>{activeDm ? `@ ${activeDm.name}` : "Direct Messages"}</h3>
               <div className="chat-actions">
@@ -2378,7 +2378,7 @@ export function App() {
               <input ref={dmComposerInputRef} value={dmText} onChange={(event) => setDmText(event.target.value)} placeholder={`Message ${activeDm?.name || "friend"}`} onKeyDown={(event) => event.key === "Enter" && sendDm()} />
               <button className="send-btn" onClick={sendDm} disabled={!activeDm || !dmText.trim()}>Send</button>
             </footer>
-          </>
+          </section>
         )}
 
         {navMode === "friends" && (
