@@ -14,7 +14,8 @@ import {
   connectTransport,
   produce,
   consume,
-  listProducers
+  listProducers,
+  closePeer
 } from "./voice/mediasoup.js";
 
 type Conn = {
@@ -93,6 +94,33 @@ export function attachNodeGateway(app: FastifyInstance) {
 
     conn.voice = undefined;
     await emitVoiceState(guildId, conn.userId);
+  }
+
+  function notifyVoicePeerClosed(guildId: string, channelId: string, userId: string, closedProducerIds: string[]) {
+    for (const producerId of closedProducerIds) {
+      broadcastVoiceChannel(
+        guildId,
+        channelId,
+        "VOICE_PRODUCER_CLOSED",
+        { guildId, channelId, producerId, userId },
+        userId
+      );
+    }
+
+    broadcastVoiceChannel(
+      guildId,
+      channelId,
+      "VOICE_USER_LEFT",
+      { guildId, channelId, userId },
+      userId
+    );
+  }
+
+  function cleanupVoicePeerAndNotify(conn: Conn) {
+    if (!conn.voice) return;
+    const { guildId, channelId } = conn.voice;
+    const closedProducerIds = closePeer(guildId, channelId, conn.userId);
+    notifyVoicePeerClosed(guildId, channelId, conn.userId, closedProducerIds);
   }
 
   app.server.on("upgrade", (req, socket, head) => {
@@ -249,6 +277,7 @@ export function attachNodeGateway(app: FastifyInstance) {
           }
 
           if (conn.voice && (conn.voice.guildId !== guildId || conn.voice.channelId !== channelId)) {
+            cleanupVoicePeerAndNotify(conn);
             await leaveVoice(conn);
           }
 
@@ -276,41 +305,11 @@ export function attachNodeGateway(app: FastifyInstance) {
 
       if (msg.op === "DISPATCH" && msg.t === "VOICE_LEAVE") {
         try {
+          cleanupVoicePeerAndNotify(conn);
           await leaveVoice(conn);
           sendDispatch(conn, "VOICE_LEFT", { ok: true });
         } catch {
           sendDispatch(conn, "VOICE_ERROR", { error: "VOICE_LEAVE_FAILED" });
-        }
-        return;
-      }
-
-      if (msg.op === "DISPATCH" && msg.t === "VOICE_WEBRTC_SIGNAL") {
-        try {
-          if (!conn.voice) {
-            sendDispatch(conn, "VOICE_ERROR", { error: "NOT_IN_VOICE_CHANNEL" });
-            return;
-          }
-          const targetUserId = (msg.d as any)?.targetUserId;
-          const payload = (msg.d as any)?.payload;
-          if (typeof targetUserId !== "string" || !payload) {
-            sendDispatch(conn, "VOICE_ERROR", { error: "BAD_VOICE_WEBRTC_SIGNAL" });
-            return;
-          }
-
-          for (const c of conns) {
-            if (c.userId !== targetUserId) continue;
-            if (!c.voice) continue;
-            if (c.voice.guildId !== conn.voice.guildId || c.voice.channelId !== conn.voice.channelId) continue;
-            sendDispatch(c, "VOICE_WEBRTC_SIGNAL", {
-              guildId: conn.voice.guildId,
-              channelId: conn.voice.channelId,
-              fromUserId: conn.userId,
-              payload
-            });
-            break;
-          }
-        } catch {
-          sendDispatch(conn, "VOICE_ERROR", { error: "VOICE_WEBRTC_SIGNAL_FAILED" });
         }
         return;
       }
@@ -502,6 +501,7 @@ export function attachNodeGateway(app: FastifyInstance) {
 
     ws.on("close", async () => {
       if (conn) {
+        cleanupVoicePeerAndNotify(conn);
         await leaveVoice(conn);
         conns.delete(conn);
       }

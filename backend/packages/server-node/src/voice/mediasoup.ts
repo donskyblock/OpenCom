@@ -155,3 +155,38 @@ export function listProducers(guildId: string, channelId: string) {
   }
   return producers;
 }
+
+export function closePeer(guildId: string, channelId: string, userId: string): string[] {
+  const roomKey = key(guildId, channelId);
+  const room = rooms.get(roomKey);
+  if (!room) return [];
+
+  const peer = room.peers.get(userId);
+  if (!peer) return [];
+
+  const closedProducerIds = [...peer.producers.keys()];
+
+  for (const consumer of peer.consumers.values()) {
+    try { consumer.close(); } catch {}
+  }
+  peer.consumers.clear();
+
+  for (const producer of peer.producers.values()) {
+    try { producer.close(); } catch {}
+  }
+  peer.producers.clear();
+
+  for (const transport of peer.transports.values()) {
+    try { transport.close(); } catch {}
+  }
+  peer.transports.clear();
+
+  room.peers.delete(userId);
+
+  if (room.peers.size === 0) {
+    try { room.router.close(); } catch {}
+    rooms.delete(roomKey);
+  }
+
+  return closedProducerIds;
+}
