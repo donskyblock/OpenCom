@@ -1,6 +1,11 @@
 import { q } from "../db.js";
 
-export async function requireGuildMember(guildId: string, userId: string, roles: string[] = []) {
+export async function requireGuildMember(guildId: string, userId: string, roles: string[] = [], coreServerId?: string) {
+  if (coreServerId) {
+    const guild = await q<{ id: string }>(`SELECT id FROM guilds WHERE id=:guildId AND server_id=:coreServerId`, { guildId, coreServerId });
+    if (!guild.length) throw new Error("NOT_GUILD_MEMBER");
+  }
+
   const isPlatformStaff = roles.includes("platform_admin") || roles.includes("platform_owner");
   if (isPlatformStaff) return;
 
