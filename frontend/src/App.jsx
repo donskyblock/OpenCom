@@ -22,18 +22,15 @@ const MIC_GAIN_KEY = "opencom_mic_gain";
 const MIC_SENSITIVITY_KEY = "opencom_mic_sensitivity";
 const AUDIO_INPUT_DEVICE_KEY = "opencom_audio_input_device";
 const AUDIO_OUTPUT_DEVICE_KEY = "opencom_audio_output_device";
-const SERVER_VOICE_GATEWAY_PREFS_KEY = "opencom_server_voice_gateway_prefs";
 const LAST_CORE_GATEWAY_KEY = "opencom_last_core_gateway";
 const LAST_SERVER_GATEWAY_KEY = "opencom_last_server_gateway";
+const CANONICAL_GATEWAY_WS_URL = "wss://ws.opencom.online:9443/gateway";
 
 function getGatewayWsUrl() {
   const explicit = import.meta.env.VITE_GATEWAY_WS_URL;
-  const directHost = import.meta.env.VITE_GATEWAY_WS_HOST || "ws.opencom.online";
-  const forceInsecureWs = import.meta.env.VITE_GATEWAY_WS_INSECURE === "1";
-  const defaultScheme = forceInsecureWs ? "ws" : "wss";
   const raw = (explicit && typeof explicit === "string" && explicit.trim())
     ? explicit.trim()
-    : `${defaultScheme}://${directHost}:9443/gateway`;
+    : CANONICAL_GATEWAY_WS_URL;
 
   try {
     const url = new URL(raw);
@@ -53,10 +50,7 @@ function getGatewayWsUrl() {
 
 function getGatewayWsCandidates() {
   const explicit = import.meta.env.VITE_GATEWAY_WS_URL;
-  const configuredIp = import.meta.env.VITE_GATEWAY_WS_IP;
-  const forceInsecureWs = import.meta.env.VITE_GATEWAY_WS_INSECURE === "1";
   const candidates = [];
-  const preferSecure = window.location.protocol === "https:";
 
   const push = (value) => {
     if (!value || typeof value !== "string") return;
@@ -78,98 +72,19 @@ function getGatewayWsCandidates() {
     if (!candidates.includes(normalized)) candidates.push(normalized);
   };
 
-  const pushHost = (host, port = "9443") => {
-    if (!host) return;
-    const h = String(host).trim();
-    if (!h) return;
-    if (forceInsecureWs) {
-      push(`ws://${h}:${port}/gateway`);
-      return;
-    }
-    if (preferSecure) {
-      push(`wss://${h}:${port}/gateway`);
-      return;
-    }
-    // In local/dev deployments the gateway commonly runs plain WS on 9443.
-    push(`ws://${h}:${port}/gateway`);
-    push(`wss://${h}:${port}/gateway`);
-  };
-
-  // Prefer same-machine and same-origin hosts first in development.
-  pushHost(window.location.hostname, "9443");
-  if (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost") {
-    pushHost("127.0.0.1", "9443");
-    pushHost("localhost", "9443");
-  }
-
-  // If CORE API points at a host, try that host's gateway as well.
-  try {
-    const core = new URL(CORE_API);
-    pushHost(core.hostname, "9443");
-  } catch {
-    // ignore invalid CORE_API
-  }
-
-  // User-configured values come before platform defaults.
+  // User-configured explicit endpoint first when provided.
   if (explicit && typeof explicit === "string" && explicit.trim()) push(explicit);
 
-  if (configuredIp && typeof configuredIp === "string" && configuredIp.trim()) {
-    pushHost(configuredIp.trim(), "9443");
-  }
-
-  // Platform default hosted gateway fallback (kept late to avoid noisy failures in self-host/local setups).
+  // Canonical platform endpoint.
   push(getGatewayWsUrl());
 
-  // Direct host fallback for environments where DNS/proxy is not set yet.
-  pushHost("37.114.58.186", "9443");
-
   return candidates;
 }
 
 
-function getNodeGatewayWsUrl(baseUrl) {
-  if (!baseUrl || typeof baseUrl !== "string") return "";
-  try {
-    const url = new URL(baseUrl.trim());
-    url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
-    url.pathname = "/gateway";
-    url.search = "";
-    url.hash = "";
-    return url.toString().replace(/\/$/, "");
-  } catch {
-    const raw = baseUrl.trim().replace(/\/$/, "");
-    if (!raw) return "";
-    if (raw.startsWith("ws://") || raw.startsWith("wss://")) return raw.endsWith("/gateway") ? raw : `${raw}/gateway`;
-    if (raw.startsWith("http://")) return `${raw.replace("http://", "ws://")}/gateway`;
-    if (raw.startsWith("https://")) return `${raw.replace("https://", "wss://")}/gateway`;
-    return `wss://${raw}/gateway`;
-  }
-}
-
-function getNodeGatewayWsCandidates({ serverBaseUrl, mode = "core", customUrl = "" }) {
-  const candidates = [];
-  const push = (url) => {
-    if (!url || typeof url !== "string") return;
-    const normalized = url.trim();
-    if (!normalized || candidates.includes(normalized)) return;
-    candidates.push(normalized);
-  };
-
-  const core = getGatewayWsCandidates();
-  const server = getNodeGatewayWsUrl(serverBaseUrl);
-  const custom = getNodeGatewayWsUrl(customUrl);
-
-  if (mode === "server") {
-    if (custom) push(custom);
-    if (server) push(server);
-    core.forEach(push);
-  } else {
-    core.forEach(push);
-    if (custom) push(custom);
-    if (server) push(server);
-  }
-
-  return candidates;
+function getNodeGatewayWsCandidates() {
+  // VC should always use the canonical core gateway endpoint.
+  return getGatewayWsCandidates();
 }
 
 function prioritizeLastSuccessfulGateway(candidates, storageKey) {
@@ -707,12 +622,6 @@ export function App() {
   }, [activeDmId]);
 
   useEffect(() => {
-    localStorage.setItem(SERVER_VOICE_GATEWAY_PREFS_KEY, JSON.stringify(serverVoiceGatewayPrefs));
-  }, [serverVoiceGatewayPrefs]);
-
-
-
-  useEffect(() => {
     if (!draggingProfileCard) return;
     const onMove = (event) => {
       const x = Math.max(8, Math.min(window.innerWidth - 340, event.clientX - profileCardDragOffsetRef.current.x));
@@ -1001,12 +910,7 @@ export function App() {
       return;
     }
 
-    const pref = serverVoiceGatewayPrefs[server.id] || {};
-    const wsCandidates = prioritizeLastSuccessfulGateway(getNodeGatewayWsCandidates({
-      serverBaseUrl: server.baseUrl,
-      mode: pref.mode === "server" ? "server" : "core",
-      customUrl: typeof pref.customUrl === "string" ? pref.customUrl : ""
-    }), LAST_SERVER_GATEWAY_KEY);
+    const wsCandidates = prioritizeLastSuccessfulGateway(getNodeGatewayWsCandidates(), LAST_SERVER_GATEWAY_KEY);
     if (!wsCandidates.length) return;
 
     let disposed = false;
@@ -1135,7 +1039,7 @@ export function App() {
         nodeGatewayWsRef.current = null;
       }
     };
-  }, [navMode, activeServer?.id, activeServer?.baseUrl, activeServer?.membershipToken, serverVoiceGatewayPrefs]);
+  }, [navMode, activeServer?.id, activeServer?.baseUrl, activeServer?.membershipToken]);
 
   useEffect(() => {
     if (!activeGuildId || !activeChannelId) return;
@@ -1256,53 +1160,6 @@ export function App() {
     }
   }, [navMode, dms, activeDmId]);
 
-  // Separate DM message polling - does NOT touch call state
-  useEffect(() => {
-    if (!accessToken || navMode !== "dms") return;
-
-    const timer = window.setInterval(async () => {
-      try {
-        const [dmsData, requestsData] = await Promise.all([
-          api("/v1/social/dms", { headers: { Authorization: `Bearer ${accessToken}` } }),
-          api("/v1/social/requests", { headers: { Authorization: `Bearer ${accessToken}` } })
-        ]);
-
-        setDms((current) => {
-          const prevMap = new Map(current.map((item) => [item.id, item]));
-          // Preserve existing messages and call state - only update DM metadata
-          return (dmsData.dms || []).map((item) => {
-            const existing = prevMap.get(item.id);
-            return { 
-              ...item, 
-              messages: existing?.messages || [],
-              // Preserve any call-related state if it exists
-            };
-          });
-        });
-        setFriendRequests({ incoming: requestsData.incoming || [], outgoing: requestsData.outgoing || [] });
-
-        if (activeDmId) {
-          const messagesData = await api(`/v1/social/dms/${activeDmId}/messages`, { headers: { Authorization: `Bearer ${accessToken}` } });
-          const newestId = messagesData.messages?.[messagesData.messages.length - 1]?.id || "";
-          const isNewMessage = newestId && lastDmMessageIdRef.current && newestId !== lastDmMessageIdRef.current;
-          if (isNewMessage) {
-            const newest = messagesData.messages?.[messagesData.messages.length - 1];
-            if (newest?.authorId !== me?.id) {
-              playNotificationBeep(selfStatusRef.current === "dnd");
-              setDmNotification({ dmId: activeDmId, at: Date.now() });
-            }
-          }
-          if (newestId) lastDmMessageIdRef.current = newestId;
-          setDms((current) => current.map((item) => item.id === activeDmId ? { ...item, messages: messagesData.messages || [] } : item));
-        }
-      } catch {
-        // keep UI stable if polling fails
-      }
-    }, 5000);
-
-    return () => window.clearInterval(timer);
-  }, [accessToken, navMode, activeDmId]);
-
   useEffect(() => {
     if (!dmNotification) return;
     const t = setTimeout(() => setDmNotification(null), 4000);
@@ -1369,14 +1226,9 @@ export function App() {
 
   useEffect(() => {
     if (!accessToken || (navMode !== "friends" && navMode !== "dms")) return;
-
-    const timer = window.setInterval(() => {
-      refreshSocialData(accessToken).catch(() => {
-        // keep existing state on transient failures
-      });
-    }, 10000);
-
-    return () => window.clearInterval(timer);
+    refreshSocialData(accessToken).catch(() => {
+      // keep existing state on transient failures
+    });
   }, [accessToken, navMode]);
 
   activeChannelIdRef.current = activeChannelId;
@@ -1391,26 +1243,6 @@ export function App() {
       .then((data) => setMessages((data.messages || []).slice().reverse()))
       .catch((error) => setStatus(`Message fetch failed: ${error.message}`));
   }, [activeServer, activeChannelId, navMode]);
-
-  // Server channel message polling keeps server chat live until dedicated node-gateway subscription is wired in the client.
-  useEffect(() => {
-    if (navMode !== "servers" || !activeServer?.baseUrl || !activeChannelId) return;
-
-    const channelId = activeChannelId;
-    const baseUrl = activeServer.baseUrl;
-    const token = activeServer.membershipToken;
-
-    const timer = window.setInterval(() => {
-      nodeApi(baseUrl, `/v1/channels/${channelId}/messages`, token)
-        .then((data) => {
-          if (activeChannelIdRef.current !== channelId) return;
-          setMessages((data.messages || []).slice().reverse());
-        })
-        .catch(() => {});
-    }, 5000);
-
-    return () => window.clearInterval(timer);
-  }, [navMode, activeServer, activeChannelId]);
 
   async function handleAuthSubmit(event) {
     event.preventDefault();
