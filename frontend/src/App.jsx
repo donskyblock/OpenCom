@@ -110,8 +110,11 @@ function getNodeGatewayWsCandidates(serverBaseUrl) {
   // Core gateway proxies membershipToken sessions to node gateways.
   for (const wsUrl of getGatewayWsCandidates()) push(wsUrl);
 
-  // Keep direct node gateway as fallback if proxy path is unavailable.
-  push(serverBaseUrl);
+  const allowDirectNodeWsFallback = String(import.meta.env.VITE_ENABLE_DIRECT_NODE_WS_FALLBACK || "").trim() === "1";
+  if (allowDirectNodeWsFallback) {
+    // Optional escape hatch for deployments that explicitly want direct node WS fallback.
+    push(serverBaseUrl);
+  }
 
   return candidates;
 }
@@ -1071,7 +1074,7 @@ export function App() {
         scheduleReconnect();
 
         if (!hasEverConnected) {
-          setStatus("Voice gateway unavailable. Using fallback failed. Check server/core gateway settings.");
+          setStatus("Voice gateway unavailable. Check core gateway/proxy configuration.");
         } else {
           setStatus("Server voice gateway disconnected. Reconnecting...");
         }
