@@ -60,9 +60,10 @@ export async function profileRoutes(app: FastifyInstance) {
       ".webp": "image/webp",
       ".svg": "image/svg+xml"
     };
-    if (mime[ext]) rep.header("Content-Type", mime[ext]);
+    const contentType = mime[ext] ?? "application/octet-stream";
+    rep.header("Content-Type", contentType);
     rep.header("Cache-Control", "public, max-age=31536000, immutable");
-    return rep.sendFile(filepath);
+    return rep.send(fs.createReadStream(filepath));
   });
 
   app.get("/v1/users/:id/profile", async (req, rep) => {
