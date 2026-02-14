@@ -14,7 +14,8 @@ import {
   connectTransport,
   produce,
   consume,
-  listProducers
+  listProducers,
+  closePeer
 } from "./voice/mediasoup.js";
 
 type Conn = {
@@ -93,6 +94,33 @@ export function attachNodeGateway(app: FastifyInstance) {
 
     conn.voice = undefined;
     await emitVoiceState(guildId, conn.userId);
+  }
+
+  function notifyVoicePeerClosed(guildId: string, channelId: string, userId: string, closedProducerIds: string[]) {
+    for (const producerId of closedProducerIds) {
+      broadcastVoiceChannel(
+        guildId,
+        channelId,
+        "VOICE_PRODUCER_CLOSED",
+        { guildId, channelId, producerId, userId },
+        userId
+      );
+    }
+
+    broadcastVoiceChannel(
+      guildId,
+      channelId,
+      "VOICE_USER_LEFT",
+      { guildId, channelId, userId },
+      userId
+    );
+  }
+
+  function cleanupVoicePeerAndNotify(conn: Conn) {
+    if (!conn.voice) return;
+    const { guildId, channelId } = conn.voice;
+    const closedProducerIds = closePeer(guildId, channelId, conn.userId);
+    notifyVoicePeerClosed(guildId, channelId, conn.userId, closedProducerIds);
   }
 
   app.server.on("upgrade", (req, socket, head) => {
@@ -249,6 +277,9 @@ export function attachNodeGateway(app: FastifyInstance) {
           }
 
           if (conn.voice && (conn.voice.guildId !== guildId || conn.voice.channelId !== channelId)) {
+            // Clean up and notify for the previous voice context stored on conn.voice.
+            // Do not use incoming join target context here.
+            cleanupVoicePeerAndNotify(conn);
             await leaveVoice(conn);
           }
 
@@ -276,6 +307,7 @@ export function attachNodeGateway(app: FastifyInstance) {
 
       if (msg.op === "DISPATCH" && msg.t === "VOICE_LEAVE") {
         try {
+          cleanupVoicePeerAndNotify(conn);
           await leaveVoice(conn);
           sendDispatch(conn, "VOICE_LEFT", { ok: true });
         } catch {
@@ -424,12 +456,12 @@ export function attachNodeGateway(app: FastifyInstance) {
 
           const result = await produce(guildId, channelId, conn.userId, transportId, kind, rtpParameters);
           sendDispatch(conn, "VOICE_PRODUCED", { ...result, userId: conn.userId, guildId, channelId });
-          broadcastGuild(guildId, "VOICE_NEW_PRODUCER", {
+          broadcastVoiceChannel(guildId, channelId, "VOICE_NEW_PRODUCER", {
             guildId,
             channelId,
             userId: conn.userId,
             producerId: result.producerId
-          });
+          }, conn.userId);
         } catch {
           sendDispatch(conn, "VOICE_ERROR", { error: "VOICE_PRODUCE_FAILED" });
         }
@@ -471,6 +503,7 @@ export function attachNodeGateway(app: FastifyInstance) {
 
     ws.on("close", async () => {
       if (conn) {
+        cleanupVoicePeerAndNotify(conn);
         await leaveVoice(conn);
         conns.delete(conn);
       }
