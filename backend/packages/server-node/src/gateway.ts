@@ -346,7 +346,9 @@ export function attachNodeGateway(app: FastifyInstance) {
           }
 
           const encoded = (msg.d as any)?.encoded;
-          const mimeType = (msg.d as any)?.mimeType;
+          const codec = (msg.d as any)?.codec;
+          const channels = Number((msg.d as any)?.channels || 1);
+          const sampleRate = Number((msg.d as any)?.sampleRate || 0);
           const sequence = Number((msg.d as any)?.sequence || 0);
 
           if (typeof encoded !== "string" || !encoded.length || encoded.length > 512_000) {
@@ -354,7 +356,7 @@ export function attachNodeGateway(app: FastifyInstance) {
             return;
           }
 
-          if (typeof mimeType !== "string" || !mimeType.startsWith("audio/")) {
+          if (codec !== "pcm_s16le" || channels !== 1 || !Number.isFinite(sampleRate) || sampleRate < 8000 || sampleRate > 96000) {
             sendDispatch(conn, "VOICE_ERROR", { error: "BAD_VOICE_AUDIO_CHUNK" });
             return;
           }
@@ -368,7 +370,9 @@ export function attachNodeGateway(app: FastifyInstance) {
               channelId: conn.voice.channelId,
               fromUserId: conn.userId,
               encoded,
-              mimeType,
+              codec,
+              channels,
+              sampleRate,
               sequence
             },
             conn.userId
