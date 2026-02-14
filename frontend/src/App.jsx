@@ -386,7 +386,9 @@ export function App() {
   const voiceRtcRef = useRef({
     localStream: null,
     peerConnections: new Map(),
-    remoteAudioByUserId: new Map()
+    remoteAudioByUserId: new Map(),
+    pendingIceCandidatesByUserId: new Map(),
+    makingOfferByUserId: new Map()
   });
   const voiceRelayRef = useRef({
     sequence: 0,
@@ -1598,8 +1600,36 @@ export function App() {
   }, [mergedVoiceStates, me?.id]);
 
   useEffect(() => {
-    // WebRTC peer mesh intentionally disabled for websocket voice relay mode.
-  }, [voiceConnectedChannelId, voiceMembersByChannel, me?.id]);
+    if (!voiceConnectedChannelId || !activeGuildId || !me?.id) {
+      cleanupVoiceRtc().catch(() => {});
+      return;
+    }
+
+    const membersInChannel = voiceMembersByChannel.get(voiceConnectedChannelId) || [];
+    const otherMemberIds = membersInChannel
+      .map((member) => member.userId)
+      .filter((userId) => userId && userId !== me.id);
+
+    const currentPeerIds = [...voiceRtcRef.current.peerConnections.keys()];
+    for (const userId of currentPeerIds) {
+      if (otherMemberIds.includes(userId)) continue;
+      const pc = voiceRtcRef.current.peerConnections.get(userId);
+      voiceRtcRef.current.peerConnections.delete(userId);
+      voiceRtcRef.current.pendingIceCandidatesByUserId.delete(userId);
+      voiceRtcRef.current.makingOfferByUserId.delete(userId);
+      try { pc?.close(); } catch {}
+      const audio = voiceRtcRef.current.remoteAudioByUserId.get(userId);
+      if (audio) {
+        voiceRtcRef.current.remoteAudioByUserId.delete(userId);
+        try { audio.pause(); audio.srcObject = null; audio.remove(); } catch {}
+      }
+    }
+
+    for (const userId of otherMemberIds) {
+      const shouldInitiate = me.id < userId;
+      ensureVoicePeerConnection(userId, shouldInitiate).catch(() => {});
+    }
+  }, [voiceConnectedChannelId, activeGuildId, voiceMembersByChannel, me?.id]);
 
 
   useEffect(() => {
@@ -2561,6 +2591,8 @@ export function App() {
       try { pc.close(); } catch {}
     }
     rtc.peerConnections.clear();
+    rtc.pendingIceCandidatesByUserId.clear();
+    rtc.makingOfferByUserId.clear();
 
     if (rtc.localStream) {
       rtc.localStream.getTracks().forEach((t) => t.stop());
@@ -2695,6 +2727,8 @@ export function App() {
     pc.onconnectionstatechange = () => {
       if (!["failed", "closed", "disconnected"].includes(pc.connectionState)) return;
       rtc.peerConnections.delete(targetUserId);
+      rtc.pendingIceCandidatesByUserId.delete(targetUserId);
+      rtc.makingOfferByUserId.delete(targetUserId);
       const audio = rtc.remoteAudioByUserId.get(targetUserId);
       if (audio) {
         rtc.remoteAudioByUserId.delete(targetUserId);
@@ -2703,9 +2737,14 @@ export function App() {
     };
 
     if (initiator) {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      sendVoiceWebRtcSignal(targetUserId, { type: "offer", sdp: offer.sdp });
+      rtc.makingOfferByUserId.set(targetUserId, true);
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        sendVoiceWebRtcSignal(targetUserId, { type: "offer", sdp: offer.sdp });
+      } finally {
+        rtc.makingOfferByUserId.set(targetUserId, false);
+      }
     }
 
     return pc;
@@ -2721,6 +2760,12 @@ export function App() {
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       sendVoiceWebRtcSignal(fromUserId, { type: "answer", sdp: answer.sdp });
+
+      const pendingCandidates = voiceRtcRef.current.pendingIceCandidatesByUserId.get(fromUserId) || [];
+      voiceRtcRef.current.pendingIceCandidatesByUserId.delete(fromUserId);
+      for (const candidate of pendingCandidates) {
+        await pc.addIceCandidate(candidate).catch(() => {});
+      }
       return;
     }
 
@@ -2728,12 +2773,24 @@ export function App() {
       const pc = voiceRtcRef.current.peerConnections.get(fromUserId);
       if (!pc) return;
       await pc.setRemoteDescription({ type: "answer", sdp: payload.sdp });
+
+      const pendingCandidates = voiceRtcRef.current.pendingIceCandidatesByUserId.get(fromUserId) || [];
+      voiceRtcRef.current.pendingIceCandidatesByUserId.delete(fromUserId);
+      for (const candidate of pendingCandidates) {
+        await pc.addIceCandidate(candidate).catch(() => {});
+      }
       return;
     }
 
     if (payload.type === "ice") {
       const pc = voiceRtcRef.current.peerConnections.get(fromUserId) || await ensureVoicePeerConnection(fromUserId, false);
       if (!payload.candidate) return;
+      if (!pc.remoteDescription) {
+        const pending = voiceRtcRef.current.pendingIceCandidatesByUserId.get(fromUserId) || [];
+        pending.push(payload.candidate);
+        voiceRtcRef.current.pendingIceCandidatesByUserId.set(fromUserId, pending);
+        return;
+      }
       await pc.addIceCandidate(payload.candidate).catch(() => {});
     }
   }
