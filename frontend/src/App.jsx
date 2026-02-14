@@ -22,7 +22,8 @@ const GATEWAY_DEVICE_ID_KEY = "opencom_gateway_device_id";
 function getGatewayWsUrl() {
   const explicit = import.meta.env.VITE_GATEWAY_WS_URL;
   const directHost = import.meta.env.VITE_GATEWAY_WS_HOST || "ws.opencom.online";
-  const defaultScheme = "wss";
+  const forceInsecureWs = import.meta.env.VITE_GATEWAY_WS_INSECURE === "1";
+  const defaultScheme = forceInsecureWs ? "ws" : "wss";
   const raw = (explicit && typeof explicit === "string" && explicit.trim())
     ? explicit.trim()
     : `${defaultScheme}://${directHost}:9443/gateway`;
@@ -46,6 +47,7 @@ function getGatewayWsUrl() {
 function getGatewayWsCandidates() {
   const explicit = import.meta.env.VITE_GATEWAY_WS_URL;
   const configuredIp = import.meta.env.VITE_GATEWAY_WS_IP;
+  const forceInsecureWs = import.meta.env.VITE_GATEWAY_WS_INSECURE === "1";
   const candidates = [];
   const preferSecure = window.location.protocol === "https:";
 
@@ -73,6 +75,10 @@ function getGatewayWsCandidates() {
     if (!host) return;
     const h = String(host).trim();
     if (!h) return;
+    if (forceInsecureWs) {
+      push(`ws://${h}:${port}/gateway`);
+      return;
+    }
     if (preferSecure) {
       push(`wss://${h}:${port}/gateway`);
       return;
