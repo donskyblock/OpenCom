@@ -76,3 +76,19 @@ Or explicitly:
 ```bash
 ./scripts/start.sh all
 ```
+
+## Configure direct WebSocket hosting (frontend via nginx, WS direct)
+If your frontend is proxied by nginx but websocket is exposed directly (for example on `ws.opencom.online:9443`), run:
+
+```bash
+./scripts/configure-ws.sh --domain ws.opencom.online --ip 37.114.58.186
+```
+
+> Do **not** pass `--backend-env /tmp/...` and `--frontend-env /tmp/...` unless you intentionally want a dry-run-like temp output.
+> To apply real config, run it against defaults (`backend/.env` and `frontend/.env`) by omitting those flags.
+
+Force plain `ws://` if your WS endpoint does not use TLS:
+
+```bash
+./scripts/configure-ws.sh --ip 37.114.58.186 --direct-ip --insecure
+```
