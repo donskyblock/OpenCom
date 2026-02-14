@@ -21,6 +21,7 @@ type Conn = {
   ws: any;
   userId: string;
   serverId: string;
+  coreServerId: string;
   seq: number;
   channels: Set<string>;
   guilds: Set<string>;
@@ -114,6 +115,7 @@ export function attachNodeGateway(app: FastifyInstance) {
             ws,
             userId: claims.sub,
             serverId: claims.server_id,
+            coreServerId: claims.core_server_id || claims.server_id,
             seq: 0,
             channels: new Set(),
             guilds: new Set(),
@@ -121,9 +123,19 @@ export function attachNodeGateway(app: FastifyInstance) {
           };
           conns.add(conn);
 
+          await q(
+            `UPDATE guilds
+             SET server_id = :coreServerId
+             WHERE owner_user_id = :userId AND (server_id = '' OR server_id IS NULL)`,
+            { userId: conn.userId, coreServerId: conn.coreServerId }
+          );
+
           const guildRows = await q<{ guild_id: string }>(
-            `SELECT guild_id FROM guild_members WHERE user_id=:userId`,
-            { userId: conn.userId }
+            `SELECT gm.guild_id
+             FROM guild_members gm
+             JOIN guilds g ON g.id = gm.guild_id
+             WHERE gm.user_id=:userId AND g.server_id=:coreServerId`,
+            { userId: conn.userId, coreServerId: conn.coreServerId }
           );
 
           send(ws, {
