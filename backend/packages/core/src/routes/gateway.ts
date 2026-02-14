@@ -1,6 +1,8 @@
+import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
 import type { FastifyInstance } from "fastify";
 import { GatewayEnvelope, CoreIdentify, PresenceUpdate } from "@ods/shared/events.js";
+import { env } from "../env.js";
 
 type Conn = {
   ws: any;
@@ -56,10 +58,27 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
     });
   }
 
-  app.server.on("upgrade", (req, socket, head) => {
-    if (req.url?.startsWith("/gateway")) {
-      wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
-    }
+  function handleUpgrade(allowRoot: boolean) {
+    return (req: any, socket: any, head: Buffer) => {
+      const path = req.url?.split("?")[0] ?? "";
+      const ok = path === "/gateway" || (allowRoot && path === "/");
+      if (ok) {
+        wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+      } else {
+        socket.destroy();
+      }
+    };
+  }
+
+  app.server.on("upgrade", handleUpgrade(false));
+
+  // Gateway on its own host (0.0.0.0) and port so it's reachable externally and doesn't conflict with main API (CORE_HOST:CORE_PORT)
+  const gatewayHost = env.CORE_GATEWAY_HOST;
+  const gatewayPort = env.CORE_GATEWAY_PORT;
+  const gatewayServer = createServer();
+  gatewayServer.on("upgrade", handleUpgrade(true)); // accept / or /gateway on dedicated port
+  gatewayServer.listen(gatewayPort, gatewayHost, () => {
+    (app as any).log?.info?.({ host: gatewayHost, port: gatewayPort }, "Gateway listening (WS only)");
   });
 
   wss.on("connection", (ws) => {

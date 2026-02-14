@@ -3,6 +3,10 @@ import { z } from "zod";
 const Env = z.object({
   CORE_PORT: z.coerce.number().default(3001),
   CORE_HOST: z.string().default("127.0.0.1"),
+  /** Host for WebSocket gateway only. Use 0.0.0.0 so it's reachable externally; main API stays on CORE_HOST. */
+  CORE_GATEWAY_HOST: z.string().default("0.0.0.0"),
+  /** Port for WebSocket gateway only. Point ws.opencom.online A record at this server; separate port so it won't conflict with API or nginx. Default 443. */
+  CORE_GATEWAY_PORT: z.coerce.number().default(443),
   CORE_DATABASE_URL: z.string().min(1),
   CORE_JWT_ACCESS_SECRET: z.string().min(16),
   CORE_JWT_REFRESH_SECRET: z.string().min(16),

@@ -20,9 +20,9 @@ const ACTIVE_DM_KEY = "opencom_active_dm";
 const GATEWAY_DEVICE_ID_KEY = "opencom_gateway_device_id";
 
 function getGatewayWsUrl() {
-  const base = import.meta.env.VITE_CORE_API_URL || "https://openapi.donskyblock.xyz";
-  const url = base.startsWith("https") ? base.replace(/^https/, "wss") : base.replace(/^http/, "ws");
-  return url.replace(/\/$/, "") + "/gateway";
+  const explicit = import.meta.env.VITE_GATEWAY_WS_URL;
+  if (explicit && typeof explicit === "string" && explicit.trim()) return explicit.trim().replace(/\/$/, "");
+  return "wss://ws.opencom.online";
 }
 
 function useThemeCss() {
