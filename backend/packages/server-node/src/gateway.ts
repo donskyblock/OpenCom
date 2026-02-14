@@ -123,6 +123,13 @@ export function attachNodeGateway(app: FastifyInstance) {
           };
           conns.add(conn);
 
+          await q(
+            `UPDATE guilds
+             SET server_id = :coreServerId
+             WHERE owner_user_id = :userId AND (server_id = '' OR server_id IS NULL)`,
+            { userId: conn.userId, coreServerId: conn.coreServerId }
+          );
+
           const guildRows = await q<{ guild_id: string }>(
             `SELECT gm.guild_id
              FROM guild_members gm

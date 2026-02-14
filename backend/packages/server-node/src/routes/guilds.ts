@@ -9,6 +9,15 @@ export async function guildRoutes(app: FastifyInstance) {
   app.get("/v1/guilds", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.auth.userId as string;
     const coreServerId = req.auth.coreServerId as string;
+
+    // Backward compatibility: claim legacy owner guilds with unset tenant.
+    await q(
+      `UPDATE guilds
+       SET server_id = :coreServerId
+       WHERE owner_user_id = :userId AND (server_id = '' OR server_id IS NULL)`,
+      { userId, coreServerId }
+    );
+
     const guilds = await q<{ id: string; name: string; owner_user_id: string; created_at: string }>(
       `SELECT g.id, g.name, g.owner_user_id, g.created_at
        FROM guilds g
