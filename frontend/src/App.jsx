@@ -1874,7 +1874,7 @@ export function App() {
                             draggable={canManageServer}
                             onDragStart={() => canManageServer && setChannelDragId(channel.id)}
                             onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add("channel-drop-target"); }}
-                            onDragLeave={(e) => e.currentTarget.classList.remove("channel-drop-target"); }}
+                            onDragLeave={(e) => e.currentTarget.classList.remove("channel-drop-target")}
                             onDrop={(e) => {
                               e.preventDefault();
                               e.currentTarget.classList.remove("channel-drop-target");
