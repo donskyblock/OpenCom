@@ -284,37 +284,6 @@ export function attachNodeGateway(app: FastifyInstance) {
         return;
       }
 
-      if (msg.op === "DISPATCH" && msg.t === "VOICE_WEBRTC_SIGNAL") {
-        try {
-          if (!conn.voice) {
-            sendDispatch(conn, "VOICE_ERROR", { error: "NOT_IN_VOICE_CHANNEL" });
-            return;
-          }
-          const targetUserId = (msg.d as any)?.targetUserId;
-          const payload = (msg.d as any)?.payload;
-          if (typeof targetUserId !== "string" || !payload) {
-            sendDispatch(conn, "VOICE_ERROR", { error: "BAD_VOICE_WEBRTC_SIGNAL" });
-            return;
-          }
-
-          for (const c of conns) {
-            if (c.userId !== targetUserId) continue;
-            if (!c.voice) continue;
-            if (c.voice.guildId !== conn.voice.guildId || c.voice.channelId !== conn.voice.channelId) continue;
-            sendDispatch(c, "VOICE_WEBRTC_SIGNAL", {
-              guildId: conn.voice.guildId,
-              channelId: conn.voice.channelId,
-              fromUserId: conn.userId,
-              payload
-            });
-            break;
-          }
-        } catch {
-          sendDispatch(conn, "VOICE_ERROR", { error: "VOICE_WEBRTC_SIGNAL_FAILED" });
-        }
-        return;
-      }
-
       if (msg.op === "DISPATCH" && msg.t === "VOICE_SPEAKING") {
         try {
           if (!conn.voice) {
