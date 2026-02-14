@@ -9,6 +9,7 @@ WS_IP=""
 WS_PORT="9443"
 FORCE_INSECURE="0"
 DIRECT_IP="0"
+AUTO_FALLBACK_IP="1"
 
 usage() {
   cat <<USAGE
@@ -22,6 +23,7 @@ Options:
   --port <port>           Websocket port (default: 9443)
   --insecure              Force plain ws:// (sets VITE_GATEWAY_WS_INSECURE=1)
   --direct-ip             Set VITE_GATEWAY_WS_URL directly to the provided --ip endpoint
+  --no-auto-fallback-ip   Disable automatic fallback to --ip if domain is unreachable
   --backend-env <path>    Backend env file (default: backend/.env)
   --frontend-env <path>   Frontend env file (default: frontend/.env)
   -h, --help              Show this help
@@ -44,6 +46,8 @@ while [[ $# -gt 0 ]]; do
       FORCE_INSECURE="1"; shift ;;
     --direct-ip)
       DIRECT_IP="1"; shift ;;
+    --no-auto-fallback-ip)
+      AUTO_FALLBACK_IP="0"; shift ;;
     --backend-env)
       BACKEND_ENV="${2:-}"; shift 2 ;;
     --frontend-env)
@@ -106,13 +110,35 @@ echo "[ws-config] Updated: $BACKEND_ENV"
 echo "[ws-config] Updated: $FRONTEND_ENV"
 echo "[ws-config] Gateway URL: $WS_URL"
 
+if [[ "$BACKEND_ENV" == /tmp/* || "$FRONTEND_ENV" == /tmp/* ]]; then
+  echo "[ws-config] NOTE: You targeted temp files. Run without --backend-env/--frontend-env to apply live config."
+fi
+
 # Basic reachability hint (best effort only).
 if command -v nc >/dev/null 2>&1; then
   echo "[ws-config] Checking TCP reachability..."
+  DOMAIN_OK="0"
+  IP_OK="0"
   if nc -z -w 2 "$WS_HOST" "$WS_PORT" >/dev/null 2>&1; then
     echo "[ws-config] OK: ${WS_HOST}:${WS_PORT} reachable"
+    DOMAIN_OK="1"
   else
     echo "[ws-config] WARN: ${WS_HOST}:${WS_PORT} not reachable from this machine"
+  fi
+
+  if [[ -n "$WS_IP" && "$WS_IP" != "$WS_HOST" ]]; then
+    if nc -z -w 2 "$WS_IP" "$WS_PORT" >/dev/null 2>&1; then
+      echo "[ws-config] OK: ${WS_IP}:${WS_PORT} reachable"
+      IP_OK="1"
+    else
+      echo "[ws-config] WARN: ${WS_IP}:${WS_PORT} not reachable from this machine"
+    fi
+  fi
+
+  if [[ "$AUTO_FALLBACK_IP" == "1" && "$DIRECT_IP" == "0" && -n "$WS_IP" && "$DOMAIN_OK" == "0" && "$IP_OK" == "1" ]]; then
+    FALLBACK_URL="${SCHEME}://${WS_IP}:${WS_PORT}/gateway"
+    upsert_env "$FRONTEND_ENV" "VITE_GATEWAY_WS_URL" "$FALLBACK_URL"
+    echo "[ws-config] Applied fallback: VITE_GATEWAY_WS_URL=${FALLBACK_URL}"
   fi
 fi
 
