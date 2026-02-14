@@ -10,16 +10,17 @@
   "dependencies": {
     "@fastify/cors": "^10.0.0",
     "@fastify/jwt": "^9.0.1",
+    "@fastify/multipart": "^9.4.0",
     "@fastify/rate-limit": "^10.0.0",
     "@ods/shared": "0.0.1",
     "argon2": "^0.41.1",
+    "dotenv": "^16.4.5",
     "fastify": "^5.0.0",
     "jose": "^5.9.3",
+    "mysql2": "^3.11.0",
     "pg": "^8.12.0",
     "ws": "^8.18.0",
-    "zod": "^3.23.8",
-    "mysql2": "^3.11.0",
-    "dotenv": "^16.4.5"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "tsx": "^4.19.1",

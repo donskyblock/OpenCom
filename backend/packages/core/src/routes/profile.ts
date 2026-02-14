@@ -3,7 +3,7 @@ import { z } from "zod";
 import { q } from "../db.js";
 import { parseBody } from "../validation.js";
 import { env } from "../env.js";
-import { saveProfileImage, deleteProfileImage, parseBase64Image } from "../storage.js";
+import { saveProfileImage, saveProfileImageFromBuffer, deleteProfileImage } from "../storage.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -29,8 +29,12 @@ function relPathFromStoredUrl(stored: string | null): string | null {
   return null;
 }
 
+const ALLOWED_IMAGE_MIMES = new Set([
+  "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/svg+xml", "image/bmp"
+]);
+
 export async function profileRoutes(app: FastifyInstance) {
-  // Serve stored profile images: /v1/profile-images/users/{userId}/{filename}
+  // Serve stored profile images: raw file stream
   app.get("/v1/profile-images/users/:userId/:filename", async (req: any, rep) => {
     const { userId, filename } = z.object({
       userId: z.string().min(3),
@@ -58,12 +62,54 @@ export async function profileRoutes(app: FastifyInstance) {
       ".png": "image/png",
       ".gif": "image/gif",
       ".webp": "image/webp",
-      ".svg": "image/svg+xml"
+      ".svg": "image/svg+xml",
+      ".bmp": "image/bmp"
     };
     const contentType = mime[ext] ?? "application/octet-stream";
     rep.header("Content-Type", contentType);
     rep.header("Cache-Control", "public, max-age=31536000, immutable");
     return rep.send(fs.createReadStream(filepath));
+  });
+
+  // Raw image upload (multipart), max 25MB, .png .jpg .gif .webp .svg
+  async function handleProfileImageUpload(
+    req: any,
+    rep: any,
+    userId: string,
+    imageType: "pfp" | "banner"
+  ) {
+    const data = await req.file();
+    if (!data) return rep.code(400).send({ error: "MISSING_FILE" });
+    const mime = data.mimetype;
+    if (!ALLOWED_IMAGE_MIMES.has(mime)) {
+      return rep.code(400).send({ error: "INVALID_IMAGE_TYPE", allowed: [...ALLOWED_IMAGE_MIMES] });
+    }
+    const buffer = await data.toBuffer();
+    const current = await q<{ pfp_url: string | null; banner_url: string | null }>(
+      `SELECT pfp_url, banner_url FROM users WHERE id=:userId`,
+      { userId }
+    );
+    const currentUrl = imageType === "pfp" ? current[0]?.pfp_url : current[0]?.banner_url;
+    const oldRel = relPathFromStoredUrl(currentUrl ?? null);
+    const saved = saveProfileImageFromBuffer(env.PROFILE_IMAGE_STORAGE_DIR, userId, imageType, buffer, mime);
+    if (!saved) return rep.code(500).send({ error: "SAVE_FAILED" });
+    if (oldRel) deleteProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, oldRel);
+    const url = `${env.PROFILE_IMAGE_BASE_URL}/${saved}`;
+    await q(
+      `UPDATE users SET ${imageType === "pfp" ? "pfp_url" : "banner_url"} = :url WHERE id=:userId`,
+      { url, userId }
+    );
+    return rep.send(imageType === "pfp" ? { pfpUrl: url } : { bannerUrl: url });
+  }
+
+  app.post("/v1/me/profile/pfp", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    return handleProfileImageUpload(req, rep, userId, "pfp");
+  });
+
+  app.post("/v1/me/profile/banner", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    return handleProfileImageUpload(req, rep, userId, "banner");
   });
 
   app.get("/v1/users/:id/profile", async (req, rep) => {

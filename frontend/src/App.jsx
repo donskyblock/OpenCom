@@ -1810,21 +1810,26 @@ export function App() {
     setMessageContextMenu({ x, y, message: { ...message, pinned: isMessagePinned(message) } });
   }
 
-  const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"];
-  const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB
+  const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // 25MB for raw image upload
 
   function isAcceptedImage(file) {
     if (!file?.type) return false;
-    return ACCEPTED_IMAGE_TYPES.includes(file.type) || file.type.startsWith("image/");
+    return file.type.startsWith("image/");
   }
 
-  async function readImageFile(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(new Error("FILE_READ_FAILED"));
-      reader.readAsDataURL(file);
+  async function uploadProfileImage(file, endpoint) {
+    const formData = new FormData();
+    formData.append("image", file);
+    const res = await fetch(`${CORE_API}${endpoint}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: formData
     });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Upload failed: ${res.status}`);
+    }
+    return res.json();
   }
 
   async function onAvatarUpload(event) {
@@ -1832,23 +1837,21 @@ export function App() {
     event.target.value = "";
     if (!file) return;
     if (!isAcceptedImage(file)) {
-      setStatus("Please choose an image (PNG, JPG, GIF, or WebP).");
+      setStatus("Please choose an image (PNG, JPG, GIF, WebP, etc.).");
       return;
     }
     if (file.size > MAX_IMAGE_BYTES) {
-      setStatus("Image too large. Use a file under 4MB.");
+      setStatus(`Image too large. Max ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB.`);
       return;
     }
     try {
-      const dataUrl = await readImageFile(file);
-      if (!dataUrl?.startsWith("data:image/")) {
-        setStatus("Could not read image.");
-        return;
-      }
-      setProfileForm((current) => ({ ...current, pfpUrl: dataUrl }));
-      setStatus("Avatar selected. Click Save Profile to apply.");
-    } catch {
-      setStatus("Failed to read file.");
+      setStatus("Uploading avatar…");
+      const data = await uploadProfileImage(file, "/v1/me/profile/pfp");
+      setProfileForm((current) => ({ ...current, pfpUrl: data.pfpUrl || "" }));
+      setProfile(profile ? { ...profile, pfpUrl: data.pfpUrl } : null);
+      setStatus("Avatar updated.");
+    } catch (e) {
+      setStatus(e.message || "Upload failed.");
     }
   }
 
@@ -1857,23 +1860,21 @@ export function App() {
     event.target.value = "";
     if (!file) return;
     if (!isAcceptedImage(file)) {
-      setStatus("Please choose an image (PNG, JPG, GIF, or WebP).");
+      setStatus("Please choose an image (PNG, JPG, GIF, WebP, etc.).");
       return;
     }
     if (file.size > MAX_IMAGE_BYTES) {
-      setStatus("Image too large. Use a file under 4MB.");
+      setStatus(`Image too large. Max ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB.`);
       return;
     }
     try {
-      const dataUrl = await readImageFile(file);
-      if (!dataUrl?.startsWith("data:image/")) {
-        setStatus("Could not read image.");
-        return;
-      }
-      setProfileForm((current) => ({ ...current, bannerUrl: dataUrl }));
-      setStatus("Banner selected. Click Save Profile to apply.");
-    } catch {
-      setStatus("Failed to read file.");
+      setStatus("Uploading banner…");
+      const data = await uploadProfileImage(file, "/v1/me/profile/banner");
+      setProfileForm((current) => ({ ...current, bannerUrl: data.bannerUrl || "" }));
+      setProfile(profile ? { ...profile, bannerUrl: data.bannerUrl } : null);
+      setStatus("Banner updated.");
+    } catch (e) {
+      setStatus(e.message || "Upload failed.");
     }
   }
 
@@ -2606,9 +2607,9 @@ export function App() {
                   <label>Display Name<input value={profileForm.displayName} onChange={(event) => setProfileForm((current) => ({ ...current, displayName: event.target.value }))} /></label>
                   <label>Bio<textarea rows={4} value={profileForm.bio} onChange={(event) => setProfileForm((current) => ({ ...current, bio: event.target.value }))} /></label>
                   <label>Avatar URL<input value={profileForm.pfpUrl} onChange={(event) => setProfileForm((current) => ({ ...current, pfpUrl: event.target.value }))} /></label>
-                  <label>Upload Avatar<input type="file" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp" onChange={onAvatarUpload} /></label>
+                  <label>Upload Avatar<input type="file" accept="image/*" onChange={onAvatarUpload} /></label>
                   <label>Banner URL<input value={profileForm.bannerUrl} onChange={(event) => setProfileForm((current) => ({ ...current, bannerUrl: event.target.value }))} /></label>
-                  <label>Upload Banner<input type="file" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp" onChange={onBannerUpload} /></label>
+                  <label>Upload Banner<input type="file" accept="image/*" onChange={onBannerUpload} /></label>
                   <button onClick={saveProfile}>Save Profile</button>
                 </div>
               )}
