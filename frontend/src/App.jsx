@@ -391,7 +391,8 @@ export function App() {
   const voiceRelayRef = useRef({
     sequence: 0,
     captureAudioCtx: null,
-    processor: null,
+    captureNode: null,
+    captureNodePortHandler: null,
     source: null,
     audioCtx: null,
     nextPlaybackByUserId: new Map(),
@@ -1452,10 +1453,13 @@ export function App() {
 
     const stopCapture = () => {
       const relay = voiceRelayRef.current;
-      if (relay.processor) {
-        relay.processor.onaudioprocess = null;
-        try { relay.processor.disconnect(); } catch {}
-        relay.processor = null;
+      if (relay.captureNode) {
+        if (relay.captureNodePortHandler && relay.captureNode.port) {
+          relay.captureNode.port.onmessage = null;
+          relay.captureNodePortHandler = null;
+        }
+        try { relay.captureNode.disconnect(); } catch {}
+        relay.captureNode = null;
       }
       if (relay.source) {
         try { relay.source.disconnect(); } catch {}
@@ -1482,15 +1486,14 @@ export function App() {
         const relay = voiceRelayRef.current;
         const captureAudioCtx = new window.AudioContext({ sampleRate: 48000 });
         relay.captureAudioCtx = captureAudioCtx;
+        await captureAudioCtx.resume().catch(() => {});
+
         const source = captureAudioCtx.createMediaStreamSource(stream);
         relay.source = source;
-        const processor = captureAudioCtx.createScriptProcessor(1024, 1, 1);
-        relay.processor = processor;
 
-        processor.onaudioprocess = (event) => {
-          if (cancelled || isMuted || isDeafened) return;
+        const handleFloat32Chunk = (input) => {
+          if (cancelled || isMuted || isDeafened || !input?.length) return;
           try {
-            const input = event.inputBuffer.getChannelData(0);
             const pcm16 = new Int16Array(input.length);
             for (let i = 0; i < input.length; i += 1) {
               const sample = Math.max(-1, Math.min(1, input[i] || 0));
@@ -1512,8 +1515,45 @@ export function App() {
           } catch {}
         };
 
-        source.connect(processor);
-        processor.connect(captureAudioCtx.destination);
+        if (window.AudioWorkletNode && captureAudioCtx.audioWorklet) {
+          const workletSource = `
+            class PcmCaptureProcessor extends AudioWorkletProcessor {
+              process(inputs) {
+                const input = inputs?.[0]?.[0];
+                if (input && input.length) {
+                  this.port.postMessage(input.slice());
+                }
+                return true;
+              }
+            }
+            registerProcessor('pcm-capture-processor', PcmCaptureProcessor);
+          `;
+          const blobUrl = URL.createObjectURL(new Blob([workletSource], { type: "application/javascript" }));
+          try {
+            await captureAudioCtx.audioWorklet.addModule(blobUrl);
+          } finally {
+            URL.revokeObjectURL(blobUrl);
+          }
+
+          const captureNode = new window.AudioWorkletNode(captureAudioCtx, "pcm-capture-processor", {
+            numberOfInputs: 1,
+            numberOfOutputs: 1,
+            channelCount: 1
+          });
+          relay.captureNode = captureNode;
+          const onMessage = (event) => handleFloat32Chunk(event.data);
+          relay.captureNodePortHandler = onMessage;
+          captureNode.port.onmessage = onMessage;
+
+          source.connect(captureNode);
+          captureNode.connect(captureAudioCtx.destination);
+        } else {
+          const processor = captureAudioCtx.createScriptProcessor(1024, 1, 1);
+          relay.captureNode = processor;
+          processor.onaudioprocess = (event) => handleFloat32Chunk(event.inputBuffer.getChannelData(0));
+          source.connect(processor);
+          processor.connect(captureAudioCtx.destination);
+        }
       } catch {
         setStatus("Microphone access is required for voice chat.");
       }
@@ -2533,10 +2573,14 @@ export function App() {
     rtc.remoteAudioByUserId.clear();
 
     const relay = voiceRelayRef.current;
-    if (relay.processor) {
-      relay.processor.onaudioprocess = null;
-      try { relay.processor.disconnect(); } catch {}
-      relay.processor = null;
+    if (relay.captureNode) {
+      if (relay.captureNodePortHandler && relay.captureNode.port) {
+        relay.captureNode.port.onmessage = null;
+        relay.captureNodePortHandler = null;
+      }
+      relay.captureNode.onaudioprocess = null;
+      try { relay.captureNode.disconnect(); } catch {}
+      relay.captureNode = null;
     }
     if (relay.source) {
       try { relay.source.disconnect(); } catch {}
