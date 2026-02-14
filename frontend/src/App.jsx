@@ -372,6 +372,7 @@ export function App() {
   const [gatewayConnected, setGatewayConnected] = useState(false);
   const [dmNotification, setDmNotification] = useState(null);
   const [voiceStatesByGuild, setVoiceStatesByGuild] = useState({});
+  const [voiceSpeakingByGuild, setVoiceSpeakingByGuild] = useState({});
   const [serverVoiceGatewayPrefs, setServerVoiceGatewayPrefs] = useState(getStoredJson(SERVER_VOICE_GATEWAY_PREFS_KEY, {}));
   const [nodeGatewayUnavailableByServer, setNodeGatewayUnavailableByServer] = useState({});
 
@@ -381,6 +382,7 @@ export function App() {
   const nodeGatewayWsRef = useRef(null);
   const nodeGatewayHeartbeatRef = useRef(null);
   const nodeGatewayReadyRef = useRef(false);
+  const voiceSpeakingDetectorRef = useRef({ audioCtx: null, stream: null, analyser: null, timer: null, lastSpeaking: false });
   const selfStatusRef = useRef(selfStatus);
   selfStatusRef.current = selfStatus;
 
@@ -1075,6 +1077,22 @@ export function App() {
               delete byUser[msg.d.userId];
               return { ...prev, [guildId]: byUser };
             });
+            setVoiceSpeakingByGuild((prev) => {
+              const guildId = msg.d.guildId;
+              const byUser = { ...(prev[guildId] || {}) };
+              delete byUser[msg.d.userId];
+              return { ...prev, [guildId]: byUser };
+            });
+            return;
+          }
+
+          if (msg.op === "DISPATCH" && msg.t === "VOICE_SPEAKING" && msg.d?.guildId && msg.d?.userId) {
+            setVoiceSpeakingByGuild((prev) => {
+              const guildId = msg.d.guildId;
+              const byUser = { ...(prev[guildId] || {}) };
+              byUser[msg.d.userId] = !!msg.d.speaking;
+              return { ...prev, [guildId]: byUser };
+            });
             return;
           }
 
@@ -1277,12 +1295,85 @@ export function App() {
   }, [dmNotification]);
 
   useEffect(() => {
-    if (!activeServer || !voiceConnectedChannelId) return;
-    nodeApi(activeServer.baseUrl, `/v1/channels/${voiceConnectedChannelId}/voice/state`, activeServer.membershipToken, {
-      method: "PATCH",
-      body: JSON.stringify({ muted: isMuted, deafened: isDeafened })
-    }).catch(() => {});
-  }, [activeServer, voiceConnectedChannelId, isMuted, isDeafened]);
+    if (!voiceConnectedChannelId || !activeGuildId || isMuted || isDeafened || !navigator.mediaDevices?.getUserMedia) {
+      const detector = voiceSpeakingDetectorRef.current;
+      if (detector.timer) clearInterval(detector.timer);
+      detector.timer = null;
+      if (detector.stream) detector.stream.getTracks().forEach((t) => t.stop());
+      detector.stream = null;
+      if (detector.audioCtx) detector.audioCtx.close().catch(() => {});
+      detector.audioCtx = null;
+      detector.analyser = null;
+      detector.lastSpeaking = false;
+      if (activeGuildId && me?.id) {
+        setVoiceSpeakingByGuild((prev) => ({ ...prev, [activeGuildId]: { ...(prev[activeGuildId] || {}), [me.id]: false } }));
+      }
+      try { sendNodeVoiceDispatch("VOICE_SPEAKING", { guildId: activeGuildId, channelId: voiceConnectedChannelId, speaking: false }); } catch {}
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: audioInputDeviceId ? { deviceId: { exact: audioInputDeviceId } } : true
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        const audioCtx = new window.AudioContext();
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        source.connect(analyser);
+
+        const detector = voiceSpeakingDetectorRef.current;
+        detector.stream = stream;
+        detector.audioCtx = audioCtx;
+        detector.analyser = analyser;
+        detector.lastSpeaking = false;
+
+        const data = new Uint8Array(analyser.fftSize);
+        detector.timer = setInterval(() => {
+          analyser.getByteTimeDomainData(data);
+          let sum = 0;
+          for (let i = 0; i < data.length; i += 1) {
+            const n = (data[i] - 128) / 128;
+            sum += n * n;
+          }
+          const rms = Math.sqrt(sum / data.length);
+          const threshold = 0.01 + ((100 - Math.max(0, Math.min(100, micSensitivity))) / 100) * 0.03;
+          const speaking = rms > threshold;
+          if (speaking === detector.lastSpeaking) return;
+          detector.lastSpeaking = speaking;
+
+          if (activeGuildId && me?.id) {
+            setVoiceSpeakingByGuild((prev) => ({ ...prev, [activeGuildId]: { ...(prev[activeGuildId] || {}), [me.id]: speaking } }));
+          }
+          try {
+            sendNodeVoiceDispatch("VOICE_SPEAKING", { guildId: activeGuildId, channelId: voiceConnectedChannelId, speaking });
+          } catch {}
+        }, 150);
+      } catch {
+        setStatus("Mic speaking detection unavailable. Check microphone permissions.");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      const detector = voiceSpeakingDetectorRef.current;
+      if (detector.timer) clearInterval(detector.timer);
+      detector.timer = null;
+      if (detector.stream) detector.stream.getTracks().forEach((t) => t.stop());
+      detector.stream = null;
+      if (detector.audioCtx) detector.audioCtx.close().catch(() => {});
+      detector.audioCtx = null;
+      detector.analyser = null;
+      detector.lastSpeaking = false;
+    };
+  }, [voiceConnectedChannelId, activeGuildId, isMuted, isDeafened, micSensitivity, audioInputDeviceId, me?.id]);
 
   useEffect(() => {
     localStorage.setItem(MIC_GAIN_KEY, String(micGain));
@@ -2676,7 +2767,7 @@ export function App() {
                           {channel.type === "voice" && (voiceMembersByChannel.get(channel.id)?.length || 0) > 0 && (
                             <div className="voice-channel-members">
                               {voiceMembersByChannel.get(channel.id).map((member) => {
-                                const speaking = voiceConnectedChannelId === channel.id && !member.muted && !member.deafened;
+                                const speaking = !!voiceSpeakingByGuild[activeGuildId]?.[member.userId];
                                 return (
                                   <div key={`${channel.id}-${member.userId}`} className="voice-channel-member-row">
                                     <div className={`avatar member-avatar vc-avatar ${speaking ? "speaking" : ""}`}>
@@ -2904,7 +2995,7 @@ export function App() {
                         const color = topRole?.color != null && topRole.color !== "" ? (typeof topRole.color === "number" ? `#${Number(topRole.color).toString(16).padStart(6, "0")}` : topRole.color) : null;
                         const memberVoice = mergedVoiceStates.find((vs) => vs.userId === member.id);
                         const inMyCall = memberVoice?.channelId && memberVoice.channelId === voiceConnectedChannelId;
-                        const speaking = !!inMyCall && !memberVoice?.muted && !memberVoice?.deafened;
+                        const speaking = !!inMyCall && !!voiceSpeakingByGuild[activeGuildId]?.[member.id];
                         return (
                           <button className="member-row" key={member.id} title={`View ${member.username}`} onClick={(event) => { event.stopPropagation(); openMemberProfile(member); }}>
                             {member.pfp_url ? (
