@@ -27,7 +27,9 @@ const AUDIO_OUTPUT_DEVICE_KEY = "opencom_audio_output_device";
 const SERVER_VOICE_GATEWAY_PREFS_KEY = "opencom_server_voice_gateway_prefs";
 const LAST_CORE_GATEWAY_KEY = "opencom_last_core_gateway";
 const LAST_SERVER_GATEWAY_KEY = "opencom_last_server_gateway";
-const CANONICAL_GATEWAY_WS_URL = "wss://ws.opencom.online:9443/gateway";
+const CANONICAL_GATEWAY_WS_URL =
+  import.meta.env.VITE_NODE_GATEWAY_WS_URL ?? "wss://node.opencom.online/gateway";
+
 
 function getGatewayWsUrl() {
   const explicit = import.meta.env.VITE_GATEWAY_WS_URL;
