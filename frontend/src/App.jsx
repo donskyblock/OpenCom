@@ -18,6 +18,8 @@ const PINNED_SERVER_KEY = "opencom_pinned_server_messages";
 const PINNED_DM_KEY = "opencom_pinned_dm_messages";
 const ACTIVE_DM_KEY = "opencom_active_dm";
 const GATEWAY_DEVICE_ID_KEY = "opencom_gateway_device_id";
+const MIC_GAIN_KEY = "opencom_mic_gain";
+const MIC_SENSITIVITY_KEY = "opencom_mic_sensitivity";
 
 function getGatewayWsUrl() {
   const explicit = import.meta.env.VITE_GATEWAY_WS_URL;
@@ -315,6 +317,8 @@ export function App() {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
+  const [micGain, setMicGain] = useState(Number(localStorage.getItem(MIC_GAIN_KEY) || 100));
+  const [micSensitivity, setMicSensitivity] = useState(Number(localStorage.getItem(MIC_SENSITIVITY_KEY) || 50));
   const [selfStatus, setSelfStatus] = useState(localStorage.getItem(SELF_STATUS_KEY) || "online");
   const [showPinned, setShowPinned] = useState(false);
   const [newOfficialServerName, setNewOfficialServerName] = useState("");
@@ -353,6 +357,7 @@ export function App() {
   const [show2FASetup, setShow2FASetup] = useState(false);
   const [securitySettings, setSecuritySettings] = useState({ twoFactorEnabled: false });
   const [channelDragId, setChannelDragId] = useState(null);
+  const [categoryDragId, setCategoryDragId] = useState(null);
   const [channelPermsChannelId, setChannelPermsChannelId] = useState("");
   const [presenceByUserId, setPresenceByUserId] = useState({});
   const [showClientFlow, setShowClientFlow] = useState(false);
@@ -489,6 +494,22 @@ export function App() {
 
   const memberNameById = useMemo(() => new Map(resolvedMemberList.map((member) => [member.id, member.username])), [resolvedMemberList]);
 
+  const voiceMembersByChannel = useMemo(() => {
+    const map = new Map();
+    const rows = guildState?.voiceStates || [];
+    for (const vs of rows) {
+      if (!vs?.channelId || !vs?.userId) continue;
+      if (!map.has(vs.channelId)) map.set(vs.channelId, []);
+      map.get(vs.channelId).push({
+        userId: vs.userId,
+        username: memberNameById.get(vs.userId) || vs.userId,
+        muted: !!vs.muted,
+        deafened: !!vs.deafened
+      });
+    }
+    return map;
+  }, [guildState?.voiceStates, memberNameById]);
+
   const groupedChannelSections = useMemo(() => {
     const categories = categoryChannels.map((category) => ({
       category,
@@ -591,6 +612,14 @@ export function App() {
   useEffect(() => {
     localStorage.setItem(SELF_STATUS_KEY, selfStatus);
   }, [selfStatus]);
+
+  useEffect(() => {
+    localStorage.setItem(MIC_GAIN_KEY, String(micGain));
+  }, [micGain]);
+
+  useEffect(() => {
+    localStorage.setItem(MIC_SENSITIVITY_KEY, String(micSensitivity));
+  }, [micSensitivity]);
 
   useEffect(() => {
     localStorage.setItem(PINNED_SERVER_KEY, JSON.stringify(pinnedServerMessages));
@@ -1832,6 +1861,22 @@ export function App() {
     setChannelDragId(null);
   }
 
+  async function handleCategoryDrop(draggedId, targetId) {
+    const categories = [...(categoryChannels || [])];
+    const fromIndex = categories.findIndex((c) => c.id === draggedId);
+    const toIndex = categories.findIndex((c) => c.id === targetId);
+    if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return;
+    const reordered = [...categories];
+    const [removed] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, removed);
+    try {
+      await Promise.all(reordered.map((cat, idx) => updateChannelPosition(cat.id, idx * 100)));
+      setCategoryDragId(null);
+    } catch (e) {
+      setStatus(`Move category failed: ${e.message}`);
+    }
+  }
+
   const SEND_MESSAGES_BIT = 2;
   const VIEW_CHANNEL_BIT = 1;
 
@@ -2366,7 +2411,22 @@ export function App() {
                 const isCollapsed = collapsedCategories[category.id];
                 return (
                   <div className="category-block" key={category.id}>
-                    <button className="category-header" onClick={() => toggleCategory(category.id)}>
+                    <button
+                      className={`category-header ${categoryDragId === category.id ? "channel-dragging" : ""}`}
+                      draggable={canManageServer && category.id !== "uncategorized"}
+                      onDragStart={() => canManageServer && category.id !== "uncategorized" && setCategoryDragId(category.id)}
+                      onDragOver={(e) => { e.preventDefault(); if (category.id !== "uncategorized") e.currentTarget.classList.add("channel-drop-target"); }}
+                      onDragLeave={(e) => e.currentTarget.classList.remove("channel-drop-target")}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        e.currentTarget.classList.remove("channel-drop-target");
+                        if (canManageServer && categoryDragId && category.id !== "uncategorized" && categoryDragId !== category.id) {
+                          handleCategoryDrop(categoryDragId, category.id);
+                        }
+                      }}
+                      onDragEnd={() => setCategoryDragId(null)}
+                      onClick={() => toggleCategory(category.id)}
+                    >
                       <span className="chevron">{isCollapsed ? "▸" : "▾"}</span>{category.name}
                     </button>
                     {!isCollapsed && (
@@ -2408,7 +2468,14 @@ export function App() {
                             }}
                           >
                             <span className="channel-hash">{channel.type === "voice" ? "🔊" : "#"}</span>
-                            {channel.name}
+                            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", minWidth: 0 }}>
+                              <span>{channel.name}</span>
+                              {channel.type === "voice" && (voiceMembersByChannel.get(channel.id)?.length || 0) > 0 && (
+                                <span className="hint" style={{ fontSize: "11px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
+                                  {voiceMembersByChannel.get(channel.id).map((m) => `${m.deafened ? "🔇" : m.muted ? "🎙️" : "🎤"} ${m.username}`).join(", ")}
+                                </span>
+                              )}
+                            </span>
                           </button>
                         ))}
                       </div>
@@ -2482,12 +2549,23 @@ export function App() {
                 <button className="danger" onClick={() => {
                   if (activeServer && voiceConnectedChannelId) {
                     nodeApi(activeServer.baseUrl, `/v1/channels/${voiceConnectedChannelId}/voice/leave`, activeServer.membershipToken, {
-                      method: "POST"
+                      method: "POST",
+                      body: "{}"
                     }).catch(() => {});
                   }
                   setVoiceConnectedChannelId("");
                   setIsScreenSharing(false);
                 }}>Disconnect</button>
+              </div>
+              <div className="voice-settings" style={{ marginTop: 8, display: "grid", gap: 6 }}>
+                <label className="hint" style={{ display: "grid", gap: 4 }}>
+                  Microphone Gain ({micGain}%)
+                  <input type="range" min="0" max="200" step="5" value={micGain} onChange={(e) => setMicGain(Number(e.target.value))} />
+                </label>
+                <label className="hint" style={{ display: "grid", gap: 4 }}>
+                  Mic Sensitivity ({micSensitivity}%)
+                  <input type="range" min="0" max="100" step="5" value={micSensitivity} onChange={(e) => setMicSensitivity(Number(e.target.value))} />
+                </label>
               </div>
             </div>
           )}
