@@ -8,6 +8,10 @@ export async function guildJoinRoutes(app: FastifyInstance) {
     const userId = req.auth.userId as string;
     const coreServerId = req.auth.coreServerId as string;
 
+    await q(
+      `UPDATE guilds SET server_id=:coreServerId WHERE id=:guildId AND (server_id='' OR server_id IS NULL)`,
+      { guildId, coreServerId }
+    );
     const g = await q<{ id: string }>(`SELECT id FROM guilds WHERE id=:guildId AND server_id=:coreServerId`, { guildId, coreServerId });
     if (!g.length) return rep.code(404).send({ error: "GUILD_NOT_FOUND" });
 
@@ -25,6 +29,10 @@ export async function guildJoinRoutes(app: FastifyInstance) {
     const userId = req.auth.userId as string;
     const coreServerId = req.auth.coreServerId as string;
 
+    await q(
+      `UPDATE guilds SET server_id=:coreServerId WHERE id=:guildId AND (server_id='' OR server_id IS NULL)`,
+      { guildId, coreServerId }
+    );
     const g = await q<{ id: string }>(`SELECT id FROM guilds WHERE id=:guildId AND server_id=:coreServerId`, { guildId, coreServerId });
     if (!g.length) return rep.code(404).send({ error: "GUILD_NOT_FOUND" });
 

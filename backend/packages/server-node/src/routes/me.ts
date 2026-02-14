@@ -7,6 +7,13 @@ export async function meRoutes(app: FastifyInstance) {
     const userId = req.auth.userId as string;
     const coreServerId = req.auth.coreServerId as string;
 
+    await q(
+      `UPDATE guilds
+       SET server_id = :coreServerId
+       WHERE owner_user_id = :userId AND (server_id = '' OR server_id IS NULL)`,
+      { userId, coreServerId }
+    );
+
     const rows = await q<any>(
       `SELECT g.id, g.name, g.owner_user_id, g.created_at
        FROM guild_members gm
