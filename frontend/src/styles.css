@@ -782,19 +782,32 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 }
 
 /* Main content scaling */
-.chat-pane { background: var(--bg-chat); min-width: 0; display: grid; height: 100%; min-height: 0; overflow: hidden; }
+.chat-pane {
+  background: var(--bg-chat);
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+
+  display: grid;
+  grid-template-rows: minmax(0, 1fr); /* <-- THIS is the important part */
+}
 .chat-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(160px, 20vw, 310px);
+  grid-template-rows: minmax(0, 1fr); /* <-- add this */
   height: 100%;
   min-width: 0;
+  min-height: 0;
 }
+
 .chat-main {
   display: grid;
   grid-template-rows: clamp(40px, 5vh, 52px) auto minmax(0, 1fr) auto auto;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  height: 100%;
 }
 
 .chat-main > .chat-header { grid-row: 1; }
