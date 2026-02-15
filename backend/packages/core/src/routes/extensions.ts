@@ -95,6 +95,27 @@ export async function extensionRoutes(app: FastifyInstance) {
     return readExtensionCatalog();
   });
 
+  app.get("/v1/extensions/client/:extensionId/source", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { extensionId } = z.object({ extensionId: z.string().min(2) }).parse(req.params);
+    const normalizedId = safeId(extensionId);
+    const catalog = await readExtensionCatalog();
+    const manifest = catalog.clientExtensions.find((ext) => ext.id === normalizedId);
+    if (!manifest) return rep.code(404).send({ error: "EXTENSION_NOT_FOUND" });
+
+    const root = findExtensionsRoot();
+    const extensionDir = path.join(root, "Client", manifest.id);
+    const entryFile = path.basename(manifest.entry || "index.js");
+    const sourcePath = path.join(extensionDir, entryFile);
+
+    try {
+      const source = await fs.readFile(sourcePath, "utf8");
+      rep.header("Content-Type", "application/javascript; charset=utf-8");
+      return source;
+    } catch {
+      return rep.code(404).send({ error: "EXTENSION_ENTRY_NOT_FOUND" });
+    }
+  });
+
   app.get("/v1/servers/:serverId/extensions", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
     const { serverId } = z.object({ serverId: z.string().min(3) }).parse(req.params);
