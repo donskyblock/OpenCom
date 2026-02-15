@@ -14,13 +14,13 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            build_script: npm run build:win
-            artifact_glob: client/dist/OpenCom.exe
+            build_script: npm run build:stage:win
+            artifact_glob: frontend/OpenCom.exe
           - os: ubuntu-latest
-            build_script: npm run build:linux
+            build_script: npm run build:stage:linux
             artifact_glob: |
-              client/dist/OpenCom.deb
-              client/dist/OpenCom.tar.gz
+              frontend/OpenCom.deb
+              frontend/OpenCom.tar.gz
 
     runs-on: ${{ matrix.os }}
 
@@ -37,7 +37,7 @@ jobs:
         working-directory: client
         run: npm install
 
-      - name: Build desktop client
+      - name: Build and stage desktop client artifacts
         working-directory: client
         run: ${{ matrix.build_script }}
 

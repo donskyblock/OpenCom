@@ -8,7 +8,10 @@
     "start": "electron .",
     "build": "electron-builder",
     "build:win": "electron-builder --win portable",
-    "build:linux": "electron-builder --linux deb tar.gz"
+    "build:linux": "electron-builder --linux deb tar.gz",
+    "build:stage:linux": "node scripts/build-and-stage.mjs linux",
+    "build:stage:win": "node scripts/build-and-stage.mjs win",
+    "build:stage:all": "npm run build:stage:linux && npm run build:stage:win"
   },
   "dependencies": {
     "electron-log": "^5.2.4"

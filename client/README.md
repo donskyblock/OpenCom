@@ -26,11 +26,29 @@ Override app URL if needed:
 OPENCOM_APP_URL="https://opencom.online" npm start
 ```
 
-## Build
+## Build (local, without GitHub Actions)
+
+When Actions are restricted, use the local scripts in `client/scripts/`.
 
 ```bash
-npm run build:win
-npm run build:linux
+cd client
+npm install
+npm run build:stage:linux
+npm run build:stage:win
+```
+
+These commands build and then copy artifacts into `frontend/`:
+
+- `frontend/OpenCom.deb`
+- `frontend/OpenCom.tar.gz`
+- `frontend/OpenCom.exe`
+
+Direct script entrypoints are also available:
+
+```bash
+./scripts/build-linux.sh
+./scripts/build-win.sh
+./scripts/build-all.sh
 ```
 
 ## Resolve latest official build
