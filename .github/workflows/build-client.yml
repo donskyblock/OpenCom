@@ -1,0 +1,49 @@
+name: Build OpenCom Desktop Client
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "client/**"
+      - "frontend/src/App.jsx"
+      - ".github/workflows/build-client.yml"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            build_script: npm run build:win
+            artifact_glob: client/dist/OpenCom.exe
+          - os: ubuntu-latest
+            build_script: npm run build:linux
+            artifact_glob: |
+              client/dist/OpenCom.deb
+              client/dist/OpenCom.tar.gz
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install client dependencies
+        working-directory: client
+        run: npm install
+
+      - name: Build desktop client
+        working-directory: client
+        run: ${{ matrix.build_script }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencom-client-${{ matrix.os }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error

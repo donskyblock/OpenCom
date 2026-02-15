@@ -245,6 +245,12 @@ function getMentionQuery(value = "") {
   return { query: query.toLowerCase(), start };
 }
 
+function shouldSkipLandingPage() {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search || "");
+  return params.get("desktop") === "1";
+}
+
 function contentMentionsSelf(content = "", selfId, selfNames = []) {
   if (!content || !selfId) return false;
   if (/@everyone\b/i.test(content)) return true;
@@ -399,7 +405,7 @@ export function App() {
   const [categoryDragId, setCategoryDragId] = useState(null);
   const [channelPermsChannelId, setChannelPermsChannelId] = useState("");
   const [presenceByUserId, setPresenceByUserId] = useState({});
-  const [showClientFlow, setShowClientFlow] = useState(false);
+  const [showClientFlow, setShowClientFlow] = useState(shouldSkipLandingPage);
   const [gatewayConnected, setGatewayConnected] = useState(false);
   const [dmNotification, setDmNotification] = useState(null);
   const [voiceStatesByGuild, setVoiceStatesByGuild] = useState({});
