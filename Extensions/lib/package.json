@@ -1,0 +1,23 @@
+{
+  "name": "opencom-extension-sdk",
+  "version": "0.1.0",
+  "description": "Official SDK for OpenCom server/client extensions",
+  "type": "module",
+  "main": "./opencom-extension-sdk.js",
+  "types": "./opencom-extension-sdk.d.ts",
+  "files": [
+    "opencom-extension-sdk.js",
+    "opencom-extension-sdk.d.ts",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "opencom",
+    "extensions",
+    "commands",
+    "sdk"
+  ],
+  "license": "MIT"
+}

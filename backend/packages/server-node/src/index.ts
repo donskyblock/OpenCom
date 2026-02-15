@@ -16,6 +16,8 @@ import { guildJoinRoutes } from "./routes/guildJoin.js";
 import { guildStateRoutes } from "./routes/guildState.js";
 import { meRoutes } from "./routes/me.js";
 import { discordCompatRoutes } from "./routes/discordCompat.js";
+import { extensionRoutes } from "./routes/extensions.js";
+import { restorePersistedExtensions } from "./extensions/host.js";
 
 
 await initMediasoup();
@@ -38,10 +40,11 @@ await overwriteRoutes(app, gw.broadcastGuild);
 await memberRoutes(app, gw.broadcastGuild);
 await meRoutes(app)
 await discordCompatRoutes(app);
+await extensionRoutes(app);
 
 await attachmentRoutes(app);
 startAttachmentCleanupLoop();
 startNodeSyncLoop();
-
+await restorePersistedExtensions();
 
 app.listen({ port: env.NODE_PORT, host: env.NODE_HOST });

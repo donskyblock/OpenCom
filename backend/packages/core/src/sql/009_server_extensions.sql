@@ -1,0 +1,10 @@
+CREATE TABLE IF NOT EXISTS server_extensions (
+  server_id VARCHAR(64) NOT NULL,
+  extension_id VARCHAR(128) NOT NULL,
+  enabled TINYINT(1) NOT NULL DEFAULT 1,
+  manifest_json LONGTEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (server_id, extension_id),
+  CONSTRAINT fk_server_extensions_server FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
