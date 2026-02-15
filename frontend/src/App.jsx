@@ -1058,7 +1058,10 @@ export function App() {
       return;
     }
 
-    const wsCandidates = prioritizeLastSuccessfulGateway(getVoiceGatewayWsCandidates(server.baseUrl), LAST_SERVER_GATEWAY_KEY);
+    const wsCandidates = getLastSuccessfulGateway(
+      getVoiceGatewayWsCandidates(server.baseUrl, true),
+      LAST_SERVER_GATEWAY_KEY
+    );
     voiceGatewayCandidatesRef.current = wsCandidates;
     if (!wsCandidates.length) return;
 
