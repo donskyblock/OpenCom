@@ -17,7 +17,6 @@ import {
   consume,
   listProducers,
   closePeer,
-  getMediasoupDiagnostics
 } from "./voice/mediasoup.js";
 import { createLogger, sanitizeErrorMessage } from "./logger.js";
 
@@ -57,7 +56,6 @@ export function attachNodeGateway(app: FastifyInstance) {
     return {
       connections: conns.size,
       activeVoiceConnections: [...conns].filter((c) => !!c.voice).length,
-      voice: getMediasoupDiagnostics()
     };
   });
 
