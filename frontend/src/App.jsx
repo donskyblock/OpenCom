@@ -29,6 +29,16 @@ const LAST_CORE_GATEWAY_KEY = "opencom_last_core_gateway";
 const LAST_SERVER_GATEWAY_KEY = "opencom_last_server_gateway";
 const FALLBACK_CORE_GATEWAY_WS_URL = "wss://ws.opencom.online/gateway";
 const DEBUG_VOICE_STORAGE_KEY = "opencom_debug_voice";
+const DOWNLOAD_REPOSITORY = import.meta.env.VITE_BUILD_REPOSITORY || "donskyblock/OpenCom";
+const DOWNLOAD_BRANCH = import.meta.env.VITE_BUILD_BRANCH || "main";
+const DOWNLOAD_BASE_URL = (import.meta.env.VITE_BUILD_BASE_URL
+  || `https://raw.githubusercontent.com/${DOWNLOAD_REPOSITORY}/${DOWNLOAD_BRANCH}`).replace(/\/$/, "");
+
+const DOWNLOAD_TARGETS = [
+  { href: `${DOWNLOAD_BASE_URL}/frontend/OpenCom.exe`, label: "Windows (.exe)" },
+  { href: `${DOWNLOAD_BASE_URL}/frontend/OpenCom.deb`, label: "Linux (.deb)" },
+  { href: `${DOWNLOAD_BASE_URL}/frontend/OpenCom.tar.gz`, label: "macOS (.tar.gz)" }
+];
 
 function isVoiceDebugEnabled() {
   const envEnabled = String(import.meta.env.VITE_DEBUG_VOICE || "").trim() === "1";
@@ -39,21 +49,7 @@ function isVoiceDebugEnabled() {
 function getLastSuccessfulGateway(candidates, storageKey) {
   return prioritizeLastSuccessfulGateway(candidates, storageKey);
 }
-function DownloadButton() {
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef(null);
 
-  // Close menu if clicked outside
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (menuRef.current && !menuRef.current.contains(event.target)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-}
 function normalizeGatewayWsUrl(value) {
   if (!value || typeof value !== "string") return "";
   const trimmed = value.trim();
@@ -419,6 +415,7 @@ export function App() {
   const [channelPermsChannelId, setChannelPermsChannelId] = useState("");
   const [presenceByUserId, setPresenceByUserId] = useState({});
   const [showClientFlow, setShowClientFlow] = useState(shouldSkipLandingPage);
+  const [downloadsMenuOpen, setDownloadsMenuOpen] = useState(false);
   const [gatewayConnected, setGatewayConnected] = useState(false);
   const [dmNotification, setDmNotification] = useState(null);
   const [voiceStatesByGuild, setVoiceStatesByGuild] = useState({});
@@ -467,7 +464,28 @@ export function App() {
   const previousDmIdRef = useRef("");
   const activeChannelIdRef = useRef("");
   const profileCardDragOffsetRef = useRef({ x: 0, y: 0 });
+  const downloadMenuRef = useRef(null);
   const storageScope = me?.id || "anonymous";
+
+  useEffect(() => {
+    function closeDownloadsMenuOnOutsideClick(event) {
+      if (downloadMenuRef.current && !downloadMenuRef.current.contains(event.target)) {
+        setDownloadsMenuOpen(false);
+      }
+    }
+
+    function closeDownloadsMenuOnEscape(event) {
+      if (event.key === "Escape") setDownloadsMenuOpen(false);
+    }
+
+    document.addEventListener("mousedown", closeDownloadsMenuOnOutsideClick);
+    document.addEventListener("keydown", closeDownloadsMenuOnEscape);
+
+    return () => {
+      document.removeEventListener("mousedown", closeDownloadsMenuOnOutsideClick);
+      document.removeEventListener("keydown", closeDownloadsMenuOnEscape);
+    };
+  }, []);
 
   // Resolve usernames and profile pictures from core for guild members and message authors
   useEffect(() => {
@@ -3084,7 +3102,7 @@ export function App() {
               </div>
             </section>
             <section className="landing-cta">
-              <div className="landing-cta-download" ref={menuRef}>
+              <div className="landing-cta-download" ref={downloadMenuRef}>
                 <h3>Get the desktop app</h3>
                 <p className="landing-hint">
                   Windows, macOS, and Linux — one install, all your chats.
@@ -3094,22 +3112,24 @@ export function App() {
                   <button
                     type="button"
                     className="landing-btn landing-btn-secondary"
-                    onClick={() => setOpen(!open)}
+                    onClick={() => setDownloadsMenuOpen((current) => !current)}
                   >
                     Download ▼
                   </button>
 
-                  {open && (
+                  {downloadsMenuOpen && (
                     <div className="download-menu">
-                      <a href="/downloads/OpenCom.exe" className="download-item">
-                        Windows (.exe)
-                      </a>
-                      <a href="/downloads/OpenCom.deb" className="download-item">
-                        Linux (.deb)
-                      </a>
-                      <a href="/downloads/OpenCom.tar.gz" className="download-item">
-                        Linux (.tar.gz)
-                      </a>
+                      {DOWNLOAD_TARGETS.map((target) => (
+                        <a
+                          key={target.href}
+                          href={target.href}
+                          className="download-item"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {target.label}
+                        </a>
+                      ))}
                     </div>
                   )}
                 </div>
