@@ -547,6 +547,16 @@ export function App() {
     return uniqueNames.filter((name) => name.toLowerCase().startsWith(mention.query)).slice(0, 8);
   }, [messageText, navMode, resolvedMemberList]);
 
+  const memberByMentionToken = useMemo(() => {
+    const map = new Map();
+    for (const member of resolvedMemberList) {
+      if (!member?.id) continue;
+      map.set(String(member.id).toLowerCase(), member);
+      if (member.username) map.set(String(member.username).toLowerCase(), member);
+    }
+    return map;
+  }, [resolvedMemberList]);
+
   const memberNameById = useMemo(() => new Map(resolvedMemberList.map((member) => [member.id, member.username])), [resolvedMemberList]);
 
   const mergedVoiceStates = useMemo(() => {
@@ -1103,6 +1113,17 @@ export function App() {
             return;
           }
 
+          if (msg.op === "DISPATCH" && msg.t === "MESSAGE_MENTION" && msg.d?.channelId) {
+            const mentionChannelId = msg.d.channelId;
+            if (activeServer?.id && mentionChannelId !== activeChannelIdRef.current) {
+              setServerPingCounts((prev) => ({
+                ...prev,
+                [activeServer.id]: (prev[activeServer.id] || 0) + 1
+              }));
+            }
+            return;
+          }
+
           if (msg.op === "DISPATCH" && msg.t === "MESSAGE_CREATE" && msg.d?.channelId && msg.d?.message) {
             const channelId = msg.d.channelId;
             const incoming = msg.d.message;
@@ -1118,18 +1139,6 @@ export function App() {
                   attachments: incoming.attachments || []
                 }];
               });
-            }
-
-            const authoredBySelf = incoming.authorId === me?.id;
-            const myMember = resolvedMemberList.find((member) => member.id === me?.id);
-            const selfNames = [me?.username, profile?.displayName, profile?.username, myMember?.username].filter(Boolean);
-            const isMentioned = !authoredBySelf && contentMentionsSelf(incoming.content || "", me?.id, selfNames);
-
-            if (isMentioned && activeServer?.id && channelId !== activeChannelIdRef.current) {
-              setServerPingCounts((prev) => ({
-                ...prev,
-                [activeServer.id]: (prev[activeServer.id] || 0) + 1
-              }));
             }
             return;
           }
@@ -2916,6 +2925,58 @@ export function App() {
     }
   }
 
+  function renderContentWithMentions(message) {
+    const content = message?.content || "";
+    const nodes = [];
+    const mentionRegex = /@\{([^}\n]{1,64})\}|@([a-zA-Z0-9_.-]{2,64})/g;
+    let cursor = 0;
+
+    for (const match of content.matchAll(mentionRegex)) {
+      const index = match.index ?? 0;
+      const raw = (match[1] || match[2] || "").trim();
+      const token = match[0];
+      const prevChar = index > 0 ? content[index - 1] : "";
+      const mentionAtWordBoundary = index === 0 || /\s/.test(prevChar);
+
+      if (!mentionAtWordBoundary || !raw) continue;
+
+      if (index > cursor) {
+        nodes.push(<span key={`text-${cursor}`}>{content.slice(cursor, index)}</span>);
+      }
+
+      if (raw.toLowerCase() === "everyone") {
+        nodes.push(<span key={`everyone-${index}`} className="message-mention">{token}</span>);
+      } else {
+        const member = memberByMentionToken.get(raw.toLowerCase());
+        if (member) {
+          nodes.push(
+            <button
+              key={`mention-${index}`}
+              type="button"
+              className="message-mention mention-click"
+              onClick={(event) => {
+                event.stopPropagation();
+                openMemberProfile(member);
+              }}
+            >
+              @{member.username || member.id}
+            </button>
+          );
+        } else {
+          nodes.push(<span key={`unknown-${index}`} className="message-mention">{token}</span>);
+        }
+      }
+
+      cursor = index + token.length;
+    }
+
+    if (cursor < content.length) {
+      nodes.push(<span key={`tail-${cursor}`}>{content.slice(cursor)}</span>);
+    }
+
+    return nodes.length ? nodes : content;
+  }
+
   function formatAccountCreated(createdAt) {
     if (!createdAt) return null;
     try {
@@ -3304,7 +3365,7 @@ export function App() {
                           content: message.content,
                           mine: (message.author_id || message.authorId) === me?.id
                         })}>
-                          {activePinnedServerMessages.some((item) => item.id === message.id) ? "📌 " : ""}{message.content}
+                          {activePinnedServerMessages.some((item) => item.id === message.id) ? "📌 " : ""}{renderContentWithMentions(message)}
                         </p>
                       ))}
                     </div>
