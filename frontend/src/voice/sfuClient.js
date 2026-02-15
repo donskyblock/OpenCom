@@ -31,18 +31,24 @@ export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, 
     if (!audio || !producerId || state.pendingAudioStartByProducerId.has(producerId)) return;
 
     const retryStart = () => {
-      audio.play()
-        .then(() => {
-          removePendingAudioStart(producerId);
-        })
-        .catch(() => {});
+      if (audio.paused) {
+        audio.play()
+          .then(() => {
+            removePendingAudioStart(producerId);
+          })
+          .catch(() => {});
+      } else {
+        removePendingAudioStart(producerId);
+      }
     };
 
-    const events = ["pointerdown", "touchstart", "keydown"];
-    events.forEach((eventName) => window.addEventListener(eventName, retryStart, { once: true }));
+    const events = ["pointerdown", "touchstart", "keydown", "click"];
+    events.forEach((eventName) => window.addEventListener(eventName, retryStart, { passive: true }));
+    const timer = window.setInterval(retryStart, 1500);
 
     state.pendingAudioStartByProducerId.set(producerId, {
       cleanup: () => {
+        window.clearInterval(timer);
         events.forEach((eventName) => window.removeEventListener(eventName, retryStart));
       }
     });
@@ -121,7 +127,17 @@ export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, 
     audio.autoplay = true;
     audio.playsInline = true;
     audio.preload = "auto";
+    audio.muted = false;
     audio.srcObject = stream;
+    audio.style.display = "none";
+    document.body.appendChild(audio);
+    audio.addEventListener("loadedmetadata", () => {
+      if (audio.paused) {
+        audio.play().catch(() => {
+          scheduleAudioStartRetry(audio, producerId);
+        });
+      }
+    });
     if (typeof audio.setSinkId === "function" && state.audioOutputDeviceId) {
       await audio.setSinkId(state.audioOutputDeviceId).catch(() => {});
     }
