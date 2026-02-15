@@ -220,6 +220,34 @@ function getInitials(value = "") {
   return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
 }
 
+function escapeRegex(value = "") {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getMentionQuery(value = "") {
+  const match = value.match(/(?:^|\s)(@\{?)([^\s{}@]*)$/);
+  if (!match) return null;
+  const marker = match[1] || "@";
+  const query = match[2] || "";
+  const start = value.length - marker.length - query.length;
+  return { query: query.toLowerCase(), start };
+}
+
+function contentMentionsSelf(content = "", selfId, selfNames = []) {
+  if (!content || !selfId) return false;
+  if (/@everyone\b/i.test(content)) return true;
+  if (new RegExp(`@\\{${escapeRegex(selfId)}\\}`, "i").test(content)) return true;
+  if (new RegExp(`(^|\\s)@${escapeRegex(selfId)}\\b`, "i").test(content)) return true;
+  for (const name of selfNames) {
+    if (!name || typeof name !== "string") continue;
+    const trimmed = name.trim();
+    if (!trimmed) continue;
+    if (new RegExp(`@\\{${escapeRegex(trimmed)}\\}`, "i").test(content)) return true;
+    if (new RegExp(`(^|\\s)@${escapeRegex(trimmed)}\\b`, "i").test(content)) return true;
+  }
+  return false;
+}
+
 function formatMessageTime(value) {
   if (!value) return "just now";
   const date = new Date(value);
@@ -328,6 +356,7 @@ export function App() {
   const [serverContextMenu, setServerContextMenu] = useState(null);
   const [messageContextMenu, setMessageContextMenu] = useState(null);
   const [replyTarget, setReplyTarget] = useState(null);
+  const [serverPingCounts, setServerPingCounts] = useState({});
   const [memberProfileCard, setMemberProfileCard] = useState(null);
   const [userCache, setUserCache] = useState({});
   const userCacheFetchingRef = useRef(new Set());
@@ -506,6 +535,17 @@ export function App() {
     })),
     [memberList, userCache]
   );
+
+  const mentionSuggestions = useMemo(() => {
+    const mention = getMentionQuery(messageText);
+    if (!mention || navMode !== "servers") return [];
+    const candidateNames = ["everyone", ...resolvedMemberList.map((member) => member.username || "")]
+      .map((name) => name.trim())
+      .filter(Boolean);
+    const uniqueNames = Array.from(new Set(candidateNames));
+    if (!mention.query) return uniqueNames.slice(0, 8);
+    return uniqueNames.filter((name) => name.toLowerCase().startsWith(mention.query)).slice(0, 8);
+  }, [messageText, navMode, resolvedMemberList]);
 
   const memberNameById = useMemo(() => new Map(resolvedMemberList.map((member) => [member.id, member.username])), [resolvedMemberList]);
 
@@ -1065,18 +1105,32 @@ export function App() {
 
           if (msg.op === "DISPATCH" && msg.t === "MESSAGE_CREATE" && msg.d?.channelId && msg.d?.message) {
             const channelId = msg.d.channelId;
-            if (channelId !== activeChannelIdRef.current) return;
             const incoming = msg.d.message;
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === incoming.id)) return prev;
-              return [...prev, {
-                id: incoming.id,
-                author_id: incoming.authorId,
-                content: incoming.content,
-                created_at: incoming.createdAt,
-                attachments: incoming.attachments || []
-              }];
-            });
+
+            if (channelId === activeChannelIdRef.current) {
+              setMessages((prev) => {
+                if (prev.some((m) => m.id === incoming.id)) return prev;
+                return [...prev, {
+                  id: incoming.id,
+                  author_id: incoming.authorId,
+                  content: incoming.content,
+                  created_at: incoming.createdAt,
+                  attachments: incoming.attachments || []
+                }];
+              });
+            }
+
+            const authoredBySelf = incoming.authorId === me?.id;
+            const myMember = resolvedMemberList.find((member) => member.id === me?.id);
+            const selfNames = [me?.username, profile?.displayName, profile?.username, myMember?.username].filter(Boolean);
+            const isMentioned = !authoredBySelf && contentMentionsSelf(incoming.content || "", me?.id, selfNames);
+
+            if (isMentioned && activeServer?.id && channelId !== activeChannelIdRef.current) {
+              setServerPingCounts((prev) => ({
+                ...prev,
+                [activeServer.id]: (prev[activeServer.id] || 0) + 1
+              }));
+            }
             return;
           }
 
@@ -1210,6 +1264,26 @@ export function App() {
     ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_GUILD", d: { guildId: activeGuildId } }));
     ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_CHANNEL", d: { channelId: activeChannelId } }));
   }, [activeGuildId, activeChannelId]);
+
+  useEffect(() => {
+    if (navMode !== "servers" || !activeGuildId || !guildState?.channels?.length) return;
+    const ws = nodeGatewayWsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !nodeGatewayReadyRef.current) return;
+    for (const channel of guildState.channels) {
+      if (!channel?.id || channel.type !== "text") continue;
+      ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_CHANNEL", d: { channelId: channel.id } }));
+    }
+  }, [navMode, activeGuildId, guildState?.channels]);
+
+  useEffect(() => {
+    if (!activeServerId) return;
+    setServerPingCounts((prev) => {
+      if (!prev[activeServerId]) return prev;
+      const next = { ...prev };
+      delete next[activeServerId];
+      return next;
+    });
+  }, [activeServerId]);
 
   // Fetch initial presence for guild members and friends
   useEffect(() => {
@@ -2976,6 +3050,9 @@ export function App() {
               onContextMenu={(event) => openServerContextMenu(event, server)}
             >
               {getInitials(server.name)}
+              {(serverPingCounts[server.id] || 0) > 0 && (
+                <span className="server-pill-ping-badge">{serverPingCounts[server.id]}</span>
+              )}
             </button>
           ))}
           <button className="server-pill" title="Create or join a server" onClick={() => setAddServerModalOpen(true)}>
@@ -3246,7 +3323,49 @@ export function App() {
 
               <footer className="composer server-composer" onClick={() => composerInputRef.current?.focus()}>
                 <button className="ghost composer-icon">＋</button>
-                <input ref={composerInputRef} value={messageText} onChange={(event) => setMessageText(event.target.value)} placeholder={`Message #${activeChannel?.name || "channel"}`} onKeyDown={(event) => event.key === "Enter" && sendMessage()} />
+                <div className="composer-input-wrap">
+                  <input
+                    ref={composerInputRef}
+                    value={messageText}
+                    onChange={(event) => setMessageText(event.target.value)}
+                    placeholder={`Message #${activeChannel?.name || "channel"}`}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        sendMessage();
+                        return;
+                      }
+                      if (event.key === "Tab" && mentionSuggestions.length) {
+                        event.preventDefault();
+                        const mention = getMentionQuery(messageText);
+                        if (!mention) return;
+                        const selected = mentionSuggestions[0];
+                        const prefix = messageText.slice(0, mention.start);
+                        setMessageText(`${prefix}@{${selected}} `);
+                      }
+                    }}
+                  />
+                  {mentionSuggestions.length > 0 && (
+                    <div className="mention-suggestions">
+                      {mentionSuggestions.map((name) => (
+                        <button
+                          key={name}
+                          type="button"
+                          className="mention-suggestion"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            const mention = getMentionQuery(messageText);
+                            if (!mention) return;
+                            const prefix = messageText.slice(0, mention.start);
+                            setMessageText(`${prefix}@{${name}} `);
+                            composerInputRef.current?.focus();
+                          }}
+                        >
+                          @{name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <button className="ghost composer-icon">🎁</button>
                 <button className="send-btn" onClick={sendMessage} disabled={!activeChannelId || !messageText.trim()}>Send</button>
               </footer>
