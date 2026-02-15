@@ -1,26 +1,19 @@
 #!/usr/bin/env node
 
-import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 import mysql from "mysql2/promise";
 import dotenv from "dotenv";
 
-// Resolve project root
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, "..");
+// You will run this from: backend/packages/core
+// This resolves to: backend/.env
+dotenv.config({
+  path: path.resolve(process.cwd(), "../../.env"),
+});
 
-// Load backend env
-dotenv.config({ path: path.join(rootDir, "backend/.env") });
-
-// Support either CORE_DATABASE_URL or DATABASE_URL
-const dbUrl =
-  process.env.CORE_DATABASE_URL ||
-  process.env.DATABASE_URL;
+const dbUrl = process.env.CORE_DATABASE_URL || process.env.DATABASE_URL;
 
 if (!dbUrl) {
-  console.error("❌ No CORE_DATABASE_URL or DATABASE_URL found.");
+  console.error("❌ No CORE_DATABASE_URL or DATABASE_URL found in backend/.env");
   process.exit(1);
 }
 
@@ -43,7 +36,7 @@ if (!dbUrl) {
     await connection.end();
     process.exit(0);
   } catch (err) {
-    console.error("❌ Error:", err.message);
+    console.error("❌ Error:", err?.message || err);
     process.exit(1);
   }
 })();
