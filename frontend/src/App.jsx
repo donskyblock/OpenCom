@@ -262,6 +262,39 @@ function getMentionQuery(value = "") {
   return { query: query.toLowerCase(), start };
 }
 
+function getSlashQuery(value = "") {
+  const trimmed = value.trimStart();
+  if (!trimmed.startsWith("/")) return null;
+  const commandToken = trimmed.slice(1).split(/\s+/)[0] || "";
+  return commandToken.toLowerCase();
+}
+
+function parseCommandArgs(raw = "") {
+  const tokens = [];
+  const regex = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g;
+  let match = regex.exec(raw);
+  while (match) {
+    tokens.push((match[1] ?? match[2] ?? match[3] ?? "").replace(/\\(["'\\])/g, "$1"));
+    match = regex.exec(raw);
+  }
+  return tokens;
+}
+
+function coerceCommandArg(value, optionType) {
+  if (optionType === "number") {
+    const num = Number(value);
+    if (Number.isNaN(num)) throw new Error(`Invalid number: ${value}`);
+    return num;
+  }
+  if (optionType === "boolean") {
+    const normalized = String(value).toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) return true;
+    if (["false", "0", "no", "off"].includes(normalized)) return false;
+    throw new Error(`Invalid boolean: ${value}`);
+  }
+  return value;
+}
+
 function shouldSkipLandingPage() {
   if (typeof window === "undefined") return false;
   const params = new URLSearchParams(window.location.search || "");
@@ -436,6 +469,8 @@ export function App() {
   const [clientExtensionDevUrls, setClientExtensionDevUrls] = useState(getStoredStringArray(CLIENT_EXTENSIONS_DEV_URLS_KEY));
   const [newClientExtensionDevUrl, setNewClientExtensionDevUrl] = useState("");
   const [clientExtensionLoadState, setClientExtensionLoadState] = useState({});
+  const [serverExtensionCommands, setServerExtensionCommands] = useState([]);
+  const [slashSelectionIndex, setSlashSelectionIndex] = useState(0);
 
   const messagesRef = useRef(null);
   const gatewayWsRef = useRef(null);
@@ -525,6 +560,22 @@ export function App() {
       .then((data) => setClientExtensionCatalog(data.clientExtensions || []))
       .catch(() => setClientExtensionCatalog([]));
   }, [accessToken]);
+
+  useEffect(() => {
+    const selectedServer = servers.find((server) => server.id === activeServerId) || null;
+    if (!accessToken || !selectedServer) {
+      setServerExtensionCommands([]);
+      return;
+    }
+
+    nodeApi(selectedServer.baseUrl, "/v1/extensions/commands", selectedServer.membershipToken)
+      .then((data) => setServerExtensionCommands(Array.isArray(data.commands) ? data.commands : []))
+      .catch(() => setServerExtensionCommands([]));
+  }, [accessToken, activeServerId, servers]);
+
+  useEffect(() => {
+    setSlashSelectionIndex(0);
+  }, [messageText, serverExtensionCommands]);
 
   async function loadClientExtensionSource({ extensionId, extensionName, devUrl }) {
     if (devUrl) {
@@ -724,6 +775,19 @@ export function App() {
     if (!mention.query) return uniqueNames.slice(0, 8);
     return uniqueNames.filter((name) => name.toLowerCase().startsWith(mention.query)).slice(0, 8);
   }, [messageText, navMode, resolvedMemberList]);
+
+  const slashQuery = useMemo(() => {
+    if (navMode !== "servers") return null;
+    return getSlashQuery(messageText);
+  }, [messageText, navMode]);
+
+  const slashCommandSuggestions = useMemo(() => {
+    if (slashQuery == null) return [];
+    const catalog = [...serverExtensionCommands].sort((a, b) => a.name.localeCompare(b.name));
+    if (!slashQuery) return catalog.slice(0, 10);
+    return catalog.filter((command) => command.name.toLowerCase().includes(slashQuery)).slice(0, 10);
+  }, [slashQuery, serverExtensionCommands]);
+  const showingSlash = slashQuery != null;
 
   const memberByMentionToken = useMemo(() => {
     const map = new Map();
@@ -1802,8 +1866,59 @@ export function App() {
     }
   }
 
+  async function executeSlashCommand(rawInput) {
+    const trimmed = rawInput.trim();
+    const withoutPrefix = trimmed.replace(/^\//, "").trim();
+    const [commandName, ...argPieces] = withoutPrefix.split(/\s+/);
+    if (!commandName) return false;
+
+    const command = serverExtensionCommands.find((item) => item.name === commandName);
+    if (!command) {
+      setStatus(`Unknown command: /${commandName}`);
+      return true;
+    }
+
+    const optionDefs = Array.isArray(command.options) ? command.options : [];
+    const rawArgs = parseCommandArgs(argPieces.join(" "));
+    const args = {};
+
+    try {
+      optionDefs.forEach((option, index) => {
+        const value = rawArgs[index];
+        if ((value == null || value === "") && option.required) {
+          throw new Error(`Missing required option: ${option.name}`);
+        }
+        if (value == null || value === "") return;
+        args[option.name] = coerceCommandArg(value, option.type || "string");
+      });
+    } catch (error) {
+      setStatus(`/${commandName}: ${error.message}`);
+      return true;
+    }
+
+    try {
+      setMessageText("");
+      const result = await nodeApi(activeServer.baseUrl, `/v1/extensions/commands/${encodeURIComponent(commandName)}/execute`, activeServer.membershipToken, {
+        method: "POST",
+        body: JSON.stringify({ args })
+      });
+      setStatus(`Executed /${commandName}${result?.result != null ? ` → ${typeof result.result === "string" ? result.result : JSON.stringify(result.result)}` : ""}`);
+    } catch (error) {
+      setMessageText(rawInput);
+      setStatus(`Command failed: ${error.message}`);
+    }
+
+    return true;
+  }
+
   async function sendMessage() {
     if (!activeServer || !activeChannelId || !messageText.trim()) return;
+
+    if (messageText.trimStart().startsWith("/")) {
+      await executeSlashCommand(messageText);
+      return;
+    }
+
     const content = `${replyTarget ? `> replying to ${replyTarget.author}: ${replyTarget.content}\n` : ""}${messageText.trim()}`;
 
     try {
@@ -1821,7 +1936,6 @@ export function App() {
       setStatus(`Send failed: ${error.message}`);
     }
   }
-
   async function sendDm() {
     if (!activeDm || !dmText.trim()) return;
 
@@ -3619,6 +3733,28 @@ export function App() {
                     onChange={(event) => setMessageText(event.target.value)}
                     placeholder={`Message #${activeChannel?.name || "channel"}`}
                     onKeyDown={(event) => {
+                      if (event.key === "ArrowDown" && slashCommandSuggestions.length > 0) {
+                        event.preventDefault();
+                        setSlashSelectionIndex((current) => (current + 1) % slashCommandSuggestions.length);
+                        return;
+                      }
+                      if (event.key === "ArrowUp" && slashCommandSuggestions.length > 0) {
+                        event.preventDefault();
+                        setSlashSelectionIndex((current) => (current - 1 + slashCommandSuggestions.length) % slashCommandSuggestions.length);
+                        return;
+                      }
+                      if (event.key === "Escape" && showingSlash) {
+                        event.preventDefault();
+                        setMessageText("");
+                        return;
+                      }
+                      if ((event.key === "Tab" || event.key === "Enter") && slashCommandSuggestions.length > 0) {
+                        event.preventDefault();
+                        const selected = slashCommandSuggestions[Math.min(slashSelectionIndex, slashCommandSuggestions.length - 1)] || slashCommandSuggestions[0];
+                        if (!selected) return;
+                        setMessageText(`/${selected.name} `);
+                        return;
+                      }
                       if (event.key === "Enter") {
                         sendMessage();
                         return;
@@ -3633,7 +3769,35 @@ export function App() {
                       }
                     }}
                   />
-                  {mentionSuggestions.length > 0 && (
+                  {showingSlash && (
+                    <div className="slash-command-suggestions">
+                      <div className="slash-command-header">COMMANDS MATCHING /{(slashQuery || "").toUpperCase()}</div>
+                      {slashCommandSuggestions.length === 0 ? (
+                        <div className="slash-command-empty">No commands found for this server.</div>
+                      ) : (
+                        slashCommandSuggestions.map((command, index) => (
+                          <button
+                            key={command.name}
+                            type="button"
+                            className={`slash-command-item ${index === slashSelectionIndex ? "active" : ""}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setMessageText(`/${command.name} `);
+                              setSlashSelectionIndex(index);
+                              composerInputRef.current?.focus();
+                            }}
+                          >
+                            <div>
+                              <strong>/{command.name}</strong>
+                              <p>{command.description || "No description provided."}</p>
+                            </div>
+                            <span>{command.extensionName || command.extensionId}</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                  {mentionSuggestions.length > 0 && !showingSlash && (
                     <div className="mention-suggestions">
                       {mentionSuggestions.map((name) => (
                         <button
