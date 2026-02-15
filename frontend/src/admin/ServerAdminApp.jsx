@@ -85,6 +85,11 @@ export function ServerAdminApp() {
   const [searchUsername, setSearchUsername] = useState("");
   const [searchResults, setSearchResults] = useState([]);
 
+  // Extensions
+  const [extensionCatalog, setExtensionCatalog] = useState({ clientExtensions: [], serverExtensions: [] });
+  const [installedExtensions, setInstalledExtensions] = useState([]);
+  const [extensionsLoading, setExtensionsLoading] = useState(false);
+
   useEffect(() => {
     if (!token) {
       setStatus("Not authenticated. Please log in first.");
@@ -100,6 +105,12 @@ export function ServerAdminApp() {
   useEffect(() => {
     loadGuildState();
   }, [selectedGuildId, selectedServerId, servers]);
+
+  useEffect(() => {
+    if (!selectedServerId || !token) return;
+    loadExtensionCatalog();
+    loadInstalledExtensions(selectedServerId);
+  }, [selectedServerId, token]);
 
   async function loadServers() {
     try {
@@ -248,6 +259,50 @@ export function ServerAdminApp() {
     }
   }
 
+
+  async function loadExtensionCatalog() {
+    try {
+      const data = await api("/v1/extensions/catalog", token);
+      setExtensionCatalog({
+        clientExtensions: data.clientExtensions || [],
+        serverExtensions: data.serverExtensions || []
+      });
+    } catch (e) {
+      setStatus(`Failed to load extension catalog: ${e.message}`);
+    }
+  }
+
+  async function loadInstalledExtensions(serverId) {
+    setExtensionsLoading(true);
+    try {
+      const data = await api(`/v1/servers/${serverId}/extensions`, token);
+      setInstalledExtensions(data.extensions || []);
+    } catch (e) {
+      setStatus(`Failed to load installed extensions: ${e.message}`);
+      setInstalledExtensions([]);
+    } finally {
+      setExtensionsLoading(false);
+    }
+  }
+
+  async function toggleExtension(extensionId, enabled) {
+    if (!selectedServerId) return;
+    try {
+      await api(`/v1/servers/${selectedServerId}/extensions/${encodeURIComponent(extensionId)}`, token, {
+        method: "POST",
+        body: JSON.stringify({ enabled })
+      });
+      await loadInstalledExtensions(selectedServerId);
+      setStatus(`${enabled ? "Enabled" : "Disabled"} extension ${extensionId}.`);
+    } catch (e) {
+      setStatus(`Extension update failed: ${e.message}`);
+    }
+  }
+
+  function isExtensionEnabled(extensionId) {
+    return installedExtensions.some((ext) => ext.extensionId === extensionId && ext.enabled);
+  }
+
   const selectedServer = servers.find(s => s.id === selectedServerId);
 
   if (!token) {
@@ -341,6 +396,9 @@ export function ServerAdminApp() {
                   </button>
                   <button onClick={() => setActiveTab("admins")} style={{ flex: 1, padding: "8px 12px", background: activeTab === "admins" ? "var(--bg-accent)" : "transparent", border: "1px solid transparent", borderRadius: "var(--radius)", color: "var(--text-main)", cursor: "pointer" }}>
                     🔑 Admins
+                  </button>
+                  <button onClick={() => setActiveTab("extensions")} style={{ flex: 1, padding: "8px 12px", background: activeTab === "extensions" ? "var(--bg-accent)" : "transparent", border: "1px solid transparent", borderRadius: "var(--radius)", color: "var(--text-main)", cursor: "pointer" }}>
+                    🧩 Extensions
                   </button>
                 </div>
 
@@ -509,6 +567,55 @@ export function ServerAdminApp() {
                       <div style={{ background: "rgba(125, 164, 255, 0.1)", padding: "16px", borderRadius: "var(--radius)", border: "1px solid rgba(125, 164, 255, 0.2)", marginBottom: "24px" }}>
                         <p style={{ margin: "0 0 8px 0", fontWeight: 500 }}>💡 About Server Admins</p>
                         <p style={{ margin: 0, fontSize: "13px", color: "var(--text-dim)" }}>Server admins can manage roles, members, and guild settings. Use the Role Manager to assign admin roles to trusted members.</p>
+                      </div>
+                    </section>
+                  )}
+
+                  {activeTab === "extensions" && (
+                    <section style={{ maxWidth: "1000px" }}>
+                      <h2>Extensions</h2>
+                      <p style={{ color: "var(--text-dim)", marginTop: 0 }}>Enable reviewed server extensions for this server node. Client extensions are listed for visibility in the repo catalog.</p>
+
+                      <div style={{ marginBottom: "20px", padding: "14px", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius)", background: "rgba(255,255,255,0.03)" }}>
+                        <h3 style={{ marginTop: 0 }}>Server Extension Catalog ({extensionCatalog.serverExtensions.length})</h3>
+                        {extensionsLoading ? (
+                          <p style={{ color: "var(--text-dim)" }}>Loading installed extension state...</p>
+                        ) : extensionCatalog.serverExtensions.length === 0 ? (
+                          <p style={{ color: "var(--text-dim)" }}>No server extensions found in <code>Extensions/Server</code>.</p>
+                        ) : (
+                          <div style={{ display: "grid", gap: "10px" }}>
+                            {extensionCatalog.serverExtensions.map((ext) => {
+                              const enabled = isExtensionEnabled(ext.id);
+                              return (
+                                <div key={ext.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: "1px solid var(--border-subtle)", borderRadius: "8px", padding: "10px 12px" }}>
+                                  <div>
+                                    <strong>{ext.name}</strong> <span style={{ color: "var(--text-dim)", fontSize: "12px" }}>v{ext.version}</span>
+                                    <p style={{ margin: "4px 0 0", color: "var(--text-dim)", fontSize: "12px" }}>{ext.description || "No description"}</p>
+                                    <code style={{ fontSize: "11px" }}>{ext.id}</code>
+                                  </div>
+                                  <button onClick={() => toggleExtension(ext.id, !enabled)} style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--border-subtle)", background: enabled ? "rgba(240,90,90,0.2)" : "rgba(78,201,126,0.2)", color: "var(--text-main)", cursor: "pointer" }}>
+                                    {enabled ? "Disable" : "Enable"}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ padding: "14px", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius)", background: "rgba(255,255,255,0.02)" }}>
+                        <h3 style={{ marginTop: 0 }}>Client Extension Catalog ({extensionCatalog.clientExtensions.length})</h3>
+                        {extensionCatalog.clientExtensions.length === 0 ? (
+                          <p style={{ color: "var(--text-dim)" }}>No client extensions found in <code>Extensions/Client</code>.</p>
+                        ) : (
+                          <ul style={{ margin: 0, paddingLeft: "18px" }}>
+                            {extensionCatalog.clientExtensions.map((ext) => (
+                              <li key={ext.id} style={{ marginBottom: "6px" }}>
+                                <strong>{ext.name}</strong> <span style={{ color: "var(--text-dim)", fontSize: "12px" }}>({ext.id})</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </div>
                     </section>
                   )}
