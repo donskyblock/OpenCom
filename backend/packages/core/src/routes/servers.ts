@@ -154,6 +154,10 @@ export async function serverRoutes(app: FastifyInstance) {
   app.get("/v1/servers", { preHandler: [app.authenticate] } as any, async (req: any) => {
     const userId = req.user.sub as string;
     const platformRole = await getPlatformRole(userId);
+    const hasBoost = await q<{ badge: string }>(
+      `SELECT badge FROM user_badges WHERE user_id=:userId AND badge='boost' LIMIT 1`,
+      { userId }
+    );
 
     const rows = await q<{ id: string; name: string; base_url: string; default_guild_id: string | null; owner_user_id: string; roles: string }>(
       `SELECT s.id, s.name, s.base_url, s.default_guild_id, s.owner_user_id, m.roles
@@ -196,6 +200,7 @@ export async function serverRoutes(app: FastifyInstance) {
         if (!membershipRoles.includes("platform_admin")) membershipRoles.push("platform_admin");
         if (!membershipRoles.includes("platform_owner")) membershipRoles.push("platform_owner");
       }
+      if (hasBoost.length > 0 && !membershipRoles.includes("boost")) membershipRoles.push("boost");
 
       // For official node, token must use OFFICIAL_NODE_SERVER_ID so the node accepts it
       const idForToken = (OFFICIAL_NODE_BASE_URL && OFFICIAL_NODE_SERVER_ID && r.base_url === OFFICIAL_NODE_BASE_URL)

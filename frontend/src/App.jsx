@@ -351,6 +351,8 @@ export function App() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState("profile");
+  const [boostStatus, setBoostStatus] = useState(null);
+  const [boostLoading, setBoostLoading] = useState(false);
   const [addServerModalOpen, setAddServerModalOpen] = useState(false);
   const [addServerTab, setAddServerTab] = useState("create");
   const [serverContextMenu, setServerContextMenu] = useState(null);
@@ -1810,6 +1812,47 @@ export function App() {
       setSessions(data.sessions || []);
     } catch (error) {
       setStatus(`Could not load sessions: ${error.message}`);
+    }
+  }
+
+  async function loadBoostStatus() {
+    if (!accessToken) return;
+    setBoostLoading(true);
+    try {
+      const data = await api("/v1/billing/boost", {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      setBoostStatus(data);
+    } catch (error) {
+      setStatus(`Could not load billing status: ${error.message}`);
+    } finally {
+      setBoostLoading(false);
+    }
+  }
+
+  async function startBoostCheckout() {
+    if (!accessToken) return;
+    try {
+      const data = await api("/v1/billing/boost/checkout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      if (data?.url) window.location.href = data.url;
+    } catch (error) {
+      setStatus(`Could not start checkout: ${error.message}`);
+    }
+  }
+
+  async function openBoostPortal() {
+    if (!accessToken) return;
+    try {
+      const data = await api("/v1/billing/boost/portal", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      if (data?.url) window.location.href = data.url;
+    } catch (error) {
+      setStatus(`Could not open billing portal: ${error.message}`);
     }
   }
 
@@ -3746,6 +3789,7 @@ export function App() {
               <h3>Settings</h3>
               <button className={settingsTab === "profile" ? "active" : "ghost"} onClick={() => setSettingsTab("profile")}>Profile</button>
               <button className={settingsTab === "security" ? "active" : "ghost"} onClick={() => { setSettingsTab("security"); loadSessions(); }}>🔒 Security</button>
+              <button className={settingsTab === "billing" ? "active" : "ghost"} onClick={() => { setSettingsTab("billing"); loadBoostStatus(); }}>💳 Billing</button>
               <button className={settingsTab === "server" ? "active" : "ghost"} onClick={() => setSettingsTab("server")}>Server</button>
               <button className={settingsTab === "roles" ? "active" : "ghost"} onClick={() => setSettingsTab("roles")}>Roles</button>
               <button className={settingsTab === "invites" ? "active" : "ghost"} onClick={() => setSettingsTab("invites")}>Invites</button>
@@ -3979,6 +4023,25 @@ export function App() {
                     <input type="range" min="0" max="100" step="5" value={micSensitivity} onChange={(e) => setMicSensitivity(Number(e.target.value))} />
                   </label>
                   <p className="hint">Tip: allow microphone permissions so device names show properly.</p>
+                </section>
+              )}
+
+              {settingsTab === "billing" && (
+                <section className="card">
+                  <h4>OpenCom Boost</h4>
+                  <p className="hint">£10/month · 100MB upload limit · Unlimited servers. More Boost features are coming soon.</p>
+                  {boostLoading && <p className="hint">Loading billing status…</p>}
+                  {boostStatus && (
+                    <>
+                      <p className="hint">Status: {boostStatus.active ? "Active" : "Inactive"}{boostStatus.currentPeriodEnd ? ` · Renews ${new Date(boostStatus.currentPeriodEnd).toLocaleDateString()}` : ""}</p>
+                      {!boostStatus.stripeConfigured && <p className="hint">Stripe is not configured on this server yet.</p>}
+                    </>
+                  )}
+                  <div className="row-actions">
+                    <button onClick={startBoostCheckout}>Subscribe to OpenCom Boost</button>
+                    <button className="ghost" onClick={openBoostPortal}>Manage Subscription</button>
+                    <button className="ghost" onClick={loadBoostStatus}>Refresh</button>
+                  </div>
                 </section>
               )}
 

@@ -14,7 +14,8 @@ export async function attachmentRoutes(app: FastifyInstance) {
   // IMPORTANT: register multipart ONCE
   await app.register(multipart, {
     limits: {
-      fileSize: env.ATTACHMENT_MAX_BYTES // hard limit
+      // Allow parsing up to boosted max; per-user limits are enforced below.
+      fileSize: Math.max(env.ATTACHMENT_MAX_BYTES, env.ATTACHMENT_BOOST_MAX_BYTES)
     }
   });
 
@@ -72,6 +73,10 @@ export async function attachmentRoutes(app: FastifyInstance) {
       return rep.code(403).send({ error: "MISSING_PERMS" });
     }
 
+
+    const isBoostUser = (req.auth.roles || []).includes("boost");
+    const maxUploadBytes = isBoostUser ? env.ATTACHMENT_BOOST_MAX_BYTES : env.ATTACHMENT_MAX_BYTES;
+
     const attachmentId = ulidLike();
     const originalName = safeName(filePart.filename ?? "file");
     const contentType = String(filePart.mimetype ?? "application/octet-stream");
@@ -95,10 +100,10 @@ export async function attachmentRoutes(app: FastifyInstance) {
     // Stream to disk with size enforcement
     let sizeBytes = 0;
     try {
-      sizeBytes = await streamToFile(filePart.file, absPath, env.ATTACHMENT_MAX_BYTES);
+      sizeBytes = await streamToFile(filePart.file, absPath, maxUploadBytes);
     } catch (e: any) {
       unlinkIfExists(absPath);
-      if (String(e?.message) === "TOO_LARGE") return rep.code(413).send({ error: "TOO_LARGE", maxBytes: env.ATTACHMENT_MAX_BYTES });
+      if (String(e?.message) === "TOO_LARGE") return rep.code(413).send({ error: "TOO_LARGE", maxBytes: maxUploadBytes });
       return rep.code(500).send({ error: "UPLOAD_FAILED" });
     }
 
