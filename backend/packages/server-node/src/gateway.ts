@@ -494,7 +494,7 @@ export function attachNodeGateway(app: FastifyInstance) {
             rtpCapabilities
           );
 
-          sendDispatch(conn, "VOICE_CONSUMED", data);
+          sendDispatch(conn, "VOICE_CONSUMED", { ...data, guildId: conn.voice.guildId, channelId: conn.voice.channelId });
         } catch {
           sendDispatch(conn, "VOICE_ERROR", { error: "VOICE_CONSUME_FAILED" });
         }
