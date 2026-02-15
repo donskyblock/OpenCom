@@ -787,6 +787,7 @@ export function App() {
     if (!slashQuery) return catalog.slice(0, 10);
     return catalog.filter((command) => command.name.toLowerCase().includes(slashQuery)).slice(0, 10);
   }, [slashQuery, serverExtensionCommands]);
+  const showingSlash = slashQuery != null;
 
   const memberByMentionToken = useMemo(() => {
     const map = new Map();
@@ -3732,7 +3733,6 @@ export function App() {
                     onChange={(event) => setMessageText(event.target.value)}
                     placeholder={`Message #${activeChannel?.name || "channel"}`}
                     onKeyDown={(event) => {
-                      const showingSlash = slashQuery != null;
                       if (event.key === "ArrowDown" && slashCommandSuggestions.length > 0) {
                         event.preventDefault();
                         setSlashSelectionIndex((current) => (current + 1) % slashCommandSuggestions.length);
@@ -3797,7 +3797,7 @@ export function App() {
                       )}
                     </div>
                   )}
-                  {mentionSuggestions.length > 0 && !slashCommandSuggestions.length && (
+                  {mentionSuggestions.length > 0 && !showingSlash && (
                     <div className="mention-suggestions">
                       {mentionSuggestions.map((name) => (
                         <button
