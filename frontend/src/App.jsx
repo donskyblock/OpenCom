@@ -2718,29 +2718,34 @@ export function App() {
     await voiceSfuRef.current?.cleanup();
   }
 
-  async function waitForVoiceGatewayReady(timeoutMs = 5000) {
+  async function waitForVoiceGatewayReady(timeoutMs = 15000) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       const ws = nodeGatewayWsRef.current;
+
+      // If ws is open AND we’ve seen READY, we’re good
       if (ws && ws.readyState === WebSocket.OPEN && nodeGatewayReadyRef.current) return ws;
+
       await new Promise((resolve) => setTimeout(resolve, 120));
     }
 
     const wsState = nodeGatewayWsRef.current?.readyState;
-    const wsStateName = wsState === WebSocket.CONNECTING
-      ? "CONNECTING"
-      : wsState === WebSocket.OPEN
-        ? "OPEN"
-        : wsState === WebSocket.CLOSING
-          ? "CLOSING"
-          : wsState === WebSocket.CLOSED
-            ? "CLOSED"
-            : "MISSING";
+    const wsStateName =
+      wsState === WebSocket.CONNECTING ? "CONNECTING" :
+      wsState === WebSocket.OPEN ? "OPEN" :
+      wsState === WebSocket.CLOSING ? "CLOSING" :
+      wsState === WebSocket.CLOSED ? "CLOSED" :
+      "MISSING";
+
     const candidates = voiceGatewayCandidatesRef.current?.length
       ? voiceGatewayCandidatesRef.current.join(",")
       : "none";
-    throw new Error(`VOICE_GATEWAY_UNAVAILABLE:ready=${nodeGatewayReadyRef.current ? "1" : "0"},ws=${wsStateName},candidates=${candidates}`);
+
+    throw new Error(
+      `VOICE_GATEWAY_UNAVAILABLE:ready=${nodeGatewayReadyRef.current ? "1" : "0"},ws=${wsStateName},candidates=${candidates}`
+    );
   }
+
 
   async function sendNodeVoiceDispatch(type, data) {
     const ws = await waitForVoiceGatewayReady();
