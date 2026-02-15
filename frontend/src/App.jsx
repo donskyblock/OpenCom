@@ -516,6 +516,17 @@ export function App() {
     return Array.from(byUser.values());
   }, [guildState?.voiceStates, voiceStatesByGuild, activeGuildId]);
 
+  const isVoiceSessionSynced = useMemo(() => {
+    if (!me?.id || !voiceConnectedGuildId || !voiceConnectedChannelId) return false;
+    const liveSelfState = voiceStatesByGuild[voiceConnectedGuildId]?.[me.id];
+    if (liveSelfState?.channelId) return liveSelfState.channelId === voiceConnectedChannelId;
+    if (activeGuildId === voiceConnectedGuildId) {
+      const mergedSelfState = mergedVoiceStates.find((vs) => vs.userId === me.id);
+      return mergedSelfState?.channelId === voiceConnectedChannelId;
+    }
+    return false;
+  }, [me?.id, voiceConnectedGuildId, voiceConnectedChannelId, voiceStatesByGuild, activeGuildId, mergedVoiceStates]);
+
   const voiceMembersByChannel = useMemo(() => {
     const map = new Map();
     for (const vs of mergedVoiceStates) {
@@ -1127,6 +1138,12 @@ export function App() {
               channelId: msg.d?.channelId ?? activeVoiceContext.channelId ?? null,
               reason: error
             });
+            if (error === "NOT_IN_VOICE_CHANNEL") {
+              setVoiceSession({ guildId: "", channelId: "" });
+              setStatus("Voice state desynced. Rejoin voice to continue.");
+              cleanupVoiceRtc().catch(() => {});
+              return;
+            }
             const message = `Voice connection failed: ${error}`;
             setStatus(message);
             window.alert(message);
@@ -1321,11 +1338,12 @@ export function App() {
 
   useEffect(() => {
     const canSendVoiceSpeaking = isInVoiceChannel
+      && isVoiceSessionSynced
       && !!voiceConnectedGuildId
       && !!nodeGatewayReadyRef.current
       && nodeGatewayWsRef.current?.readyState === WebSocket.OPEN;
 
-    if (!isInVoiceChannel || !voiceConnectedGuildId || isMuted || isDeafened || !navigator.mediaDevices?.getUserMedia || !canSendVoiceSpeaking) {
+    if (!isInVoiceChannel || !isVoiceSessionSynced || !voiceConnectedGuildId || isMuted || isDeafened || !navigator.mediaDevices?.getUserMedia || !canSendVoiceSpeaking) {
       const detector = voiceSpeakingDetectorRef.current;
       if (detector.timer) clearInterval(detector.timer);
       detector.timer = null;
@@ -1409,7 +1427,7 @@ export function App() {
       detector.analyser = null;
       detector.lastSpeaking = false;
     };
-  }, [isInVoiceChannel, voiceConnectedGuildId, voiceConnectedChannelId, isMuted, isDeafened, micSensitivity, audioInputDeviceId, me?.id]);
+  }, [isInVoiceChannel, isVoiceSessionSynced, voiceConnectedGuildId, voiceConnectedChannelId, isMuted, isDeafened, micSensitivity, audioInputDeviceId, me?.id]);
 
   useEffect(() => {
     localStorage.setItem(MIC_GAIN_KEY, String(micGain));
