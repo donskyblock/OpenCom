@@ -1121,6 +1121,59 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 .chat-main > .reply-banner {
   min-height: 0;
 }
+
+.slash-command-suggestions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 0.35em);
+  background: rgba(10, 18, 33, 0.98);
+  border: 1px solid var(--border-subtle);
+  border-radius: calc(var(--radius) * 0.8);
+  padding: 0.35em;
+  display: grid;
+  gap: 0.25em;
+  max-height: 280px;
+  overflow: auto;
+}
+.slash-command-header {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  padding: 0.25em 0.35em 0.35em;
+}
+.slash-command-item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8em;
+  text-align: left;
+  border: none;
+  border-radius: calc(var(--radius) * 0.65);
+  background: transparent;
+  color: var(--text-soft);
+  padding: 0.45em 0.55em;
+}
+.slash-command-item strong { color: var(--text-main); }
+.slash-command-empty {
+  color: var(--text-dim);
+  padding: 0.45em 0.55em;
+  font-size: 0.88em;
+}
+.slash-command-item p {
+  margin: 0.15em 0 0;
+  color: var(--text-dim);
+  font-size: 0.84em;
+}
+.slash-command-item span {
+  color: var(--text-dim);
+  font-size: 0.78em;
+  white-space: nowrap;
+}
+.slash-command-item:hover,
+.slash-command-item.active {
+  background: rgba(125, 164, 255, 0.2);
+}
 .mention-suggestions {
   position: absolute;
   left: 0;
