@@ -1,0 +1,9 @@
+{
+  "id": "ping-tools",
+  "name": "Ping Tools",
+  "version": "0.1.0",
+  "description": "Example server extension with activate/deactivate hooks.",
+  "scope": "server",
+  "entry": "index.js",
+  "permissions": ["all"]
+}

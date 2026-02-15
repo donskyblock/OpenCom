@@ -1,0 +1,9 @@
+{
+  "id": "welcome-badge",
+  "name": "Welcome Badge",
+  "version": "0.1.0",
+  "description": "Example client-only extension manifest.",
+  "scope": "client",
+  "entry": "index.js",
+  "permissions": ["all"]
+}
