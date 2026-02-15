@@ -1,0 +1,11 @@
+diff --git a/frontend/src/voice/sfuClient.js b/frontend/src/voice/sfuClient.js
+index 613a144..afb84fe 100644
+--- a/frontend/src/voice/sfuClient.js
++++ b/frontend/src/voice/sfuClient.js
+@@ -377,4 +377,4 @@ export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch,
+     getLocalStream,
+     getContext
+   };
+-}
++}
+\ No newline at end of file

@@ -49,7 +49,8 @@ export function attachNodeGateway(app: FastifyInstance) {
   const wss = new WebSocketServer({ noServer: true });
   const conns = new Set<Conn>();
 
-  app.get("/health", async () => ({ ok: true, voice: getMediasoupDiagnostics() }));
+  app.get("/health", async () => ({ ok: true }));
+
 
   app.get("/debug/voice", async (req, rep) => {
     if (!env.DEBUG_VOICE) return rep.code(404).send({ error: "NOT_FOUND" });
@@ -454,7 +455,7 @@ export function attachNodeGateway(app: FastifyInstance) {
             return;
           }
 
-          const transport = await createWebRtcTransport(guildId, channelId, conn.userId, direction);
+          const transport = await createWebRtcTransport(guildId, channelId, conn.userId);
           sendDispatch(conn, "VOICE_TRANSPORT_CREATED", { guildId, channelId, direction, transport });
         } catch (error) {
           sendVoiceError(conn, "VOICE_TRANSPORT_CREATE_FAILED", error);

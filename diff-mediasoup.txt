@@ -1,0 +1,11 @@
+diff --git a/backend/packages/server-node/src/voice/mediasoup.ts b/backend/packages/server-node/src/voice/mediasoup.ts
+index fb12fb2..9afe607 100644
+--- a/backend/packages/server-node/src/voice/mediasoup.ts
++++ b/backend/packages/server-node/src/voice/mediasoup.ts
+@@ -189,4 +189,4 @@ export function closePeer(guildId: string, channelId: string, userId: string): s
+   }
+ 
+   return closedProducerIds;
+-}
++}
+\ No newline at end of file

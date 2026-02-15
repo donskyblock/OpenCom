@@ -1,0 +1,521 @@
+diff --git a/frontend/src/App.jsx b/frontend/src/App.jsx
+index 0635866..52f3020 100644
+--- a/frontend/src/App.jsx
++++ b/frontend/src/App.jsx
+@@ -28,6 +28,13 @@ const SERVER_VOICE_GATEWAY_PREFS_KEY = "opencom_server_voice_gateway_prefs";
+ const LAST_CORE_GATEWAY_KEY = "opencom_last_core_gateway";
+ const LAST_SERVER_GATEWAY_KEY = "opencom_last_server_gateway";
+ const FALLBACK_CORE_GATEWAY_WS_URL = "wss://ws.opencom.online/gateway";
++const DEBUG_VOICE_STORAGE_KEY = "opencom_debug_voice";
++
++function isVoiceDebugEnabled() {
++  const envEnabled = String(import.meta.env.VITE_DEBUG_VOICE || "").trim() === "1";
++  const storageEnabled = typeof window !== "undefined" && localStorage.getItem(DEBUG_VOICE_STORAGE_KEY) === "1";
++  return envEnabled || storageEnabled;
++}
+ 
+ function normalizeGatewayWsUrl(value) {
+   if (!value || typeof value !== "string") return "";
+@@ -220,6 +227,34 @@ function getInitials(value = "") {
+   return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+ }
+ 
++function escapeRegex(value = "") {
++  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
++}
++
++function getMentionQuery(value = "") {
++  const match = value.match(/(?:^|\s)(@\{?)([^\s{}@]*)$/);
++  if (!match) return null;
++  const marker = match[1] || "@";
++  const query = match[2] || "";
++  const start = value.length - marker.length - query.length;
++  return { query: query.toLowerCase(), start };
++}
++
++function contentMentionsSelf(content = "", selfId, selfNames = []) {
++  if (!content || !selfId) return false;
++  if (/@everyone\b/i.test(content)) return true;
++  if (new RegExp(`@\\{${escapeRegex(selfId)}\\}`, "i").test(content)) return true;
++  if (new RegExp(`(^|\\s)@${escapeRegex(selfId)}\\b`, "i").test(content)) return true;
++  for (const name of selfNames) {
++    if (!name || typeof name !== "string") continue;
++    const trimmed = name.trim();
++    if (!trimmed) continue;
++    if (new RegExp(`@\\{${escapeRegex(trimmed)}\\}`, "i").test(content)) return true;
++    if (new RegExp(`(^|\\s)@${escapeRegex(trimmed)}\\b`, "i").test(content)) return true;
++  }
++  return false;
++}
++
+ function formatMessageTime(value) {
+   if (!value) return "just now";
+   const date = new Date(value);
+@@ -253,6 +288,11 @@ function playNotificationBeep(mute = false) {
+ }
+ 
+ export function App() {
++  const voiceDebugEnabled = isVoiceDebugEnabled();
++  const voiceDebug = (message, context = {}) => {
++    if (!voiceDebugEnabled) return;
++    console.debug(`[voice-debug] ${message}`, context);
++  };
+   const storedActiveDmId = localStorage.getItem(ACTIVE_DM_KEY) || "";
+   const [accessToken, setAccessToken] = useState(localStorage.getItem("opencom_access_token") || "");
+   const [authMode, setAuthMode] = useState("login");
+@@ -323,11 +363,14 @@ export function App() {
+ 
+   const [settingsOpen, setSettingsOpen] = useState(false);
+   const [settingsTab, setSettingsTab] = useState("profile");
++  const [boostStatus, setBoostStatus] = useState(null);
++  const [boostLoading, setBoostLoading] = useState(false);
+   const [addServerModalOpen, setAddServerModalOpen] = useState(false);
+   const [addServerTab, setAddServerTab] = useState("create");
+   const [serverContextMenu, setServerContextMenu] = useState(null);
+   const [messageContextMenu, setMessageContextMenu] = useState(null);
+   const [replyTarget, setReplyTarget] = useState(null);
++  const [serverPingCounts, setServerPingCounts] = useState({});
+   const [memberProfileCard, setMemberProfileCard] = useState(null);
+   const [userCache, setUserCache] = useState({});
+   const userCacheFetchingRef = useRef(new Set());
+@@ -375,7 +418,8 @@ export function App() {
+     voiceSfuRef.current = createSfuVoiceClient({
+       getSelfUserId: () => selfUserIdRef.current,
+       sendDispatch: (type, data) => sendNodeVoiceDispatch(type, data),
+-      waitForEvent: waitForVoiceEvent
++      waitForEvent: waitForVoiceEvent,
++      debugLog: voiceDebug
+     });
+   }
+   const selfStatusRef = useRef(selfStatus);
+@@ -507,6 +551,27 @@ export function App() {
+     [memberList, userCache]
+   );
+ 
++  const mentionSuggestions = useMemo(() => {
++    const mention = getMentionQuery(messageText);
++    if (!mention || navMode !== "servers") return [];
++    const candidateNames = ["everyone", ...resolvedMemberList.map((member) => member.username || "")]
++      .map((name) => name.trim())
++      .filter(Boolean);
++    const uniqueNames = Array.from(new Set(candidateNames));
++    if (!mention.query) return uniqueNames.slice(0, 8);
++    return uniqueNames.filter((name) => name.toLowerCase().startsWith(mention.query)).slice(0, 8);
++  }, [messageText, navMode, resolvedMemberList]);
++
++  const memberByMentionToken = useMemo(() => {
++    const map = new Map();
++    for (const member of resolvedMemberList) {
++      if (!member?.id) continue;
++      map.set(String(member.id).toLowerCase(), member);
++      if (member.username) map.set(String(member.username).toLowerCase(), member);
++    }
++    return map;
++  }, [resolvedMemberList]);
++
+   const memberNameById = useMemo(() => new Map(resolvedMemberList.map((member) => [member.id, member.username])), [resolvedMemberList]);
+ 
+   const mergedVoiceStates = useMemo(() => {
+@@ -1063,20 +1128,33 @@ export function App() {
+             return;
+           }
+ 
++          if (msg.op === "DISPATCH" && msg.t === "MESSAGE_MENTION" && msg.d?.channelId) {
++            const mentionChannelId = msg.d.channelId;
++            if (activeServer?.id && mentionChannelId !== activeChannelIdRef.current) {
++              setServerPingCounts((prev) => ({
++                ...prev,
++                [activeServer.id]: (prev[activeServer.id] || 0) + 1
++              }));
++            }
++            return;
++          }
++
+           if (msg.op === "DISPATCH" && msg.t === "MESSAGE_CREATE" && msg.d?.channelId && msg.d?.message) {
+             const channelId = msg.d.channelId;
+-            if (channelId !== activeChannelIdRef.current) return;
+             const incoming = msg.d.message;
+-            setMessages((prev) => {
+-              if (prev.some((m) => m.id === incoming.id)) return prev;
+-              return [...prev, {
+-                id: incoming.id,
+-                author_id: incoming.authorId,
+-                content: incoming.content,
+-                created_at: incoming.createdAt,
+-                attachments: incoming.attachments || []
+-              }];
+-            });
++
++            if (channelId === activeChannelIdRef.current) {
++              setMessages((prev) => {
++                if (prev.some((m) => m.id === incoming.id)) return prev;
++                return [...prev, {
++                  id: incoming.id,
++                  author_id: incoming.authorId,
++                  content: incoming.content,
++                  created_at: incoming.createdAt,
++                  attachments: incoming.attachments || []
++                }];
++              });
++            }
+             return;
+           }
+ 
+@@ -1138,7 +1216,9 @@ export function App() {
+ 
+           if (msg.op === "DISPATCH" && msg.t === "VOICE_ERROR") {
+             const error = msg.d?.error || "VOICE_ERROR";
++            const details = msg.d?.details ? ` (${msg.d.details})` : "";
+             const activeVoiceContext = voiceSfuRef.current?.getContext?.() || {};
++            voiceDebug("VOICE_ERROR received", { error, details: msg.d?.details, code: msg.d?.code, context: activeVoiceContext });
+             rejectPendingVoiceEventsByScope({
+               guildId: msg.d?.guildId ?? activeVoiceContext.guildId ?? null,
+               channelId: msg.d?.channelId ?? activeVoiceContext.channelId ?? null,
+@@ -1150,7 +1230,7 @@ export function App() {
+               cleanupVoiceRtc().catch(() => {});
+               return;
+             }
+-            const message = `Voice connection failed: ${error}`;
++            const message = `Voice connection failed: ${error}${details}`;
+             setStatus(message);
+             window.alert(message);
+             return;
+@@ -1211,6 +1291,26 @@ export function App() {
+     ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_CHANNEL", d: { channelId: activeChannelId } }));
+   }, [activeGuildId, activeChannelId]);
+ 
++  useEffect(() => {
++    if (navMode !== "servers" || !activeGuildId || !guildState?.channels?.length) return;
++    const ws = nodeGatewayWsRef.current;
++    if (!ws || ws.readyState !== WebSocket.OPEN || !nodeGatewayReadyRef.current) return;
++    for (const channel of guildState.channels) {
++      if (!channel?.id || channel.type !== "text") continue;
++      ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_CHANNEL", d: { channelId: channel.id } }));
++    }
++  }, [navMode, activeGuildId, guildState?.channels]);
++
++  useEffect(() => {
++    if (!activeServerId) return;
++    setServerPingCounts((prev) => {
++      if (!prev[activeServerId]) return prev;
++      const next = { ...prev };
++      delete next[activeServerId];
++      return next;
++    });
++  }, [activeServerId]);
++
+   // Fetch initial presence for guild members and friends
+   useEffect(() => {
+     if (!accessToken) return;
+@@ -1730,6 +1830,47 @@ export function App() {
+     }
+   }
+ 
++  async function loadBoostStatus() {
++    if (!accessToken) return;
++    setBoostLoading(true);
++    try {
++      const data = await api("/v1/billing/boost", {
++        headers: { Authorization: `Bearer ${accessToken}` }
++      });
++      setBoostStatus(data);
++    } catch (error) {
++      setStatus(`Could not load billing status: ${error.message}`);
++    } finally {
++      setBoostLoading(false);
++    }
++  }
++
++  async function startBoostCheckout() {
++    if (!accessToken) return;
++    try {
++      const data = await api("/v1/billing/boost/checkout", {
++        method: "POST",
++        headers: { Authorization: `Bearer ${accessToken}` }
++      });
++      if (data?.url) window.location.href = data.url;
++    } catch (error) {
++      setStatus(`Could not start checkout: ${error.message}`);
++    }
++  }
++
++  async function openBoostPortal() {
++    if (!accessToken) return;
++    try {
++      const data = await api("/v1/billing/boost/portal", {
++        method: "POST",
++        headers: { Authorization: `Bearer ${accessToken}` }
++      });
++      if (data?.url) window.location.href = data.url;
++    } catch (error) {
++      setStatus(`Could not open billing portal: ${error.message}`);
++    }
++  }
++
+   async function revokeSession(sessionId) {
+     if (!accessToken) return;
+     try {
+@@ -2598,8 +2739,34 @@ export function App() {
+     ws.send(JSON.stringify({ op: "DISPATCH", t: type, d: data }));
+   }
+ 
++  function canUseRealtimeVoiceGateway() {
++    const ws = nodeGatewayWsRef.current;
++    const usable = !!(ws && ws.readyState === WebSocket.OPEN && nodeGatewayReadyRef.current);
++    if (voiceDebugEnabled) {
++      const wsState = ws?.readyState;
++      const wsStateName = wsState === WebSocket.CONNECTING
++        ? "CONNECTING"
++        : wsState === WebSocket.OPEN
++          ? "OPEN"
++          : wsState === WebSocket.CLOSING
++            ? "CLOSING"
++            : wsState === WebSocket.CLOSED
++              ? "CLOSED"
++              : "MISSING";
++      voiceDebug("canUseRealtimeVoiceGateway", {
++        usable,
++        readyState: wsStateName,
++        gatewayReady: nodeGatewayReadyRef.current,
++        activeGuildId,
++        activeChannelId
++      });
++    }
++    return usable;
++  }
++
+   async function joinVoiceChannel(channel) {
+     if (!channel?.id || !activeGuildId || !activeServer?.baseUrl || !activeServer?.membershipToken) return;
++    let sfuError = null;
+     try {
+       setStatus(`Joining ${channel.name}...`);
+       await voiceSfuRef.current?.join({
+@@ -2614,15 +2781,23 @@ export function App() {
+       setStatus(`Joined ${channel.name}.`);
+       return;
+     } catch (error) {
+-      const message = `Voice connection failed: ${error.message || "VOICE_JOIN_FAILED"}`;
++      sfuError = error;
++    }
++
++    const allowRestFallback = String(import.meta.env.VITE_ENABLE_REST_VOICE_FALLBACK || "").trim() === "1";
++    if (!allowRestFallback) {
++      const reason = sfuError?.message || "VOICE_GATEWAY_UNAVAILABLE";
++      const message = `Voice connection failed: ${reason}. Realtime voice gateway is required; set VITE_ENABLE_REST_VOICE_FALLBACK=1 only for diagnostics.`;
+       setStatus(message);
+       window.alert(message);
++      return;
+     }
+ 
+     try {
+       await nodeApi(activeServer.baseUrl, `/v1/channels/${channel.id}/voice/join`, activeServer.membershipToken, { method: "POST" });
+       setVoiceSession({ guildId: activeGuildId, channelId: channel.id });
+-      setStatus(`Joined ${channel.name} (REST fallback).`);
++      const fallbackReason = sfuError?.message ? ` (gateway fallback: ${sfuError.message})` : "";
++      setStatus(`Joined ${channel.name} (REST voice mode, no SFU playback).${fallbackReason}`);
+     } catch (error) {
+       const message = `Voice connection failed: ${error.message || "VOICE_JOIN_FAILED"}`;
+       setStatus(message);
+@@ -2684,17 +2859,33 @@ export function App() {
+       await forceLocalDisconnect();
+       setStatus("Disconnected from voice.");
+ 
+-      if (!targetGuildId || !targetChannelId) return;
+-
+-      try {
+-        await sendNodeVoiceDispatch("VOICE_LEAVE", { guildId: targetGuildId, channelId: targetChannelId });
++      if (!targetGuildId || !targetChannelId) {
++        if (!connectedServer?.baseUrl || !connectedServer?.membershipToken) return;
++        try {
++          await nodeApi(connectedServer.baseUrl, "/v1/me/voice-disconnect", connectedServer.membershipToken, { method: "POST" });
++        } catch (error) {
++          const message = `Disconnected locally. Server voice leave failed: ${error.message || "VOICE_LEAVE_FAILED"}`;
++          setStatus(message);
++          console.warn(message);
++        }
+         return;
+-      } catch {}
++      }
++
++      if (canUseRealtimeVoiceGateway()) {
++        try {
++          await sendNodeVoiceDispatch("VOICE_LEAVE", { guildId: targetGuildId, channelId: targetChannelId });
++          return;
++        } catch {}
++      }
+ 
+       if (!connectedServer?.baseUrl || !connectedServer?.membershipToken) return;
+ 
+       try {
+-        await nodeApi(connectedServer.baseUrl, `/v1/channels/${targetChannelId}/voice/leave`, connectedServer.membershipToken, { method: "POST" });
++        if (targetChannelId) {
++          await nodeApi(connectedServer.baseUrl, `/v1/channels/${targetChannelId}/voice/leave`, connectedServer.membershipToken, { method: "POST" });
++          return;
++        }
++        await nodeApi(connectedServer.baseUrl, "/v1/me/voice-disconnect", connectedServer.membershipToken, { method: "POST" });
+       } catch (error) {
+         const message = `Disconnected locally. Server voice leave failed: ${error.message || "VOICE_LEAVE_FAILED"}`;
+         setStatus(message);
+@@ -2842,6 +3033,58 @@ export function App() {
+     }
+   }
+ 
++  function renderContentWithMentions(message) {
++    const content = message?.content || "";
++    const nodes = [];
++    const mentionRegex = /@\{([^}\n]{1,64})\}|@([a-zA-Z0-9_.-]{2,64})/g;
++    let cursor = 0;
++
++    for (const match of content.matchAll(mentionRegex)) {
++      const index = match.index ?? 0;
++      const raw = (match[1] || match[2] || "").trim();
++      const token = match[0];
++      const prevChar = index > 0 ? content[index - 1] : "";
++      const mentionAtWordBoundary = index === 0 || /\s/.test(prevChar);
++
++      if (!mentionAtWordBoundary || !raw) continue;
++
++      if (index > cursor) {
++        nodes.push(<span key={`text-${cursor}`}>{content.slice(cursor, index)}</span>);
++      }
++
++      if (raw.toLowerCase() === "everyone") {
++        nodes.push(<span key={`everyone-${index}`} className="message-mention">{token}</span>);
++      } else {
++        const member = memberByMentionToken.get(raw.toLowerCase());
++        if (member) {
++          nodes.push(
++            <button
++              key={`mention-${index}`}
++              type="button"
++              className="message-mention mention-click"
++              onClick={(event) => {
++                event.stopPropagation();
++                openMemberProfile(member);
++              }}
++            >
++              @{member.username || member.id}
++            </button>
++          );
++        } else {
++          nodes.push(<span key={`unknown-${index}`} className="message-mention">{token}</span>);
++        }
++      }
++
++      cursor = index + token.length;
++    }
++
++    if (cursor < content.length) {
++      nodes.push(<span key={`tail-${cursor}`}>{content.slice(cursor)}</span>);
++    }
++
++    return nodes.length ? nodes : content;
++  }
++
+   function formatAccountCreated(createdAt) {
+     if (!createdAt) return null;
+     try {
+@@ -2976,6 +3219,9 @@ export function App() {
+               onContextMenu={(event) => openServerContextMenu(event, server)}
+             >
+               {getInitials(server.name)}
++              {(serverPingCounts[server.id] || 0) > 0 && (
++                <span className="server-pill-ping-badge">{serverPingCounts[server.id]}</span>
++              )}
+             </button>
+           ))}
+           <button className="server-pill" title="Create or join a server" onClick={() => setAddServerModalOpen(true)}>
+@@ -3227,7 +3473,7 @@ export function App() {
+                           content: message.content,
+                           mine: (message.author_id || message.authorId) === me?.id
+                         })}>
+-                          {activePinnedServerMessages.some((item) => item.id === message.id) ? "📌 " : ""}{message.content}
++                          {activePinnedServerMessages.some((item) => item.id === message.id) ? "📌 " : ""}{renderContentWithMentions(message)}
+                         </p>
+                       ))}
+                     </div>
+@@ -3246,7 +3492,49 @@ export function App() {
+ 
+               <footer className="composer server-composer" onClick={() => composerInputRef.current?.focus()}>
+                 <button className="ghost composer-icon">＋</button>
+-                <input ref={composerInputRef} value={messageText} onChange={(event) => setMessageText(event.target.value)} placeholder={`Message #${activeChannel?.name || "channel"}`} onKeyDown={(event) => event.key === "Enter" && sendMessage()} />
++                <div className="composer-input-wrap">
++                  <input
++                    ref={composerInputRef}
++                    value={messageText}
++                    onChange={(event) => setMessageText(event.target.value)}
++                    placeholder={`Message #${activeChannel?.name || "channel"}`}
++                    onKeyDown={(event) => {
++                      if (event.key === "Enter") {
++                        sendMessage();
++                        return;
++                      }
++                      if (event.key === "Tab" && mentionSuggestions.length) {
++                        event.preventDefault();
++                        const mention = getMentionQuery(messageText);
++                        if (!mention) return;
++                        const selected = mentionSuggestions[0];
++                        const prefix = messageText.slice(0, mention.start);
++                        setMessageText(`${prefix}@{${selected}} `);
++                      }
++                    }}
++                  />
++                  {mentionSuggestions.length > 0 && (
++                    <div className="mention-suggestions">
++                      {mentionSuggestions.map((name) => (
++                        <button
++                          key={name}
++                          type="button"
++                          className="mention-suggestion"
++                          onClick={(event) => {
++                            event.stopPropagation();
++                            const mention = getMentionQuery(messageText);
++                            if (!mention) return;
++                            const prefix = messageText.slice(0, mention.start);
++                            setMessageText(`${prefix}@{${name}} `);
++                            composerInputRef.current?.focus();
++                          }}
++                        >
++                          @{name}
++                        </button>
++                      ))}
++                    </div>
++                  )}
++                </div>
+                 <button className="ghost composer-icon">🎁</button>
+                 <button className="send-btn" onClick={sendMessage} disabled={!activeChannelId || !messageText.trim()}>Send</button>
+               </footer>
+@@ -3566,6 +3854,7 @@ export function App() {
+               <h3>Settings</h3>
+               <button className={settingsTab === "profile" ? "active" : "ghost"} onClick={() => setSettingsTab("profile")}>Profile</button>
+               <button className={settingsTab === "security" ? "active" : "ghost"} onClick={() => { setSettingsTab("security"); loadSessions(); }}>🔒 Security</button>
++              <button className={settingsTab === "billing" ? "active" : "ghost"} onClick={() => { setSettingsTab("billing"); loadBoostStatus(); }}>💳 Billing</button>
+               <button className={settingsTab === "server" ? "active" : "ghost"} onClick={() => setSettingsTab("server")}>Server</button>
+               <button className={settingsTab === "roles" ? "active" : "ghost"} onClick={() => setSettingsTab("roles")}>Roles</button>
+               <button className={settingsTab === "invites" ? "active" : "ghost"} onClick={() => setSettingsTab("invites")}>Invites</button>
+@@ -3802,6 +4091,25 @@ export function App() {
+                 </section>
+               )}
+ 
++              {settingsTab === "billing" && (
++                <section className="card">
++                  <h4>OpenCom Boost</h4>
++                  <p className="hint">£10/month · 100MB upload limit · Unlimited servers. More Boost features are coming soon.</p>
++                  {boostLoading && <p className="hint">Loading billing status…</p>}
++                  {boostStatus && (
++                    <>
++                      <p className="hint">Status: {boostStatus.active ? "Active" : "Inactive"}{boostStatus.currentPeriodEnd ? ` · Renews ${new Date(boostStatus.currentPeriodEnd).toLocaleDateString()}` : ""}</p>
++                      {!boostStatus.stripeConfigured && <p className="hint">Stripe is not configured on this server yet.</p>}
++                    </>
++                  )}
++                  <div className="row-actions">
++                    <button onClick={startBoostCheckout}>Subscribe to OpenCom Boost</button>
++                    <button className="ghost" onClick={openBoostPortal}>Manage Subscription</button>
++                    <button className="ghost" onClick={loadBoostStatus}>Refresh</button>
++                  </div>
++                </section>
++              )}
++
+               {settingsTab === "security" && (
+                 <>
+                   <section className="card security-card">
