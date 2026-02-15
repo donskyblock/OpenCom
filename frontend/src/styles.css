@@ -1015,6 +1015,22 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 .msg-time { color: var(--text-dim); font-size: 0.85em; margin-left: 0.5em;}
 .msg-body {min-width: 0;}
 .msg p { margin: 4px 0 0; overflow-wrap: anywhere; word-break: break-word;}
+.message-mention {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.3em;
+  border-radius: 0.35em;
+  background: rgba(125, 164, 255, 0.2);
+  color: #b9cfff;
+}
+.mention-click {
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+.mention-click:hover {
+  background: rgba(125, 164, 255, 0.32);
+}
 
 .empty { text-align: center; color: var(--text-dim); margin-top: 2vw;}
 
