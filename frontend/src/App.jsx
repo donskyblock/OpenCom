@@ -39,7 +39,20 @@ function isVoiceDebugEnabled() {
 function getLastSuccessfulGateway(candidates, storageKey) {
   return prioritizeLastSuccessfulGateway(candidates, storageKey);
 }
+function DownloadButton() {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef(null);
 
+  // Close menu if clicked outside
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
 function normalizeGatewayWsUrl(value) {
   if (!value || typeof value !== "string") return "";
@@ -3071,12 +3084,35 @@ export function App() {
               </div>
             </section>
             <section className="landing-cta">
-              <div className="landing-cta-download">
+              <div className="landing-cta-download" ref={menuRef}>
                 <h3>Get the desktop app</h3>
-                <p className="landing-hint">Windows, macOS, and Linux — one install, all your chats.</p>
-                <button type="button" className="landing-btn landing-btn-secondary" disabled title="Coming soon">
-                  Download — Coming soon
-                </button>
+                <p className="landing-hint">
+                  Windows, macOS, and Linux — one install, all your chats.
+                </p>
+
+                <div className="download-wrapper">
+                  <button
+                    type="button"
+                    className="landing-btn landing-btn-secondary"
+                    onClick={() => setOpen(!open)}
+                  >
+                    Download ▼
+                  </button>
+
+                  {open && (
+                    <div className="download-menu">
+                      <a href="/downloads/OpenCom.exe" className="download-item">
+                        Windows (.exe)
+                      </a>
+                      <a href="/downloads/OpenCom.deb" className="download-item">
+                        Linux (.deb)
+                      </a>
+                      <a href="/downloads/OpenCom.tar.gz" className="download-item">
+                        Linux (.tar.gz)
+                      </a>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="landing-cta-client">
                 <h3>Use OpenCom now</h3>
