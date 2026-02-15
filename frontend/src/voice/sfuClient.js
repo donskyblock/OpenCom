@@ -2,7 +2,7 @@ import * as mediasoupClient from "mediasoup-client";
 
 const DEFAULT_TIMEOUT_MS = 10000;
 
-export function createSfuVoiceClient({selfUserId, sendDispatch, waitForEvent, onRemoteAudioAdded, onRemoteAudioRemoved }) {
+export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, waitForEvent, onRemoteAudioAdded, onRemoteAudioRemoved }) {
   const state = {
     sessionToken: 0,
     guildId: "",
@@ -23,6 +23,10 @@ export function createSfuVoiceClient({selfUserId, sendDispatch, waitForEvent, on
     return token === state.sessionToken && !!state.channelId;
   }
 
+  function resolveSelfUserId() {
+    return getSelfUserId?.() || selfUserId || "";
+  }
+
   async function waitDispatch(type, match, timeoutMs = DEFAULT_TIMEOUT_MS) {
     return waitForEvent({ type, match, timeoutMs, guildId: state.guildId, channelId: state.channelId, sessionToken: state.sessionToken });
   }
@@ -36,6 +40,24 @@ export function createSfuVoiceClient({selfUserId, sendDispatch, waitForEvent, on
       sessionToken: state.sessionToken,
       transportId
     });
+  }
+
+  async function waitForVoiceError(timeoutMs = DEFAULT_TIMEOUT_MS) {
+    return waitForEvent({
+      type: "VOICE_ERROR",
+      timeoutMs,
+      guildId: state.guildId,
+      channelId: state.channelId,
+      sessionToken: state.sessionToken
+    });
+  }
+
+  async function waitForVoiceResponse(waitForSuccess, timeoutMs = DEFAULT_TIMEOUT_MS) {
+    const successPromise = waitForSuccess();
+    const errorPromise = waitForVoiceError(timeoutMs).then((errorData) => {
+      throw new Error(`VOICE_ERROR: ${errorData?.error || "UNKNOWN"}`);
+    });
+    return Promise.race([successPromise, errorPromise]);
   }
 
   async function createTransport(direction, token) {
@@ -59,7 +81,9 @@ export function createSfuVoiceClient({selfUserId, sendDispatch, waitForEvent, on
       rtpCapabilities: state.device.rtpCapabilities
     });
 
-    const consumerOptions = await waitDispatch("VOICE_CONSUMED", (d) => d?.producerId === producerId);
+    const consumerOptions = await waitForVoiceResponse(
+      () => waitDispatch("VOICE_CONSUMED", (d) => d?.producerId === producerId)
+    );
     if (!isActive(token)) return;
 
     const consumer = await state.recvTransport.consume(consumerOptions);
@@ -119,7 +143,7 @@ export function createSfuVoiceClient({selfUserId, sendDispatch, waitForEvent, on
           transportId: state.sendTransport.id,
           dtlsParameters
         });
-        await waitForTransportConnected(state.sendTransport.id);
+        await waitForVoiceResponse(() => waitForTransportConnected(state.sendTransport.id));
         callback();
       } catch (error) {
         errback(error);
@@ -134,12 +158,14 @@ export function createSfuVoiceClient({selfUserId, sendDispatch, waitForEvent, on
           kind,
           rtpParameters
         });
-        const produced = await waitDispatch(
-          "VOICE_PRODUCED",
-          (d) =>
-            d?.guildId === state.guildId &&
-            d?.channelId === state.channelId &&
-            d?.userId === selfUserId
+        const produced = await waitForVoiceResponse(
+          () => waitDispatch(
+            "VOICE_PRODUCED",
+            (d) =>
+              d?.guildId === state.guildId &&
+              d?.channelId === state.channelId &&
+              d?.userId === resolveSelfUserId()
+          )
         );
         callback({ id: produced.producerId });
       } catch (error) {
@@ -178,7 +204,7 @@ export function createSfuVoiceClient({selfUserId, sendDispatch, waitForEvent, on
           transportId: state.recvTransport.id,
           dtlsParameters
         });
-        await waitForTransportConnected(state.recvTransport.id);
+        await waitForVoiceResponse(() => waitForTransportConnected(state.recvTransport.id));
         callback();
       } catch (error) {
         errback(error);
@@ -228,7 +254,7 @@ export function createSfuVoiceClient({selfUserId, sendDispatch, waitForEvent, on
 
 
     if (type === "VOICE_NEW_PRODUCER" && data?.producerId) {
-      if (data.userId && data.userId === selfUserId) return; // ignore self
+      if (data.userId && data.userId === resolveSelfUserId()) return; // ignore self
         await consumeProducer(data.producerId, data.userId, state.sessionToken).catch(() => {});
         return;
       }

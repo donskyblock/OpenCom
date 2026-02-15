@@ -367,9 +367,12 @@ export function App() {
   const voiceGatewayCandidatesRef = useRef([]);
   const voiceSpeakingDetectorRef = useRef({ audioCtx: null, stream: null, analyser: null, timer: null, lastSpeaking: false });
   const pendingVoiceEventsRef = useRef(new Map());
+  const selfUserIdRef = useRef("");
+  selfUserIdRef.current = me?.id || "";
   const voiceSfuRef = useRef(null);
   if (!voiceSfuRef.current) {
     voiceSfuRef.current = createSfuVoiceClient({
+      getSelfUserId: () => selfUserIdRef.current,
       sendDispatch: (type, data) => sendNodeVoiceDispatch(type, data),
       waitForEvent: waitForVoiceEvent
     });
@@ -1112,7 +1115,12 @@ export function App() {
 
           if (msg.op === "DISPATCH" && msg.t === "VOICE_ERROR") {
             const error = msg.d?.error || "VOICE_ERROR";
-            rejectPendingVoiceEvents(error);
+            const activeVoiceContext = voiceSfuRef.current?.getContext?.() || {};
+            rejectPendingVoiceEventsByScope({
+              guildId: msg.d?.guildId ?? activeVoiceContext.guildId ?? null,
+              channelId: msg.d?.channelId ?? activeVoiceContext.channelId ?? null,
+              reason: error
+            });
             const message = `Voice connection failed: ${error}`;
             setStatus(message);
             window.alert(message);
@@ -1306,7 +1314,12 @@ export function App() {
   }, [dmNotification]);
 
   useEffect(() => {
-    if (!voiceConnectedChannelId || !activeGuildId || isMuted || isDeafened || !navigator.mediaDevices?.getUserMedia) {
+    const canSendVoiceSpeaking = !!voiceConnectedChannelId
+      && !!activeGuildId
+      && !!nodeGatewayReadyRef.current
+      && nodeGatewayWsRef.current?.readyState === WebSocket.OPEN;
+
+    if (!voiceConnectedChannelId || !activeGuildId || isMuted || isDeafened || !navigator.mediaDevices?.getUserMedia || !canSendVoiceSpeaking) {
       const detector = voiceSpeakingDetectorRef.current;
       if (detector.timer) clearInterval(detector.timer);
       detector.timer = null;
@@ -1319,7 +1332,7 @@ export function App() {
       if (activeGuildId && me?.id) {
         setVoiceSpeakingByGuild((prev) => ({ ...prev, [activeGuildId]: { ...(prev[activeGuildId] || {}), [me.id]: false } }));
       }
-      if (voiceConnectedChannelId && activeGuildId) {
+      if (voiceConnectedChannelId && activeGuildId && canSendVoiceSpeaking) {
         void sendNodeVoiceDispatch("VOICE_SPEAKING", {
           guildId: activeGuildId,
           channelId: voiceConnectedChannelId,
@@ -1369,7 +1382,9 @@ export function App() {
           if (activeGuildId && me?.id) {
             setVoiceSpeakingByGuild((prev) => ({ ...prev, [activeGuildId]: { ...(prev[activeGuildId] || {}), [me.id]: speaking } }));
           }
-          void sendNodeVoiceDispatch("VOICE_SPEAKING", { guildId: activeGuildId, channelId: voiceConnectedChannelId, speaking }).catch(() => {});
+          if (voiceConnectedChannelId && activeGuildId && nodeGatewayReadyRef.current && nodeGatewayWsRef.current?.readyState === WebSocket.OPEN) {
+            void sendNodeVoiceDispatch("VOICE_SPEAKING", { guildId: activeGuildId, channelId: voiceConnectedChannelId, speaking }).catch(() => {});
+          }
         }, 150);
       } catch {
         setStatus("Mic speaking detection unavailable. Check microphone permissions.");
@@ -2461,6 +2476,24 @@ export function App() {
     }
     if (remaining.length) pendingVoiceEventsRef.current.set(msg.t, remaining);
     else pendingVoiceEventsRef.current.delete(msg.t);
+  }
+
+  function rejectPendingVoiceEventsByScope({ guildId = null, channelId = null, reason = "VOICE_REQUEST_CANCELLED" } = {}) {
+    for (const [key, bucket] of pendingVoiceEventsRef.current.entries()) {
+      const remaining = [];
+      for (const pending of bucket) {
+        const guildMatches = !guildId || !pending.guildId || pending.guildId === guildId;
+        const channelMatches = !channelId || !pending.channelId || pending.channelId === channelId;
+        if (guildMatches && channelMatches) {
+          clearTimeout(pending.timeout);
+          pending.reject(new Error(reason));
+          continue;
+        }
+        remaining.push(pending);
+      }
+      if (remaining.length) pendingVoiceEventsRef.current.set(key, remaining);
+      else pendingVoiceEventsRef.current.delete(key);
+    }
   }
 
   function rejectPendingVoiceEvents(reason = "VOICE_REQUEST_CANCELLED") {
