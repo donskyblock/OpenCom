@@ -12,6 +12,7 @@ const Env = z.object({
 
 
   ATTACHMENT_MAX_BYTES: z.coerce.number().default(52428800),
+  ATTACHMENT_BOOST_MAX_BYTES: z.coerce.number().default(104857600),
   ATTACHMENT_TTL_DAYS: z.coerce.number().default(365),
   ATTACHMENT_STORAGE_DIR: z.string().default("./data/attachments"),
   PUBLIC_BASE_URL: z.string().url(),
