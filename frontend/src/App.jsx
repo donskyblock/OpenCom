@@ -2769,19 +2769,17 @@ export function App() {
     let sfuError = null;
     try {
       setStatus(`Joining ${channel.name}...`);
-      if (canUseRealtimeVoiceGateway()) {
-        await voiceSfuRef.current?.join({
-          guildId: activeGuildId,
-          channelId: channel.id,
-          audioInputDeviceId,
-          isMuted,
-          isDeafened,
-          audioOutputDeviceId
-        });
-        setVoiceSession({ guildId: activeGuildId, channelId: channel.id });
-        setStatus(`Joined ${channel.name}.`);
-        return;
-      }
+      await voiceSfuRef.current?.join({
+        guildId: activeGuildId,
+        channelId: channel.id,
+        audioInputDeviceId,
+        isMuted,
+        isDeafened,
+        audioOutputDeviceId
+      });
+      setVoiceSession({ guildId: activeGuildId, channelId: channel.id });
+      setStatus(`Joined ${channel.name}.`);
+      return;
     } catch (error) {
       sfuError = error;
     }
