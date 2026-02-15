@@ -51,20 +51,38 @@ Commands are auto-namespaced by extension id:
 
 ## 3) Use OpenCom APIs (without bot accounts)
 
-Each command receive `ctx.apis`:
+Each command receives `ctx.apis` with both low-level and high-level helpers.
+
+### Low-level methods
 
 - `ctx.apis.core.get/post/patch/del`
 - `ctx.apis.node.get/post/patch/del`
 
-These calls use the invoking authenticated user token automatically.
+### High-level helpers
+
+You can now access most API domains directly instead of manually managing endpoint strings:
+
+- `ctx.apis.auth.*`
+- `ctx.apis.profiles.*`
+- `ctx.apis.social.*`
+- `ctx.apis.dms.*`
+- `ctx.apis.servers.*`
+- `ctx.apis.nodeGuilds.*`
+- `ctx.apis.channels.*`
+- `ctx.apis.messages.*`
+- `ctx.apis.voice.*`
+- `ctx.apis.extensions.*`
 
 ```js
 async execute(ctx) {
-  const me = await ctx.apis.node.get("/v1/me");
-  const servers = await ctx.apis.core.get("/v1/servers");
-  return { me, servers };
+  const me = await ctx.apis.auth.me();
+  const servers = await ctx.apis.servers.list();
+  const guildChannels = await ctx.apis.nodeGuilds.channels("guild_123");
+  return { me, servers, guildChannels };
 }
 ```
+
+These calls use the invoking authenticated user token automatically.
 
 ## 4) Runtime endpoints for command integration
 
@@ -85,9 +103,16 @@ Execute body:
 
 ## 5) Enable extension per server
 
-Use the **Server Admin Panel → Extensions** tab to enable/disable reviewed extensions for each server.
+Use the **Server Admin Panel → Extensions** tab to enable/disable reviewed server extensions for each server.
 
-## 6) Publish SDK
+## 6) Client extensions in app settings
+
+Client-only extensions are loaded from **Settings → Extensions** in the main client app.
+
+- Toggle reviewed client extensions from the catalog.
+- Optional **Developer Mode** lets you add custom extension script URLs for local/testing builds.
+
+## 7) Publish SDK
 
 The SDK lives at `Extensions/lib` and is published by GitHub Actions workflow `publish-extension-sdk.yml`.
 

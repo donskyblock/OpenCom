@@ -29,6 +29,9 @@ const LAST_CORE_GATEWAY_KEY = "opencom_last_core_gateway";
 const LAST_SERVER_GATEWAY_KEY = "opencom_last_server_gateway";
 const FALLBACK_CORE_GATEWAY_WS_URL = "wss://ws.opencom.online/gateway";
 const DEBUG_VOICE_STORAGE_KEY = "opencom_debug_voice";
+const CLIENT_EXTENSIONS_ENABLED_KEY = "opencom_client_extensions_enabled";
+const CLIENT_EXTENSIONS_DEV_MODE_KEY = "opencom_client_extensions_dev_mode";
+const CLIENT_EXTENSIONS_DEV_URLS_KEY = "opencom_client_extensions_dev_urls";
 const DOWNLOAD_REPOSITORY = import.meta.env.VITE_BUILD_REPOSITORY || "donskyblock/OpenCom";
 const DOWNLOAD_BRANCH = import.meta.env.VITE_BUILD_BRANCH || "main";
 const DOWNLOAD_BASE_URL = (import.meta.env.VITE_BUILD_BASE_URL
@@ -233,6 +236,11 @@ function getStoredJson(key, fallback) {
   }
 }
 
+function getStoredStringArray(key) {
+  const value = getStoredJson(key, []);
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string" && item.trim()) : [];
+}
+
 function getInitials(value = "") {
   const cleaned = value.trim();
   if (!cleaned) return "OC";
@@ -422,6 +430,12 @@ export function App() {
   const [voiceSpeakingByGuild, setVoiceSpeakingByGuild] = useState({});
   const [serverVoiceGatewayPrefs, setServerVoiceGatewayPrefs] = useState(getStoredJson(SERVER_VOICE_GATEWAY_PREFS_KEY, {}));
   const [nodeGatewayUnavailableByServer, setNodeGatewayUnavailableByServer] = useState({});
+  const [clientExtensionCatalog, setClientExtensionCatalog] = useState([]);
+  const [enabledClientExtensions, setEnabledClientExtensions] = useState(getStoredStringArray(CLIENT_EXTENSIONS_ENABLED_KEY));
+  const [clientExtensionDevMode, setClientExtensionDevMode] = useState(localStorage.getItem(CLIENT_EXTENSIONS_DEV_MODE_KEY) === "1");
+  const [clientExtensionDevUrls, setClientExtensionDevUrls] = useState(getStoredStringArray(CLIENT_EXTENSIONS_DEV_URLS_KEY));
+  const [newClientExtensionDevUrl, setNewClientExtensionDevUrl] = useState("");
+  const [clientExtensionLoadState, setClientExtensionLoadState] = useState({});
 
   const messagesRef = useRef(null);
   const gatewayWsRef = useRef(null);
@@ -465,6 +479,8 @@ export function App() {
   const activeChannelIdRef = useRef("");
   const profileCardDragOffsetRef = useRef({ x: 0, y: 0 });
   const downloadMenuRef = useRef(null);
+  const loadedClientExtensionIdsRef = useRef(new Set());
+  const extensionPanelsRef = useRef([]);
   const storageScope = me?.id || "anonymous";
 
   useEffect(() => {
@@ -486,6 +502,111 @@ export function App() {
       document.removeEventListener("keydown", closeDownloadsMenuOnEscape);
     };
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem(CLIENT_EXTENSIONS_ENABLED_KEY, JSON.stringify(enabledClientExtensions));
+  }, [enabledClientExtensions]);
+
+  useEffect(() => {
+    localStorage.setItem(CLIENT_EXTENSIONS_DEV_MODE_KEY, clientExtensionDevMode ? "1" : "0");
+  }, [clientExtensionDevMode]);
+
+  useEffect(() => {
+    localStorage.setItem(CLIENT_EXTENSIONS_DEV_URLS_KEY, JSON.stringify(clientExtensionDevUrls));
+  }, [clientExtensionDevUrls]);
+
+  useEffect(() => {
+    if (!accessToken) {
+      setClientExtensionCatalog([]);
+      return;
+    }
+
+    api("/v1/extensions/catalog", { headers: { Authorization: `Bearer ${accessToken}` } })
+      .then((data) => setClientExtensionCatalog(data.clientExtensions || []))
+      .catch(() => setClientExtensionCatalog([]));
+  }, [accessToken]);
+
+  async function loadClientExtensionSource({ extensionId, extensionName, devUrl }) {
+    if (devUrl) {
+      const response = await fetch(devUrl);
+      if (!response.ok) throw new Error(`HTTP_${response.status}`);
+      return response.text();
+    }
+
+    const response = await fetch(`${CORE_API}/v1/extensions/client/${encodeURIComponent(extensionId)}/source`, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    if (!response.ok) throw new Error(`HTTP_${response.status}`);
+    return response.text();
+  }
+
+  async function loadClientExtensionRuntime({ extensionId, extensionName, devUrl }) {
+    const source = await loadClientExtensionSource({ extensionId, extensionName, devUrl });
+    const blob = new Blob([source], { type: "application/javascript" });
+    const moduleUrl = URL.createObjectURL(blob);
+
+    try {
+      const extensionModule = await import(/* @vite-ignore */ moduleUrl);
+      const activate = extensionModule?.activateClient || extensionModule?.default;
+      if (typeof activate !== "function") throw new Error("Missing activateClient export");
+
+      const extensionApi = {
+        registerPanel: (panel) => {
+          extensionPanelsRef.current.push(panel);
+        },
+        coreApi: (path, options = {}) => api(path, {
+          ...options,
+          headers: { Authorization: `Bearer ${accessToken}`, ...(options.headers || {}) }
+        }),
+        getSelf: () => me,
+        setStatus
+      };
+
+      await Promise.resolve(activate(extensionApi));
+    } finally {
+      URL.revokeObjectURL(moduleUrl);
+    }
+  }
+
+  useEffect(() => {
+    if (!accessToken) return;
+
+    const requested = [
+      ...enabledClientExtensions.map((id) => ({ id, extensionId: id, extensionName: id, devUrl: null })),
+      ...(clientExtensionDevMode
+        ? clientExtensionDevUrls.map((url, index) => ({
+            id: `dev:${url}` ,
+            extensionId: `dev-extension-${index + 1}` ,
+            extensionName: `Developer Extension ${index + 1}` ,
+            devUrl: url
+          }))
+        : [])
+    ];
+
+    requested.forEach((entry) => {
+      if (loadedClientExtensionIdsRef.current.has(entry.id)) return;
+      loadedClientExtensionIdsRef.current.add(entry.id);
+      setClientExtensionLoadState((current) => ({ ...current, [entry.id]: "loading" }));
+
+      loadClientExtensionRuntime(entry)
+        .then(() => setClientExtensionLoadState((current) => ({ ...current, [entry.id]: "loaded" })))
+        .catch((error) => setClientExtensionLoadState((current) => ({ ...current, [entry.id]: `error:${error.message}` })));
+    });
+  }, [accessToken, enabledClientExtensions, clientExtensionDevMode, clientExtensionDevUrls, me]);
+
+  function toggleClientExtension(extensionId, enabled) {
+    setEnabledClientExtensions((current) => {
+      if (enabled) return current.includes(extensionId) ? current : [...current, extensionId];
+      return current.filter((id) => id !== extensionId);
+    });
+  }
+
+  function addClientDevExtensionUrl() {
+    const trimmed = newClientExtensionDevUrl.trim();
+    if (!trimmed) return;
+    setClientExtensionDevUrls((current) => (current.includes(trimmed) ? current : [...current, trimmed]));
+    setNewClientExtensionDevUrl("");
+  }
 
   // Resolve usernames and profile pictures from core for guild members and message authors
   useEffect(() => {
@@ -3858,6 +3979,7 @@ export function App() {
               <button className={settingsTab === "roles" ? "active" : "ghost"} onClick={() => setSettingsTab("roles")}>Roles</button>
               <button className={settingsTab === "invites" ? "active" : "ghost"} onClick={() => setSettingsTab("invites")}>Invites</button>
               <button className={settingsTab === "appearance" ? "active" : "ghost"} onClick={() => setSettingsTab("appearance")}>Appearance</button>
+              <button className={settingsTab === "extensions" ? "active" : "ghost"} onClick={() => setSettingsTab("extensions")}>Extensions</button>
               <button className={settingsTab === "voice" ? "active" : "ghost"} onClick={() => setSettingsTab("voice")}>Voice</button>
               {servers.some(s => s.roles.includes("owner")) && (
                 <a href="/server-admin.html" target="_blank" style={{ display: "block", padding: "var(--space-sm) var(--space-md)", background: "rgba(149, 168, 205, 0.12)", border: "1px solid rgba(125, 164, 255, 0.25)", borderRadius: "calc(var(--radius) * 0.9)", color: "var(--text-main)", textDecoration: "none", textAlign: "center", fontWeight: "500", cursor: "pointer", fontSize: "0.95em" }}>🔧 Server Admin Panel</a>
@@ -4046,6 +4168,82 @@ export function App() {
                           <input readOnly className="invite-link-input" value={`${typeof window !== "undefined" ? window.location.origin + (window.location.pathname || "/") : ""}?join=${encodeURIComponent(inviteCode)}`} />
                           <button type="button" onClick={() => { const u = `${window.location.origin}${window.location.pathname || "/"}?join=${encodeURIComponent(inviteCode)}`; navigator.clipboard.writeText(u).then(() => setStatus("Invite link copied.")).catch(() => setStatus("Could not copy.")); }}>Copy link</button>
                         </div>
+                      </>
+                    )}
+                  </section>
+                </>
+              )}
+
+              {settingsTab === "extensions" && (
+                <>
+                  <section className="card">
+                    <h4>Client Extensions</h4>
+                    <p className="hint">Enable reviewed client-only extensions from the catalog. Extensions run in your client session.</p>
+                    {!clientExtensionCatalog.length ? (
+                      <p className="hint">No client extensions found in the catalog.</p>
+                    ) : (
+                      <ul className="channel-perms-role-list">
+                        {clientExtensionCatalog.map((ext) => {
+                          const checked = enabledClientExtensions.includes(ext.id);
+                          return (
+                            <li key={ext.id}>
+                              <label>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(event) => toggleClientExtension(ext.id, event.target.checked)}
+                                />
+                                <strong>{ext.name}</strong>
+                                <span className="hint"> · {ext.id} · {ext.version || "0.1.0"}</span>
+                              </label>
+                              {ext.description && <p className="hint" style={{ margin: "4px 0 0 24px" }}>{ext.description}</p>}
+                              {clientExtensionLoadState[ext.id] && <p className="hint" style={{ margin: "2px 0 0 24px" }}>Status: {clientExtensionLoadState[ext.id]}</p>}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </section>
+
+                  <section className="card">
+                    <h4>Developer Mode</h4>
+                    <label style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <input
+                        type="checkbox"
+                        checked={clientExtensionDevMode}
+                        onChange={(event) => setClientExtensionDevMode(event.target.checked)}
+                      />
+                      Enable local/testing extension URLs
+                    </label>
+                    <p className="hint">Use this while developing extensions. Add one URL per extension entry script.</p>
+
+                    {clientExtensionDevMode && (
+                      <>
+                        <div className="row-actions" style={{ marginTop: "8px" }}>
+                          <input
+                            placeholder="http://localhost:5174/my-extension.js"
+                            value={newClientExtensionDevUrl}
+                            onChange={(event) => setNewClientExtensionDevUrl(event.target.value)}
+                            style={{ flex: 1 }}
+                          />
+                          <button onClick={addClientDevExtensionUrl}>Add URL</button>
+                        </div>
+
+                        <ul className="channel-perms-role-list" style={{ marginTop: "10px" }}>
+                          {clientExtensionDevUrls.map((url) => (
+                            <li key={url}>
+                              <span style={{ wordBreak: "break-all" }}>{url}</span>
+                              <button
+                                className="ghost"
+                                style={{ marginLeft: "8px" }}
+                                onClick={() => setClientExtensionDevUrls((current) => current.filter((item) => item !== url))}
+                              >
+                                Remove
+                              </button>
+                              {clientExtensionLoadState[`dev:${url}`] && <p className="hint" style={{ margin: "4px 0 0 0" }}>Status: {clientExtensionLoadState[`dev:${url}`]}</p>}
+                            </li>
+                          ))}
+                        </ul>
                       </>
                     )}
                   </section>
