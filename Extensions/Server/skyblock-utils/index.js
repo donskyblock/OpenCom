@@ -53,7 +53,7 @@ export const commands = [
     async execute(ctx) {
         const username = String(ctx.args?.username);
         const skill = String(ctx.args?.slayer);
-        const skillLevel = getsSlayerLevel(username, skill);
+        const skillLevel = getSkillLevel(username, skill);
         const input = `${username}'s ${skill} level is ${skillLevel}`;
         const me = await ctx.apis.node.get("/v1/me").catch(() => null);
         return {
