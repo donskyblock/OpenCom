@@ -70,7 +70,7 @@ export const commands = [
     async execute(ctx) {
         const username = String(ctx.args?.username);
         const slayer = String(ctx.args?.slayer);
-        const slayerLevel = getSlayerLevel(username, slayer);
+        const slayerLevel = await getSlayerLevel(username, slayer);
         const input = `${username}'s ${slayer} slayer level is ${slayerLevel}`;
         const me = await ctx.apis.node.get("/v1/me").catch(() => null);
       return {
@@ -87,7 +87,7 @@ export const commands = [
     async execute(ctx) {
         const username = String(ctx.args?.username);
         const skill = String(ctx.args?.slayer);
-        const skillLevel = getSkillLevel(username, skill);
+        const skillLevel = await getSkillLevel(username, skill);
         const input = `${username}'s ${skill} level is ${skillLevel}`;
         const me = await ctx.apis.node.get("/v1/me").catch(() => null);
         return {
@@ -103,7 +103,7 @@ export const commands = [
     options: [optionString("username", "Minecraft username", true)],
     async execute(ctx) {
         const username = String(ctx.args?.username);
-        const cata = getDungeonLevel(username);
+        const cata = await getDungeonLevel(username);
         const input = `${username} is catacombs ${cata}`;
         const me = await ctx.apis.node.get("/v1/me").catch(() => null);
         return {
