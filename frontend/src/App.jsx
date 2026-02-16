@@ -472,6 +472,25 @@ function formatMessageTime(value) {
   return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+function getMessageDayKey(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+}
+
+function formatMessageDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric"
+  });
+}
+
 function playNotificationBeep(mute = false) {
   if (mute) return;
   try {
@@ -599,6 +618,8 @@ export function App() {
   const [serverContextMenu, setServerContextMenu] = useState(null);
   const [messageContextMenu, setMessageContextMenu] = useState(null);
   const [memberContextMenu, setMemberContextMenu] = useState(null);
+  const [channelContextMenu, setChannelContextMenu] = useState(null);
+  const [categoryContextMenu, setCategoryContextMenu] = useState(null);
   const [replyTarget, setReplyTarget] = useState(null);
   const [serverPingCounts, setServerPingCounts] = useState({});
   const [memberProfileCard, setMemberProfileCard] = useState(null);
@@ -1317,6 +1338,8 @@ export function App() {
       setServerContextMenu(null);
       setMessageContextMenu(null);
       setMemberContextMenu(null);
+      setChannelContextMenu(null);
+      setCategoryContextMenu(null);
       if (!settingsOpen) setMemberProfileCard(null);
     };
     const onEscape = (event) => {
@@ -1324,6 +1347,8 @@ export function App() {
         setServerContextMenu(null);
         setMessageContextMenu(null);
         setMemberContextMenu(null);
+        setChannelContextMenu(null);
+        setCategoryContextMenu(null);
         setMemberProfileCard(null);
         setSettingsOpen(false);
       }
@@ -2987,23 +3012,133 @@ export function App() {
     }
   }
 
+  const VIEW_CHANNEL_BIT = 1;
+  const SEND_MESSAGES_BIT = 2;
+
+  function parseRoleInputToIds(raw = "") {
+    const tokens = raw.split(",").map((item) => item.trim()).filter(Boolean);
+    if (!tokens.length) return [];
+    const rolePool = (guildState?.roles || []).filter((role) => !role.is_everyone);
+    const byId = new Map(rolePool.map((role) => [String(role.id).toLowerCase(), role.id]));
+    const byName = new Map(rolePool.map((role) => [String(role.name || "").toLowerCase(), role.id]));
+    const picked = [];
+    for (const token of tokens) {
+      const key = token.toLowerCase();
+      const roleId = byId.get(key) || byName.get(key);
+      if (roleId && !picked.includes(roleId)) picked.push(roleId);
+    }
+    return picked;
+  }
+
+  async function applyPrivateVisibilityToChannel(channelId, allowedRoleIds = [], server = activeServer, guildId = activeGuildId) {
+    if (!server || !guildId || !channelId) return;
+    const everyoneRole = (guildState?.roles || []).find((role) => role.is_everyone);
+    if (!everyoneRole) throw new Error("EVERYONE_ROLE_NOT_FOUND");
+
+    await nodeApi(server.baseUrl, `/v1/channels/${channelId}/overwrites`, server.membershipToken, {
+      method: "PUT",
+      body: JSON.stringify({
+        targetType: "role",
+        targetId: everyoneRole.id,
+        allow: "0",
+        deny: String(VIEW_CHANNEL_BIT)
+      })
+    });
+
+    for (const roleId of allowedRoleIds) {
+      await nodeApi(server.baseUrl, `/v1/channels/${channelId}/overwrites`, server.membershipToken, {
+        method: "PUT",
+        body: JSON.stringify({
+          targetType: "role",
+          targetId: roleId,
+          allow: String(VIEW_CHANNEL_BIT),
+          deny: "0"
+        })
+      });
+    }
+  }
+
+  async function createChannelWithOptions({ server = activeServer, guildId = activeGuildId, name, type = "text", parentId = "", privateRoleIds = null }) {
+    if (!server || !guildId || !name?.trim()) return null;
+
+    const payload = { name: name.trim(), type };
+    if (type !== "category" && parentId) payload.parentId = parentId;
+
+    const created = await nodeApi(server.baseUrl, `/v1/guilds/${guildId}/channels`, server.membershipToken, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+
+    const channelId = created?.channelId;
+    if (channelId && Array.isArray(privateRoleIds)) {
+      await applyPrivateVisibilityToChannel(channelId, privateRoleIds, server, guildId);
+    }
+
+    if (server.id === activeServerId && guildId === activeGuildId) {
+      const state = await nodeApi(server.baseUrl, `/v1/guilds/${guildId}/state`, server.membershipToken);
+      setGuildState(state);
+    }
+
+    return channelId;
+  }
+
+  async function promptCreateChannelFlow({ server = activeServer, guildId = activeGuildId, fixedType = "", fixedParentId = "" } = {}) {
+    if (!server || !guildId) return;
+
+    const type = fixedType || (window.prompt("Channel type: text, voice, or category", "text") || "").trim().toLowerCase();
+    if (!["text", "voice", "category"].includes(type)) {
+      setStatus("Invalid channel type.");
+      return;
+    }
+
+    const suggestedName = type === "category" ? "New Category" : `new-${type}`;
+    const name = (window.prompt(`Name for the new ${type}:`, suggestedName) || "").trim();
+    if (!name) return;
+
+    let parentId = fixedParentId || "";
+    if (type !== "category" && !fixedParentId) {
+      const parentName = (window.prompt("Optional category name/ID (leave blank for none):", "") || "").trim();
+      if (parentName) {
+        const parent = (categoryChannels || []).find((cat) => cat.id === parentName || String(cat.name || "").toLowerCase() === parentName.toLowerCase());
+        if (!parent) {
+          setStatus("Category not found.");
+          return;
+        }
+        parentId = parent.id;
+      }
+    }
+
+    let privateRoleIds = null;
+    if (type === "category") {
+      const makePrivate = window.confirm("Make this category private?");
+      if (makePrivate) {
+        const roleList = (guildState?.roles || []).filter((role) => !role.is_everyone).map((role) => role.name).join(", ");
+        const rawRoles = window.prompt(`Allowed roles (comma-separated names or IDs).\nAvailable: ${roleList}`, "") || "";
+        privateRoleIds = parseRoleInputToIds(rawRoles);
+      }
+    }
+
+    try {
+      await createChannelWithOptions({ server, guildId, name, type, parentId, privateRoleIds });
+      setStatus(`${type === "category" ? "Category" : "Channel"} created.`);
+    } catch (error) {
+      setStatus(`Create channel failed: ${error.message}`);
+    }
+  }
+
   async function createChannel() {
     if (!activeServer || !activeGuildId || !newChannelName.trim()) return;
     try {
-      const payload = { name: newChannelName.trim(), type: newChannelType };
-      if (newChannelType !== "category" && newChannelParentId) payload.parentId = newChannelParentId;
-
-      await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/channels`, activeServer.membershipToken, {
-        method: "POST",
-        body: JSON.stringify(payload)
+      await createChannelWithOptions({
+        server: activeServer,
+        guildId: activeGuildId,
+        name: newChannelName,
+        type: newChannelType,
+        parentId: newChannelType !== "category" ? newChannelParentId : ""
       });
-
       setNewChannelName("");
       setNewChannelParentId("");
       setStatus("Channel created.");
-
-      const state = await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/state`, activeServer.membershipToken);
-      setGuildState(state);
     } catch (error) {
       setStatus(`Create channel failed: ${error.message}`);
     }
@@ -3106,9 +3241,6 @@ export function App() {
       setStatus(`Move category failed: ${e.message}`);
     }
   }
-
-  const SEND_MESSAGES_BIT = 2;
-  const VIEW_CHANNEL_BIT = 1;
 
   async function setChannelRoleSend(channelId, roleId, canSend) {
     if (!activeServer || !channelId || !roleId) return;
@@ -3278,7 +3410,96 @@ export function App() {
     event.preventDefault();
     setMessageContextMenu(null);
     setMemberContextMenu(null);
+    setChannelContextMenu(null);
+    setCategoryContextMenu(null);
     setServerContextMenu({ server, x: event.clientX, y: event.clientY });
+  }
+
+  function openChannelContextMenu(event, channel) {
+    event.preventDefault();
+    setServerContextMenu(null);
+    setMessageContextMenu(null);
+    setMemberContextMenu(null);
+    setCategoryContextMenu(null);
+    setChannelContextMenu({ channel, x: event.clientX, y: event.clientY });
+  }
+
+  function openCategoryContextMenu(event, category) {
+    event.preventDefault();
+    setServerContextMenu(null);
+    setMessageContextMenu(null);
+    setMemberContextMenu(null);
+    setChannelContextMenu(null);
+    setCategoryContextMenu({ category, x: event.clientX, y: event.clientY });
+  }
+
+  async function saveChannelName(channelId, currentName) {
+    if (!activeServer || !activeGuildId) return;
+    const nextName = (window.prompt("Channel name:", currentName || "") || "").trim();
+    if (!nextName || nextName === currentName) return;
+    await nodeApi(activeServer.baseUrl, `/v1/channels/${channelId}`, activeServer.membershipToken, {
+      method: "PATCH",
+      body: JSON.stringify({ name: nextName })
+    });
+  }
+
+  async function setChannelVisibilityByRoles(channelId) {
+    if (!activeServer || !activeGuildId || !channelId) return;
+    const roleList = (guildState?.roles || []).filter((role) => !role.is_everyone).map((role) => role.name).join(", ");
+    const rawRoles = window.prompt(`Visible to roles (comma-separated names or IDs). Leave blank to keep private for admins only.\nAvailable: ${roleList}`, "");
+    if (rawRoles == null) return;
+    const allowedRoleIds = parseRoleInputToIds(rawRoles);
+    await applyPrivateVisibilityToChannel(channelId, allowedRoleIds, activeServer, activeGuildId);
+  }
+
+  async function openChannelSettings(channel) {
+    if (!channel || !canManageServer || !activeServer || !activeGuildId) return;
+    try {
+      await saveChannelName(channel.id, channel.name);
+      if (window.confirm("Configure visibility (private roles) for this channel/category?")) {
+        await setChannelVisibilityByRoles(channel.id);
+      }
+      const state = await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/state`, activeServer.membershipToken);
+      setGuildState(state);
+      setStatus("Channel settings updated.");
+    } catch (error) {
+      setStatus(`Update channel failed: ${error.message}`);
+    } finally {
+      setChannelContextMenu(null);
+      setCategoryContextMenu(null);
+    }
+  }
+
+  async function deleteChannelById(channel) {
+    if (!channel || !canManageServer || !activeServer || !activeGuildId) return;
+    const kind = channel.type === "category" ? "category" : "channel";
+    if (!window.confirm(`Delete ${kind} "${channel.name}"?`)) return;
+
+    try {
+      if (channel.type === "category") {
+        const children = (guildState?.channels || []).filter((item) => item.parent_id === channel.id);
+        for (const child of children) {
+          await nodeApi(activeServer.baseUrl, `/v1/channels/${child.id}`, activeServer.membershipToken, {
+            method: "PATCH",
+            body: JSON.stringify({ parentId: null })
+          });
+        }
+      }
+
+      await nodeApi(activeServer.baseUrl, `/v1/channels/${channel.id}`, activeServer.membershipToken, {
+        method: "DELETE"
+      });
+
+      if (activeChannelId === channel.id) setActiveChannelId("");
+      const state = await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/state`, activeServer.membershipToken);
+      setGuildState(state);
+      setStatus(`${kind[0].toUpperCase()}${kind.slice(1)} deleted.`);
+    } catch (error) {
+      setStatus(`Delete channel failed: ${error.message}`);
+    } finally {
+      setChannelContextMenu(null);
+      setCategoryContextMenu(null);
+    }
   }
 
   async function copyServerId(serverId) {
@@ -3761,6 +3982,8 @@ export function App() {
     event.preventDefault();
     const x = Math.min(event.clientX, window.innerWidth - 240);
     const y = Math.min(event.clientY, window.innerHeight - 180);
+    setChannelContextMenu(null);
+    setCategoryContextMenu(null);
     setMemberContextMenu(null);
     setMessageContextMenu({ x, y, message: { ...message, pinned: isMessagePinned(message) } });
   }
@@ -3772,6 +3995,8 @@ export function App() {
     const x = Math.min(event.clientX, window.innerWidth - 250);
     const y = Math.min(event.clientY, window.innerHeight - 220);
     setServerContextMenu(null);
+    setChannelContextMenu(null);
+    setCategoryContextMenu(null);
     setMessageContextMenu(null);
     setMemberContextMenu({ x, y, member });
   }
@@ -4226,74 +4451,110 @@ export function App() {
                 const isCollapsed = collapsedCategories[category.id];
                 return (
                   <div className="category-block" key={category.id}>
-                    <button
-                      className={`category-header ${categoryDragId === category.id ? "channel-dragging" : ""}`}
-                      draggable={canManageServer && category.id !== "uncategorized"}
-                      onDragStart={() => canManageServer && category.id !== "uncategorized" && setCategoryDragId(category.id)}
-                      onDragOver={(e) => { e.preventDefault(); if (category.id !== "uncategorized") e.currentTarget.classList.add("channel-drop-target"); }}
-                      onDragLeave={(e) => e.currentTarget.classList.remove("channel-drop-target")}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        e.currentTarget.classList.remove("channel-drop-target");
-                        if (canManageServer && categoryDragId && category.id !== "uncategorized" && categoryDragId !== category.id) {
-                          handleCategoryDrop(categoryDragId, category.id);
-                        }
-                      }}
-                      onDragEnd={() => setCategoryDragId(null)}
-                      onClick={() => toggleCategory(category.id)}
-                    >
-                      <span className="chevron">{isCollapsed ? "▸" : "▾"}</span>{category.name}
-                    </button>
+                    <div className="category-header-row">
+                      <button
+                        className={`category-header ${categoryDragId === category.id ? "channel-dragging" : ""}`}
+                        draggable={canManageServer && category.id !== "uncategorized"}
+                        onDragStart={() => canManageServer && category.id !== "uncategorized" && setCategoryDragId(category.id)}
+                        onDragOver={(e) => { e.preventDefault(); if (category.id !== "uncategorized") e.currentTarget.classList.add("channel-drop-target"); }}
+                        onDragLeave={(e) => e.currentTarget.classList.remove("channel-drop-target")}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          e.currentTarget.classList.remove("channel-drop-target");
+                          if (canManageServer && categoryDragId && category.id !== "uncategorized" && categoryDragId !== category.id) {
+                            handleCategoryDrop(categoryDragId, category.id);
+                          }
+                        }}
+                        onDragEnd={() => setCategoryDragId(null)}
+                        onClick={() => toggleCategory(category.id)}
+                        onContextMenu={(event) => category.id !== "uncategorized" && canManageServer && openCategoryContextMenu(event, category)}
+                      >
+                        <span className="chevron">{isCollapsed ? "▸" : "▾"}</span>{category.name}
+                      </button>
+                      {canManageServer && category.id !== "uncategorized" && (
+                        <div className="category-actions">
+                          <button
+                            type="button"
+                            className="channel-action-btn"
+                            title="Create channel in category"
+                            onClick={() => promptCreateChannelFlow({ fixedType: "text", fixedParentId: category.id })}
+                          >
+                            ＋
+                          </button>
+                          <button
+                            type="button"
+                            className="channel-action-btn"
+                            title="Category settings"
+                            onClick={() => openChannelSettings(category)}
+                          >
+                            ⚙
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     {!isCollapsed && (
                       <div className="category-items">
                         {items.map((channel) => (
                           <div key={channel.id}>
-                          <button
-                            className={`channel-row ${channel.id === activeChannelId ? "active" : ""} ${channelDragId === channel.id ? "channel-dragging" : ""}`}
-                            draggable={canManageServer}
-                            onDragStart={() => canManageServer && setChannelDragId(channel.id)}
-                            onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add("channel-drop-target"); }}
-                            onDragLeave={(e) => e.currentTarget.classList.remove("channel-drop-target")}
-                            onDrop={(e) => {
-                              e.preventDefault();
-                              e.currentTarget.classList.remove("channel-drop-target");
-                              if (canManageServer && channelDragId && channelDragId !== channel.id) handleChannelDrop(channelDragId, channel.id, items);
-                            }}
-                            onDragEnd={() => setChannelDragId(null)}
-                            onClick={() => {
-                              if (channel.type === "text") {
-                                setActiveChannelId(channel.id);
-                                return;
-                              }
-                              if (channel.type === "voice") joinVoiceChannel(channel);
-                            }}
-                          >
-                            <span className="channel-hash">{channel.type === "voice" ? "🔊" : "#"}</span>
-                            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", minWidth: 0 }}>
-                              <span>{channel.name}</span>
-                              {channel.type === "voice" && (voiceMembersByChannel.get(channel.id)?.length || 0) > 0 && (
-                                <span className="hint" style={{ fontSize: "11px" }}>
-                                  {voiceMembersByChannel.get(channel.id).length} connected
+                            <div className="channel-row-wrap">
+                              <button
+                                className={`channel-row ${channel.id === activeChannelId ? "active" : ""} ${channelDragId === channel.id ? "channel-dragging" : ""}`}
+                                draggable={canManageServer}
+                                onDragStart={() => canManageServer && setChannelDragId(channel.id)}
+                                onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add("channel-drop-target"); }}
+                                onDragLeave={(e) => e.currentTarget.classList.remove("channel-drop-target")}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  e.currentTarget.classList.remove("channel-drop-target");
+                                  if (canManageServer && channelDragId && channelDragId !== channel.id) handleChannelDrop(channelDragId, channel.id, items);
+                                }}
+                                onDragEnd={() => setChannelDragId(null)}
+                                onContextMenu={(event) => canManageServer && openChannelContextMenu(event, channel)}
+                                onClick={() => {
+                                  if (channel.type === "text") {
+                                    setActiveChannelId(channel.id);
+                                    return;
+                                  }
+                                  if (channel.type === "voice") joinVoiceChannel(channel);
+                                }}
+                              >
+                                <span className="channel-hash">{channel.type === "voice" ? "🔊" : "#"}</span>
+                                <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", minWidth: 0 }}>
+                                  <span>{channel.name}</span>
+                                  {channel.type === "voice" && (voiceMembersByChannel.get(channel.id)?.length || 0) > 0 && (
+                                    <span className="hint" style={{ fontSize: "11px" }}>
+                                      {voiceMembersByChannel.get(channel.id).length} connected
+                                    </span>
+                                  )}
                                 </span>
+                              </button>
+                              {canManageServer && (
+                                <button
+                                  type="button"
+                                  className="channel-action-btn channel-row-cog"
+                                  title="Channel settings"
+                                  onClick={() => openChannelSettings(channel)}
+                                >
+                                  ⚙
+                                </button>
                               )}
-                            </span>
-                          </button>
-                          {channel.type === "voice" && (voiceMembersByChannel.get(channel.id)?.length || 0) > 0 && (
-                            <div className="voice-channel-members">
-                              {voiceMembersByChannel.get(channel.id).map((member) => {
-                                const speaking = !!voiceSpeakingByGuild[activeGuildId]?.[member.userId];
-                                return (
-                                  <div key={`${channel.id}-${member.userId}`} className="voice-channel-member-row">
-                                    <div className={`avatar member-avatar vc-avatar ${speaking ? "speaking" : ""}`}>
-                                      {member.pfp_url ? <img src={profileImageUrl(member.pfp_url)} alt={member.username} className="avatar-image" /> : getInitials(member.username)}
-                                    </div>
-                                    <span className="voice-channel-member-name">{member.username}</span>
-                                    <span className="voice-channel-member-icons">{member.deafened ? "🔇" : member.muted ? "🎙️" : "🎤"}</span>
-                                  </div>
-                                );
-                              })}
                             </div>
-                          )}
+                            {channel.type === "voice" && (voiceMembersByChannel.get(channel.id)?.length || 0) > 0 && (
+                              <div className="voice-channel-members">
+                                {voiceMembersByChannel.get(channel.id).map((member) => {
+                                  const speaking = !!voiceSpeakingByGuild[activeGuildId]?.[member.userId];
+                                  return (
+                                    <div key={`${channel.id}-${member.userId}`} className="voice-channel-member-row">
+                                      <div className={`avatar member-avatar vc-avatar ${speaking ? "speaking" : ""}`}>
+                                        {member.pfp_url ? <img src={profileImageUrl(member.pfp_url)} alt={member.username} className="avatar-image" /> : getInitials(member.username)}
+                                      </div>
+                                      <span className="voice-channel-member-name">{member.username}</span>
+                                      <span className="voice-channel-member-icons">{member.deafened ? "🔇" : member.muted ? "🎙️" : "🎤"}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -4442,82 +4703,96 @@ export function App() {
               )}
 
               <div className="messages" ref={messagesRef}>
-                {groupedServerMessages.map((group) => {
-                  const member = resolvedMemberList.find((m) => m.id === group.authorId);
-                  const roles = (guildState?.roles || []).filter((r) => (member?.roleIds || []).includes(r.id)).sort((a, b) => (b.position ?? 0) - (a.position ?? 0));
-                  const topRole = roles[0];
-                  const roleColor = topRole?.color != null && topRole.color !== "" ? (typeof topRole.color === "number" ? `#${Number(topRole.color).toString(16).padStart(6, "0")}` : topRole.color) : null;
-                  return (
-                  <article key={group.id} className="msg grouped-msg">
-                    <div className="msg-avatar">
-                      {group.pfpUrl ? (
-                        <img src={profileImageUrl(group.pfpUrl)} alt={group.author} />
-                      ) : (
-                        getInitials(group.author || "User")
-                      )}
-                    </div>
-                    <div className="msg-body">
-                      <strong className="msg-author">
-                        <button
-                          className="name-btn"
-                          style={roleColor ? { color: roleColor } : undefined}
-                          onClick={() => openMemberProfile({ id: group.authorId, username: group.author, status: getPresence(group.authorId), pfp_url: group.pfpUrl })}
-                          onContextMenu={(event) => openMemberContextMenu(event, { id: group.authorId, username: group.author, pfp_url: group.pfpUrl, roleIds: member?.roleIds || [] })}
-                        >
-                          {group.author}
-                        </button>
-                        {topRole && <span className="msg-role-tag">{topRole.name}</span>}
-                        <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span>
-                      </strong>
-                      {group.messages.map((message) => (
-                        <div key={message.id} onContextMenu={(event) => openMessageContextMenu(event, {
-                          id: message.id,
-                          kind: "server",
-                          author: group.author,
-                          content: message.content,
-                          mine: (message.author_id || message.authorId) === me?.id
-                        })}>
-                          <p>
-                            {activePinnedServerMessages.some((item) => item.id === message.id) ? "📌 " : ""}{renderContentWithMentions(message)}
-                          </p>
-                          {Array.isArray(message?.embeds) && message.embeds.length > 0 && (
-                            <div className="message-embeds">
-                              {message.embeds.map((embed, index) => (
-                                <div key={`${message.id}-embed-${index}`} className="message-embed-card">
-                                  {embed.title && <strong>{embed.title}</strong>}
-                                  {embed.description && <p>{embed.description}</p>}
-                                  {embed.url && <a href={embed.url} target="_blank" rel="noreferrer">{embed.url}</a>}
-                                  {embed.footer?.text && <small>{embed.footer.text}</small>}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          {Array.isArray(message?.linkEmbeds) && message.linkEmbeds.length > 0 && (
-                            <div className="message-embeds">
-                              {message.linkEmbeds.map((embed, index) => (
-                                <a key={`${message.id}-link-${index}`} className="message-embed-card" href={embed.url} target="_blank" rel="noreferrer">
-                                  <strong>{embed.title || "Link"}</strong>
-                                  <p>{embed.url}</p>
-                                </a>
-                              ))}
-                            </div>
-                          )}
-                          {Array.isArray(message?.attachments) && message.attachments.length > 0 && (
-                            <div className="message-embeds">
-                              {message.attachments.map((attachment, index) => (
-                                <a key={`${message.id}-att-${index}`} className="message-embed-card" href={`${activeServer?.baseUrl || ""}${attachment.url}`} target="_blank" rel="noreferrer">
-                                  <strong>{attachment.fileName || "Attachment"}</strong>
-                                  <p>{attachment.contentType || "file"}</p>
-                                </a>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </article>
-                  );
-                })}
+                {(() => {
+                  let lastDayKey = "";
+                  return groupedServerMessages.map((group) => {
+                    const member = resolvedMemberList.find((m) => m.id === group.authorId);
+                    const roles = (guildState?.roles || []).filter((r) => (member?.roleIds || []).includes(r.id)).sort((a, b) => (b.position ?? 0) - (a.position ?? 0));
+                    const topRole = roles[0];
+                    const roleColor = topRole?.color != null && topRole.color !== "" ? (typeof topRole.color === "number" ? `#${Number(topRole.color).toString(16).padStart(6, "0")}` : topRole.color) : null;
+                    const groupDayKey = getMessageDayKey(group.firstMessageTime);
+                    const showDateDivider = !!groupDayKey && groupDayKey !== lastDayKey;
+                    if (groupDayKey) lastDayKey = groupDayKey;
+
+                    return (
+                      <div key={`group-wrap-${group.id}`}>
+                        {showDateDivider && (
+                          <div className="message-date-divider">
+                            <span>{formatMessageDate(group.firstMessageTime)}</span>
+                          </div>
+                        )}
+                        <article className="msg grouped-msg">
+                          <div className="msg-avatar">
+                            {group.pfpUrl ? (
+                              <img src={profileImageUrl(group.pfpUrl)} alt={group.author} />
+                            ) : (
+                              getInitials(group.author || "User")
+                            )}
+                          </div>
+                          <div className="msg-body">
+                            <strong className="msg-author">
+                              <button
+                                className="name-btn"
+                                style={roleColor ? { color: roleColor } : undefined}
+                                onClick={() => openMemberProfile({ id: group.authorId, username: group.author, status: getPresence(group.authorId), pfp_url: group.pfpUrl })}
+                                onContextMenu={(event) => openMemberContextMenu(event, { id: group.authorId, username: group.author, pfp_url: group.pfpUrl, roleIds: member?.roleIds || [] })}
+                              >
+                                {group.author}
+                              </button>
+                              {topRole && <span className="msg-role-tag">{topRole.name}</span>}
+                              <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span>
+                            </strong>
+                            {group.messages.map((message) => (
+                              <div key={message.id} onContextMenu={(event) => openMessageContextMenu(event, {
+                                id: message.id,
+                                kind: "server",
+                                author: group.author,
+                                content: message.content,
+                                mine: (message.author_id || message.authorId) === me?.id
+                              })}>
+                                <p>
+                                  {activePinnedServerMessages.some((item) => item.id === message.id) ? "📌 " : ""}{renderContentWithMentions(message)}
+                                </p>
+                                {Array.isArray(message?.embeds) && message.embeds.length > 0 && (
+                                  <div className="message-embeds">
+                                    {message.embeds.map((embed, index) => (
+                                      <div key={`${message.id}-embed-${index}`} className="message-embed-card">
+                                        {embed.title && <strong>{embed.title}</strong>}
+                                        {embed.description && <p>{embed.description}</p>}
+                                        {embed.url && <a href={embed.url} target="_blank" rel="noreferrer">{embed.url}</a>}
+                                        {embed.footer?.text && <small>{embed.footer.text}</small>}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {Array.isArray(message?.linkEmbeds) && message.linkEmbeds.length > 0 && (
+                                  <div className="message-embeds">
+                                    {message.linkEmbeds.map((embed, index) => (
+                                      <a key={`${message.id}-link-${index}`} className="message-embed-card" href={embed.url} target="_blank" rel="noreferrer">
+                                        <strong>{embed.title || "Link"}</strong>
+                                        <p>{embed.url}</p>
+                                      </a>
+                                    ))}
+                                  </div>
+                                )}
+                                {Array.isArray(message?.attachments) && message.attachments.length > 0 && (
+                                  <div className="message-embeds">
+                                    {message.attachments.map((attachment, index) => (
+                                      <a key={`${message.id}-att-${index}`} className="message-embed-card" href={`${activeServer?.baseUrl || ""}${attachment.url}`} target="_blank" rel="noreferrer">
+                                        <strong>{attachment.fileName || "Attachment"}</strong>
+                                        <p>{attachment.contentType || "file"}</p>
+                                      </a>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </article>
+                      </div>
+                    );
+                  });
+                })()}
                 {!messages.length && <p className="empty">No messages yet. Start the conversation.</p>}
               </div>
 
@@ -4785,40 +5060,56 @@ export function App() {
               </div>
             )}
             <div className="messages" ref={dmMessagesRef}>
-              {groupedDmMessages.map((group) => (
-                <article key={group.id} className="msg dm-msg grouped-msg">
-                  <div className="msg-avatar">
-                    {group.pfpUrl ? (
-                      <img src={profileImageUrl(group.pfpUrl)} alt={group.author} />
-                    ) : (
-                      getInitials(group.author)
-                    )}
-                  </div>
-                  <div className="msg-body">
-                    <strong className="msg-author">
-                      <button
-                        className="name-btn"
-                        onClick={() => openMemberProfile({ id: group.authorId, username: group.author, status: getPresence(group.authorId), pfp_url: group.pfpUrl })}
-                        onContextMenu={(event) => openMemberContextMenu(event, { id: group.authorId, username: group.author, pfp_url: group.pfpUrl })}
-                      >
-                        {group.author}
-                      </button>
-                      <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span>
-                    </strong>
-                    {group.messages.map((message) => (
-                      <p key={message.id} onContextMenu={(event) => openMessageContextMenu(event, {
-                        id: message.id,
-                        kind: "dm",
-                        author: message.author,
-                        content: message.content,
-                        mine: message.authorId === me?.id
-                      })}>
-                        {activePinnedDmMessages.some((item) => item.id === message.id) ? "📌 " : ""}{message.content}
-                      </p>
-                    ))}
-                  </div>
-                </article>
-              ))}
+              {(() => {
+                let lastDayKey = "";
+                return groupedDmMessages.map((group) => {
+                  const groupDayKey = getMessageDayKey(group.firstMessageTime);
+                  const showDateDivider = !!groupDayKey && groupDayKey !== lastDayKey;
+                  if (groupDayKey) lastDayKey = groupDayKey;
+
+                  return (
+                    <div key={`dm-group-wrap-${group.id}`}>
+                      {showDateDivider && (
+                        <div className="message-date-divider">
+                          <span>{formatMessageDate(group.firstMessageTime)}</span>
+                        </div>
+                      )}
+                      <article className="msg dm-msg grouped-msg">
+                        <div className="msg-avatar">
+                          {group.pfpUrl ? (
+                            <img src={profileImageUrl(group.pfpUrl)} alt={group.author} />
+                          ) : (
+                            getInitials(group.author)
+                          )}
+                        </div>
+                        <div className="msg-body">
+                          <strong className="msg-author">
+                            <button
+                              className="name-btn"
+                              onClick={() => openMemberProfile({ id: group.authorId, username: group.author, status: getPresence(group.authorId), pfp_url: group.pfpUrl })}
+                              onContextMenu={(event) => openMemberContextMenu(event, { id: group.authorId, username: group.author, pfp_url: group.pfpUrl })}
+                            >
+                              {group.author}
+                            </button>
+                            <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span>
+                          </strong>
+                          {group.messages.map((message) => (
+                            <p key={message.id} onContextMenu={(event) => openMessageContextMenu(event, {
+                              id: message.id,
+                              kind: "dm",
+                              author: message.author,
+                              content: message.content,
+                              mine: message.authorId === me?.id
+                            })}>
+                              {activePinnedDmMessages.some((item) => item.id === message.id) ? "📌 " : ""}{message.content}
+                            </p>
+                          ))}
+                        </div>
+                      </article>
+                    </div>
+                  );
+                });
+              })()}
               {!activeDm && <p className="empty">Select a DM on the left.</p>}
             </div>
             <footer className="composer dm-composer" onClick={() => dmComposerInputRef.current?.focus()}>
@@ -4985,6 +5276,13 @@ export function App() {
       {serverContextMenu && (
         <div className="server-context-menu" style={{ top: serverContextMenu.y, left: serverContextMenu.x }} onClick={(event) => event.stopPropagation()}>
           <button onClick={() => openServerFromContext(serverContextMenu.server.id)}>Open Server</button>
+          {canManageServer && serverContextMenu.server.id === activeServerId && !!activeGuildId && (
+            <>
+              <button onClick={() => { promptCreateChannelFlow({ fixedType: "text" }); setServerContextMenu(null); }}>Create Text Channel</button>
+              <button onClick={() => { promptCreateChannelFlow({ fixedType: "voice" }); setServerContextMenu(null); }}>Create Voice Channel</button>
+              <button onClick={() => { promptCreateChannelFlow({ fixedType: "category" }); setServerContextMenu(null); }}>Create Category</button>
+            </>
+          )}
           <button onClick={() => moveServerInRail(serverContextMenu.server.id, "up")}>Move Up</button>
           <button onClick={() => moveServerInRail(serverContextMenu.server.id, "down")}>Move Down</button>
           <button onClick={() => { setInviteServerId(serverContextMenu.server.id); setSettingsOpen(true); setSettingsTab("invites"); setServerContextMenu(null); }}>Create Invite</button>
@@ -4993,6 +5291,32 @@ export function App() {
           <button className="danger" onClick={() => leaveServer(serverContextMenu.server)}>Leave Server</button>
           {(serverContextMenu.server.roles || []).includes("owner") && (
             <button className="danger" onClick={() => deleteServer(serverContextMenu.server)}>Delete Server</button>
+          )}
+        </div>
+      )}
+
+      {channelContextMenu && (
+        <div className="server-context-menu" style={{ top: channelContextMenu.y, left: channelContextMenu.x }} onClick={(event) => event.stopPropagation()}>
+          {canManageServer && (
+            <>
+              <button onClick={() => openChannelSettings(channelContextMenu.channel)}>Edit Channel</button>
+              <button onClick={() => { setChannelPermsChannelId(channelContextMenu.channel.id); setSettingsOpen(true); setSettingsTab("server"); setChannelContextMenu(null); }}>Permissions</button>
+            </>
+          )}
+          <button onClick={() => { setActiveChannelId(channelContextMenu.channel.id); setChannelContextMenu(null); }}>Open</button>
+          {canManageServer && <button className="danger" onClick={() => deleteChannelById(channelContextMenu.channel)}>Delete</button>}
+        </div>
+      )}
+
+      {categoryContextMenu && (
+        <div className="server-context-menu" style={{ top: categoryContextMenu.y, left: categoryContextMenu.x }} onClick={(event) => event.stopPropagation()}>
+          {canManageServer && (
+            <>
+              <button onClick={() => { promptCreateChannelFlow({ fixedType: "text", fixedParentId: categoryContextMenu.category.id }); setCategoryContextMenu(null); }}>Create Text Channel</button>
+              <button onClick={() => { promptCreateChannelFlow({ fixedType: "voice", fixedParentId: categoryContextMenu.category.id }); setCategoryContextMenu(null); }}>Create Voice Channel</button>
+              <button onClick={() => openChannelSettings(categoryContextMenu.category)}>Edit Category</button>
+              <button className="danger" onClick={() => deleteChannelById(categoryContextMenu.category)}>Delete Category</button>
+            </>
           )}
         </div>
       )}
