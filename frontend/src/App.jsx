@@ -32,6 +32,8 @@ const DEBUG_VOICE_STORAGE_KEY = "opencom_debug_voice";
 const CLIENT_EXTENSIONS_ENABLED_KEY = "opencom_client_extensions_enabled";
 const CLIENT_EXTENSIONS_DEV_MODE_KEY = "opencom_client_extensions_dev_mode";
 const CLIENT_EXTENSIONS_DEV_URLS_KEY = "opencom_client_extensions_dev_urls";
+const ACCESS_TOKEN_KEY = "opencom_access_token";
+const REFRESH_TOKEN_KEY = "opencom_refresh_token";
 const DOWNLOAD_REPOSITORY = import.meta.env.VITE_BUILD_REPOSITORY || "donskyblock/OpenCom";
 const DOWNLOAD_BRANCH = import.meta.env.VITE_BUILD_BRANCH || "main";
 const DOWNLOAD_BASE_URL = (import.meta.env.VITE_BUILD_BASE_URL
@@ -43,10 +45,90 @@ const DOWNLOAD_TARGETS = [
   { href: `${DOWNLOAD_BASE_URL}/frontend/OpenCom.tar.gz`, label: "macOS (.tar.gz)" }
 ];
 
+const BUILTIN_EMOTES = {
+  smile: "😄",
+  grin: "😁",
+  joy: "😂",
+  rofl: "🤣",
+  wink: "😉",
+  heart: "❤️",
+  thumbs_up: "👍",
+  fire: "🔥",
+  tada: "🎉",
+  eyes: "👀",
+  thinking: "🤔",
+  sob: "😭"
+};
+
 function isVoiceDebugEnabled() {
   const envEnabled = String(import.meta.env.VITE_DEBUG_VOICE || "").trim() === "1";
   const storageEnabled = typeof window !== "undefined" && localStorage.getItem(DEBUG_VOICE_STORAGE_KEY) === "1";
   return envEnabled || storageEnabled;
+}
+
+function decodeJwtPayload(token = "") {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const normalized = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json = atob(normalized);
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+async function refreshAccessTokenWithRefreshToken() {
+  const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY) || "";
+  if (!refreshToken) return null;
+  const response = await fetch(`${CORE_API}/v1/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refreshToken })
+  });
+  if (!response.ok) return null;
+  const data = await response.json().catch(() => null);
+  const accessToken = data?.accessToken;
+  if (!accessToken) return null;
+  localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+  if (data?.refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("opencom-access-token-refresh", {
+      detail: {
+        accessToken,
+        refreshToken: data?.refreshToken || refreshToken
+      }
+    }));
+  }
+  return {
+    accessToken,
+    refreshToken: data?.refreshToken || refreshToken
+  };
+}
+
+async function refreshMembershipTokenForNode(baseUrl, membershipToken) {
+  if (!membershipToken) return null;
+  const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY) || "";
+  if (!accessToken) return null;
+  const claims = decodeJwtPayload(membershipToken);
+  const serverId = claims?.core_server_id || claims?.server_id;
+  if (!serverId) return null;
+
+  const response = await fetch(`${CORE_API}/v1/servers/${encodeURIComponent(serverId)}/membership-token`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  if (!response.ok) return null;
+  const data = await response.json().catch(() => null);
+  const nextToken = data?.membershipToken;
+  if (!nextToken) return null;
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("opencom-membership-token-refresh", {
+      detail: { serverId, membershipToken: nextToken }
+    }));
+  }
+  return nextToken;
 }
 
 function getLastSuccessfulGateway(candidates, storageKey) {
@@ -195,12 +277,25 @@ function groupMessages(messages = [], getAuthor, getTimestamp, getAuthorId = nul
 }
 
 async function api(path, options = {}) {
+  const retried = options.__retried === true;
+  const nextOptions = { ...options };
+  delete nextOptions.__retried;
   const response = await fetch(`${CORE_API}${path}`, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options
+    headers: { "Content-Type": "application/json", ...(nextOptions.headers || {}) },
+    ...nextOptions
   });
 
   if (!response.ok) {
+    if (response.status === 401 && !retried && path !== "/v1/auth/refresh") {
+      const refreshed = await refreshAccessTokenWithRefreshToken().catch(() => null);
+      if (refreshed?.accessToken) {
+        const mergedHeaders = {
+          ...(nextOptions.headers || {}),
+          Authorization: `Bearer ${refreshed.accessToken}`
+        };
+        return api(path, { ...nextOptions, headers: mergedHeaders, __retried: true });
+      }
+    }
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.error || `HTTP_${response.status}`);
   }
@@ -209,17 +304,26 @@ async function api(path, options = {}) {
 }
 
 async function nodeApi(baseUrl, path, token, options = {}) {
-  const hasBody = options.body !== undefined && options.body !== null;
+  const retried = options.__retried === true;
+  const nextOptions = { ...options };
+  delete nextOptions.__retried;
+  const hasBody = nextOptions.body !== undefined && nextOptions.body !== null;
   const response = await fetch(`${baseUrl}${path}`, {
     headers: {
       ...(hasBody ? { "Content-Type": "application/json" } : {}),
       Authorization: `Bearer ${token}`,
-      ...(options.headers || {})
+      ...(nextOptions.headers || {})
     },
-    ...options
+    ...nextOptions
   });
 
   if (!response.ok) {
+    if (response.status === 401 && !retried) {
+      const nextMembershipToken = await refreshMembershipTokenForNode(baseUrl, token).catch(() => null);
+      if (nextMembershipToken) {
+        return nodeApi(baseUrl, path, nextMembershipToken, { ...nextOptions, __retried: true });
+      }
+    }
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.error || `HTTP_${response.status}`);
   }
@@ -267,6 +371,25 @@ function getSlashQuery(value = "") {
   if (!trimmed.startsWith("/")) return null;
   const commandToken = trimmed.slice(1).split(/\s+/)[0] || "";
   return commandToken.toLowerCase();
+}
+
+function parseInviteCodeFromInput(value = "") {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return "";
+  if (/^[a-zA-Z0-9_-]{3,32}$/.test(trimmed)) return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    const queryCode = parsed.searchParams.get("join");
+    if (queryCode && /^[a-zA-Z0-9_-]{3,32}$/.test(queryCode)) return queryCode;
+    const hash = (parsed.hash || "").replace(/^#/, "");
+    if (hash.startsWith("join=")) {
+      const hashCode = decodeURIComponent(hash.slice(5));
+      if (/^[a-zA-Z0-9_-]{3,32}$/.test(hashCode)) return hashCode;
+    }
+  } catch {
+    return "";
+  }
+  return "";
 }
 
 function parseCommandArgs(raw = "") {
@@ -355,7 +478,8 @@ export function App() {
     console.debug(`[voice-debug] ${message}`, context);
   };
   const storedActiveDmId = localStorage.getItem(ACTIVE_DM_KEY) || "";
-  const [accessToken, setAccessToken] = useState(localStorage.getItem("opencom_access_token") || "");
+  const [accessToken, setAccessToken] = useState(localStorage.getItem(ACCESS_TOKEN_KEY) || "");
+  const [refreshToken, setRefreshToken] = useState(localStorage.getItem(REFRESH_TOKEN_KEY) || "");
   const [authMode, setAuthMode] = useState("login");
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
@@ -373,6 +497,9 @@ export function App() {
   const [guildState, setGuildState] = useState(null);
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState("");
+  const [showEmotePicker, setShowEmotePicker] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [invitePendingCode, setInvitePendingCode] = useState("");
 
   const [friends, setFriends] = useState([]);
   const [friendQuery, setFriendQuery] = useState("");
@@ -385,6 +512,7 @@ export function App() {
 
   const [profile, setProfile] = useState(null);
   const [profileForm, setProfileForm] = useState({ displayName: "", bio: "", pfpUrl: "", bannerUrl: "" });
+  const [serverProfileForm, setServerProfileForm] = useState({ name: "", logoUrl: "", bannerUrl: "" });
 
   const [newServerName, setNewServerName] = useState("");
   const [newServerBaseUrl, setNewServerBaseUrl] = useState("https://");
@@ -507,6 +635,7 @@ export function App() {
 
   const dmMessagesRef = useRef(null);
   const composerInputRef = useRef(null);
+  const attachmentInputRef = useRef(null);
   const dmComposerInputRef = useRef(null);
   const isAtBottomRef = useRef(true);
   const lastDmMessageCountRef = useRef(0);
@@ -516,7 +645,12 @@ export function App() {
   const downloadMenuRef = useRef(null);
   const loadedClientExtensionIdsRef = useRef(new Set());
   const extensionPanelsRef = useRef([]);
+  const serversRef = useRef([]);
   const storageScope = me?.id || "anonymous";
+
+  useEffect(() => {
+    serversRef.current = servers;
+  }, [servers]);
 
   useEffect(() => {
     function closeDownloadsMenuOnOutsideClick(event) {
@@ -551,6 +685,19 @@ export function App() {
   }, [clientExtensionDevUrls]);
 
   useEffect(() => {
+    const active = servers.find((server) => server.id === activeServerId);
+    if (!active) {
+      setServerProfileForm({ name: "", logoUrl: "", bannerUrl: "" });
+      return;
+    }
+    setServerProfileForm({
+      name: active.name || "",
+      logoUrl: active.logoUrl || "",
+      bannerUrl: active.bannerUrl || ""
+    });
+  }, [activeServerId, servers]);
+
+  useEffect(() => {
     if (!accessToken) {
       setClientExtensionCatalog([]);
       return;
@@ -572,6 +719,64 @@ export function App() {
       .then((data) => setServerExtensionCommands(Array.isArray(data.commands) ? data.commands : []))
       .catch(() => setServerExtensionCommands([]));
   }, [accessToken, activeServerId, servers]);
+
+  useEffect(() => {
+    if (!accessToken || servers.length === 0) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const currentServers = serversRef.current || [];
+        const updates = await Promise.all(currentServers.map(async (server) => {
+          try {
+            const refreshed = await api(`/v1/servers/${server.id}/membership-token`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${accessToken}` }
+            });
+            return { id: server.id, membershipToken: refreshed.membershipToken };
+          } catch {
+            return null;
+          }
+        }));
+        if (cancelled) return;
+        const byId = new Map(updates.filter(Boolean).map((item) => [item.id, item.membershipToken]));
+        if (byId.size) {
+          setServers((current) => current.map((server) => {
+            const token = byId.get(server.id);
+            return token ? { ...server, membershipToken: token } : server;
+          }));
+        }
+      } catch {
+        // no-op
+      }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 8 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [accessToken, servers.length]);
+
+  useEffect(() => {
+    if (!refreshToken) return;
+    let cancelled = false;
+
+    const refreshAuth = async () => {
+      const refreshed = await refreshAccessTokenWithRefreshToken().catch(() => null);
+      if (cancelled) return;
+      if (!refreshed?.accessToken) {
+        setStatus("Session expired. Please sign in again.");
+        setAccessToken("");
+        setRefreshToken("");
+      }
+    };
+
+    const timer = window.setInterval(refreshAuth, 10 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [refreshToken]);
 
   useEffect(() => {
     setSlashSelectionIndex(0);
@@ -921,9 +1126,48 @@ export function App() {
   }
 
   useEffect(() => {
-    if (accessToken) localStorage.setItem("opencom_access_token", accessToken);
-    else localStorage.removeItem("opencom_access_token");
+    if (accessToken) localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+    else localStorage.removeItem(ACCESS_TOKEN_KEY);
   }, [accessToken]);
+
+  useEffect(() => {
+    if (accessToken || !refreshToken) return;
+    refreshAccessTokenWithRefreshToken()
+      .then((data) => {
+        if (!data?.accessToken) return;
+        setAccessToken(data.accessToken);
+        if (data.refreshToken) setRefreshToken(data.refreshToken);
+      })
+      .catch(() => {});
+  }, [accessToken, refreshToken]);
+
+  useEffect(() => {
+    if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    else localStorage.removeItem(REFRESH_TOKEN_KEY);
+  }, [refreshToken]);
+
+  useEffect(() => {
+    const onAccessRefresh = (event) => {
+      const nextAccess = event?.detail?.accessToken || "";
+      const nextRefresh = event?.detail?.refreshToken || "";
+      if (nextAccess) setAccessToken(nextAccess);
+      if (nextRefresh) setRefreshToken(nextRefresh);
+    };
+    const onMembershipRefresh = (event) => {
+      const serverId = event?.detail?.serverId;
+      const membershipToken = event?.detail?.membershipToken;
+      if (!serverId || !membershipToken) return;
+      setServers((current) => current.map((server) => (
+        server.id === serverId ? { ...server, membershipToken } : server
+      )));
+    };
+    window.addEventListener("opencom-access-token-refresh", onAccessRefresh);
+    window.addEventListener("opencom-membership-token-refresh", onMembershipRefresh);
+    return () => {
+      window.removeEventListener("opencom-access-token-refresh", onAccessRefresh);
+      window.removeEventListener("opencom-membership-token-refresh", onMembershipRefresh);
+    };
+  }, []);
 
   useEffect(() => {
     if (accessToken) return;
@@ -1099,6 +1343,16 @@ export function App() {
           setActiveServerId(nextServers[0].id);
         }
       } catch (error) {
+        const msg = String(error?.message || "");
+        if (msg.includes("UNAUTHORIZED") || msg.includes("HTTP_401") || msg.includes("INVALID_REFRESH") || msg.includes("REFRESH_")) {
+          setAccessToken("");
+          setRefreshToken("");
+          setServers([]);
+          setGuildState(null);
+          setMessages([]);
+          setStatus("Session expired. Please sign in again.");
+          return;
+        }
         setStatus(`Session error: ${error.message}`);
       }
     }
@@ -1476,23 +1730,22 @@ export function App() {
       .catch(() => {});
   }, [accessToken, guildState?.members, friends]);
 
-  // Handle invite link: ?join=CODE — pre-fill join form; if logged in, auto-join and clear URL
+  // Handle invite link: ?join=CODE — pre-fill join form and require explicit accept.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const joinCode = params.get("join") || (window.location.hash && window.location.hash.startsWith("#join=") && decodeURIComponent(window.location.hash.slice(6))) || null;
-    const code = joinCode?.trim();
+    const code = parseInviteCodeFromInput(joinCode || "");
     if (!code) return;
     setJoinInviteCode(code);
+    setInvitePendingCode(code);
     setAddServerModalOpen(true);
     setAddServerTab("join");
-    if (accessToken) {
-      joinInvite(code);
-      const url = new URL(window.location.href);
-      url.searchParams.delete("join");
-      if (url.hash.startsWith("#join=")) url.hash = url.hash.replace(/#join=[^#&]*/, "").replace(/^#&?|&#?$/, "") || "";
-      window.history.replaceState({}, "", url.pathname + (url.search || "") + (url.hash ? "#" + url.hash : ""));
-    }
-  }, [accessToken]);
+    previewInvite(code);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("join");
+    if (url.hash.startsWith("#join=")) url.hash = url.hash.replace(/#join=[^#&]*/, "").replace(/^#&?|&#?$/, "") || "";
+    window.history.replaceState({}, "", url.pathname + (url.search || "") + (url.hash ? "#" + url.hash : ""));
+  }, []);
 
   useEffect(() => {
     if (navMode !== "servers" || !activeServer) {
@@ -1822,6 +2075,11 @@ export function App() {
   }, [activeServer, activeChannelId, navMode]);
 
   useEffect(() => {
+    setPendingAttachments([]);
+    if (attachmentInputRef.current) attachmentInputRef.current.value = "";
+  }, [activeServerId, activeChannelId]);
+
+  useEffect(() => {
     if (navMode !== "servers" || !accessToken || !activeGuildId) return;
 
     let cancelled = false;
@@ -1859,6 +2117,7 @@ export function App() {
 
       const loginData = await api("/v1/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
       setAccessToken(loginData.accessToken);
+      setRefreshToken(loginData.refreshToken || "");
       setMe(loginData.user);
       setStatus("Authenticated.");
     } catch (error) {
@@ -1902,7 +2161,21 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ args })
       });
-      setStatus(`Executed /${commandName}${result?.result != null ? ` → ${typeof result.result === "string" ? result.result : JSON.stringify(result.result)}` : ""}`);
+      const commandResult = result?.result;
+      if (commandResult && typeof commandResult === "object" && (commandResult.content || Array.isArray(commandResult.embeds))) {
+        await nodeApi(activeServer.baseUrl, `/v1/channels/${activeChannelId}/messages`, activeServer.membershipToken, {
+          method: "POST",
+          body: JSON.stringify({
+            content: String(commandResult.content || `/${commandName}`),
+            embeds: Array.isArray(commandResult.embeds) ? commandResult.embeds : []
+          })
+        });
+        const data = await nodeApi(activeServer.baseUrl, `/v1/channels/${activeChannelId}/messages`, activeServer.membershipToken);
+        setMessages((data.messages || []).slice().reverse());
+        setStatus(`Executed /${commandName}`);
+      } else {
+        setStatus(`Executed /${commandName}${result?.result != null ? ` → ${typeof result.result === "string" ? result.result : JSON.stringify(result.result)}` : ""}`);
+      }
     } catch (error) {
       setMessageText(rawInput);
       setStatus(`Command failed: ${error.message}`);
@@ -1911,8 +2184,33 @@ export function App() {
     return true;
   }
 
+  async function uploadAttachment(file) {
+    if (!activeServer || !activeGuildId || !activeChannelId || !file) return;
+    try {
+      const form = new FormData();
+      form.append("guildId", activeGuildId);
+      form.append("channelId", activeChannelId);
+      form.append("file", file, file.name || "upload.bin");
+      const response = await fetch(`${activeServer.baseUrl}/v1/attachments/upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${activeServer.membershipToken}` },
+        body: form
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP_${response.status}`);
+      }
+      const data = await response.json();
+      setPendingAttachments((current) => [...current, data]);
+      setStatus(`Attached ${data.fileName || "file"} (${data.tier || "default"} tier).`);
+    } catch (error) {
+      setStatus(`Attachment upload failed: ${error.message}`);
+    }
+  }
+
   async function sendMessage() {
-    if (!activeServer || !activeChannelId || !messageText.trim()) return;
+    if (!activeServer || !activeChannelId) return;
+    if (!messageText.trim() && pendingAttachments.length === 0) return;
 
     if (messageText.trimStart().startsWith("/")) {
       await executeSlashCommand(messageText);
@@ -1923,14 +2221,20 @@ export function App() {
 
     try {
       setMessageText("");
+      setShowEmotePicker(false);
       await nodeApi(activeServer.baseUrl, `/v1/channels/${activeChannelId}/messages`, activeServer.membershipToken, {
         method: "POST",
-        body: JSON.stringify({ content })
+        body: JSON.stringify({
+          content: content || "Attachment",
+          attachmentIds: pendingAttachments.map((attachment) => attachment.attachmentId || attachment.id).filter(Boolean)
+        })
       });
 
       const data = await nodeApi(activeServer.baseUrl, `/v1/channels/${activeChannelId}/messages`, activeServer.membershipToken);
       setMessages((data.messages || []).slice().reverse());
       setReplyTarget(null);
+      setPendingAttachments([]);
+      if (attachmentInputRef.current) attachmentInputRef.current.value = "";
     } catch (error) {
       setMessageText(content);
       setStatus(`Send failed: ${error.message}`);
@@ -2389,6 +2693,27 @@ export function App() {
     }
   }
 
+  async function saveActiveServerProfile() {
+    if (!activeServer || !canManageServer) return;
+    try {
+      await api(`/v1/servers/${activeServer.id}/profile`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          name: serverProfileForm.name?.trim() || undefined,
+          logoUrl: serverProfileForm.logoUrl?.trim() ? serverProfileForm.logoUrl.trim() : null,
+          bannerUrl: serverProfileForm.bannerUrl?.trim() ? serverProfileForm.bannerUrl.trim() : null
+        })
+      });
+      const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
+      const next = refreshed.servers || [];
+      setServers(next);
+      setStatus("Server profile updated.");
+    } catch (error) {
+      setStatus(`Server profile update failed: ${error.message}`);
+    }
+  }
+
   async function createServer() {
     if (!newServerName.trim() || !newServerBaseUrl.trim()) return;
     try {
@@ -2453,11 +2778,18 @@ export function App() {
     }
   }
 
-  async function previewInvite() {
-    if (!joinInviteCode.trim()) return;
+  async function previewInvite(value = null) {
+    const code = parseInviteCodeFromInput(value ?? joinInviteCode ?? "");
+    if (!code) {
+      setInvitePreview(null);
+      setStatus("Invalid invite code/link.");
+      return;
+    }
     try {
-      const data = await api(`/v1/invites/${joinInviteCode.trim()}`);
+      const data = await api(`/v1/invites/${code}`);
       setInvitePreview(data);
+      setJoinInviteCode(code);
+      setInvitePendingCode(code);
       setStatus("Invite preview loaded.");
     } catch (error) {
       setInvitePreview(null);
@@ -2466,13 +2798,18 @@ export function App() {
   }
 
   async function joinInvite(codeToUse = null) {
-    const code = (codeToUse || joinInviteCode || "").trim();
+    const code = parseInviteCodeFromInput(codeToUse || joinInviteCode || "");
     if (!code) return;
 
     try {
-      const data = await api(`/v1/invites/${code}/join`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } });
+      const data = await api(`/v1/invites/${code}/join`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ accept: true })
+      });
       setJoinInviteCode("");
       setInvitePreview(null);
+      setInvitePendingCode("");
       setStatus("Joined server from invite.");
 
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -2699,6 +3036,28 @@ export function App() {
     setNavMode("servers");
     setActiveServerId(serverId);
     setServerContextMenu(null);
+  }
+
+  async function moveServerInRail(serverId, direction) {
+    const index = servers.findIndex((server) => server.id === serverId);
+    if (index < 0) return;
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= servers.length) return;
+    const reordered = servers.slice();
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(targetIndex, 0, moved);
+    setServers(reordered);
+    setServerContextMenu(null);
+    try {
+      await api("/v1/servers/reorder", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ serverIds: reordered.map((server) => server.id) })
+      });
+      setStatus("Server order updated.");
+    } catch (error) {
+      setStatus(`Server reorder failed: ${error.message}`);
+    }
   }
 
   async function leaveServer(server) {
@@ -3242,9 +3601,70 @@ export function App() {
     }
   }
 
+  function insertEmoteToken(name) {
+    const token = `:${name}:`;
+    setMessageText((current) => {
+      const trimmed = current || "";
+      const spacer = trimmed.length > 0 && !/\s$/.test(trimmed) ? " " : "";
+      return `${trimmed}${spacer}${token} `;
+    });
+    setShowEmotePicker(false);
+    composerInputRef.current?.focus();
+  }
+
   function renderContentWithMentions(message) {
     const content = message?.content || "";
     const nodes = [];
+    const pushTextWithEmotes = (text, keyPrefix) => {
+      if (!text) return;
+      const emoteRegex = /:([a-zA-Z0-9_+-]{2,32}):/g;
+      let cursorLocal = 0;
+      let emoteMatch = emoteRegex.exec(text);
+      let index = 0;
+      while (emoteMatch) {
+        const start = emoteMatch.index ?? 0;
+        if (start > cursorLocal) {
+          nodes.push(<span key={`${keyPrefix}-plain-${index}`}>{text.slice(cursorLocal, start)}</span>);
+          index += 1;
+        }
+        const token = String(emoteMatch[1] || "").toLowerCase();
+        const emote = BUILTIN_EMOTES[token];
+        if (emote) {
+          nodes.push(<span key={`${keyPrefix}-emote-${index}`} className="message-emote" title={`:${token}:`}>{emote}</span>);
+        } else {
+          nodes.push(<span key={`${keyPrefix}-raw-${index}`}>{emoteMatch[0]}</span>);
+        }
+        index += 1;
+        cursorLocal = start + emoteMatch[0].length;
+        emoteMatch = emoteRegex.exec(text);
+      }
+      if (cursorLocal < text.length) {
+        nodes.push(<span key={`${keyPrefix}-tail-${index}`}>{text.slice(cursorLocal)}</span>);
+      }
+    };
+
+    const pushTextWithLinks = (text, keyPrefix) => {
+      if (!text) return;
+      const regex = /(https?:\/\/[^\s<>"'`]+)/gi;
+      let lastIndex = 0;
+      let match = regex.exec(text);
+      let localIndex = 0;
+      while (match) {
+        const index = match.index ?? 0;
+        if (index > lastIndex) {
+          pushTextWithEmotes(text.slice(lastIndex, index), `${keyPrefix}-text-${localIndex}`);
+          localIndex += 1;
+        }
+        const url = match[1];
+        nodes.push(<a key={`${keyPrefix}-link-${localIndex}`} href={url} target="_blank" rel="noreferrer">{url}</a>);
+        localIndex += 1;
+        lastIndex = index + url.length;
+        match = regex.exec(text);
+      }
+      if (lastIndex < text.length) {
+        pushTextWithEmotes(text.slice(lastIndex), `${keyPrefix}-tail-${localIndex}`);
+      }
+    };
     const mentionRegex = /@\{([^}\n]{1,64})\}|@([a-zA-Z0-9_.-]{2,64})/g;
     let cursor = 0;
 
@@ -3258,7 +3678,7 @@ export function App() {
       if (!mentionAtWordBoundary || !raw) continue;
 
       if (index > cursor) {
-        nodes.push(<span key={`text-${cursor}`}>{content.slice(cursor, index)}</span>);
+        pushTextWithLinks(content.slice(cursor, index), `text-${cursor}`);
       }
 
       if (raw.toLowerCase() === "everyone") {
@@ -3288,7 +3708,7 @@ export function App() {
     }
 
     if (cursor < content.length) {
-      nodes.push(<span key={`tail-${cursor}`}>{content.slice(cursor)}</span>);
+      pushTextWithLinks(content.slice(cursor), `tail-${cursor}`);
     }
 
     return nodes.length ? nodes : content;
@@ -3452,7 +3872,11 @@ export function App() {
               }}
               onContextMenu={(event) => openServerContextMenu(event, server)}
             >
-              {getInitials(server.name)}
+              {server.logoUrl ? (
+                <img src={profileImageUrl(server.logoUrl)} alt={server.name} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }} />
+              ) : (
+                getInitials(server.name)
+              )}
               {(serverPingCounts[server.id] || 0) > 0 && (
                 <span className="server-pill-ping-badge">{serverPingCounts[server.id]}</span>
               )}
@@ -3634,7 +4058,7 @@ export function App() {
               <button className={`icon-btn ${isMuted ? "danger" : "ghost"}`} onClick={() => setIsMuted((value) => !value)}>{isMuted ? "🎙️" : "🎤"}</button>
               <button className={`icon-btn ${isDeafened ? "danger" : "ghost"}`} onClick={() => setIsDeafened((value) => !value)}>{isDeafened ? "🔇" : "🎧"}</button>
               <button className="icon-btn ghost" onClick={() => { setSettingsOpen(true); setSettingsTab("profile"); }}>⚙️</button>
-              <button className="icon-btn danger" onClick={() => { cleanupVoiceRtc().catch(() => {}); setAccessToken(""); setServers([]); setGuildState(null); setMessages([]); }}>⎋</button>
+              <button className="icon-btn danger" onClick={() => { cleanupVoiceRtc().catch(() => {}); setAccessToken(""); setRefreshToken(""); setServers([]); setGuildState(null); setMessages([]); }}>⎋</button>
             </div>
           </div>
         </footer>
@@ -3700,15 +4124,49 @@ export function App() {
                         <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span>
                       </strong>
                       {group.messages.map((message) => (
-                        <p key={message.id} onContextMenu={(event) => openMessageContextMenu(event, {
+                        <div key={message.id} onContextMenu={(event) => openMessageContextMenu(event, {
                           id: message.id,
                           kind: "server",
                           author: group.author,
                           content: message.content,
                           mine: (message.author_id || message.authorId) === me?.id
                         })}>
-                          {activePinnedServerMessages.some((item) => item.id === message.id) ? "📌 " : ""}{renderContentWithMentions(message)}
-                        </p>
+                          <p>
+                            {activePinnedServerMessages.some((item) => item.id === message.id) ? "📌 " : ""}{renderContentWithMentions(message)}
+                          </p>
+                          {Array.isArray(message?.embeds) && message.embeds.length > 0 && (
+                            <div className="message-embeds">
+                              {message.embeds.map((embed, index) => (
+                                <div key={`${message.id}-embed-${index}`} className="message-embed-card">
+                                  {embed.title && <strong>{embed.title}</strong>}
+                                  {embed.description && <p>{embed.description}</p>}
+                                  {embed.url && <a href={embed.url} target="_blank" rel="noreferrer">{embed.url}</a>}
+                                  {embed.footer?.text && <small>{embed.footer.text}</small>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {Array.isArray(message?.linkEmbeds) && message.linkEmbeds.length > 0 && (
+                            <div className="message-embeds">
+                              {message.linkEmbeds.map((embed, index) => (
+                                <a key={`${message.id}-link-${index}`} className="message-embed-card" href={embed.url} target="_blank" rel="noreferrer">
+                                  <strong>{embed.title || "Link"}</strong>
+                                  <p>{embed.url}</p>
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                          {Array.isArray(message?.attachments) && message.attachments.length > 0 && (
+                            <div className="message-embeds">
+                              {message.attachments.map((attachment, index) => (
+                                <a key={`${message.id}-att-${index}`} className="message-embed-card" href={`${activeServer?.baseUrl || ""}${attachment.url}`} target="_blank" rel="noreferrer">
+                                  <strong>{attachment.fileName || "Attachment"}</strong>
+                                  <p>{attachment.contentType || "file"}</p>
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       ))}
                     </div>
                   </article>
@@ -3725,8 +4183,48 @@ export function App() {
               )}
 
               <footer className="composer server-composer" onClick={() => composerInputRef.current?.focus()}>
-                <button className="ghost composer-icon">＋</button>
+                <button
+                  className="ghost composer-icon"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    attachmentInputRef.current?.click();
+                  }}
+                >
+                  ＋
+                </button>
+                <input
+                  ref={attachmentInputRef}
+                  type="file"
+                  multiple
+                  style={{ display: "none" }}
+                  onChange={async (event) => {
+                    const files = Array.from(event.target.files || []);
+                    for (const file of files.slice(0, 10)) {
+                      // eslint-disable-next-line no-await-in-loop
+                      await uploadAttachment(file);
+                    }
+                  }}
+                />
                 <div className="composer-input-wrap">
+                  {pendingAttachments.length > 0 && (
+                    <div className="mention-suggestions">
+                      {pendingAttachments.map((attachment, index) => (
+                        <div key={`pending-att-${index}`} className="mention-suggestion" style={{ display: "flex", justifyContent: "space-between", width: "100%" }}>
+                          <span>{attachment.fileName || "attachment"}</span>
+                          <button
+                            type="button"
+                            className="ghost"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setPendingAttachments((current) => current.filter((_, i) => i !== index));
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <input
                     ref={composerInputRef}
                     value={messageText}
@@ -3818,9 +4316,37 @@ export function App() {
                       ))}
                     </div>
                   )}
+                  {showEmotePicker && !showingSlash && (
+                    <div className="emote-picker">
+                      {Object.entries(BUILTIN_EMOTES).map(([name, value]) => (
+                        <button
+                          key={name}
+                          type="button"
+                          className="emote-item"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            insertEmoteToken(name);
+                          }}
+                          title={`:${name}:`}
+                        >
+                          <span>{value}</span>
+                          <small>:{name}:</small>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <button className="ghost composer-icon">🎁</button>
-                <button className="send-btn" onClick={sendMessage} disabled={!activeChannelId || !messageText.trim()}>Send</button>
+                <button
+                  className="ghost composer-icon"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setShowEmotePicker((current) => !current);
+                  }}
+                  title="Open emotes"
+                >
+                  😀
+                </button>
+                <button className="send-btn" onClick={sendMessage} disabled={!activeChannelId || (!messageText.trim() && pendingAttachments.length === 0)}>Send</button>
               </footer>
             </section>
 
@@ -4040,6 +4566,8 @@ export function App() {
       {serverContextMenu && (
         <div className="server-context-menu" style={{ top: serverContextMenu.y, left: serverContextMenu.x }} onClick={(event) => event.stopPropagation()}>
           <button onClick={() => openServerFromContext(serverContextMenu.server.id)}>Open Server</button>
+          <button onClick={() => moveServerInRail(serverContextMenu.server.id, "up")}>Move Up</button>
+          <button onClick={() => moveServerInRail(serverContextMenu.server.id, "down")}>Move Down</button>
           <button onClick={() => { setInviteServerId(serverContextMenu.server.id); setSettingsOpen(true); setSettingsTab("invites"); setServerContextMenu(null); }}>Create Invite</button>
           <button onClick={() => copyServerId(serverContextMenu.server.id)}>Copy Server ID</button>
           <button onClick={() => { setSettingsOpen(true); setSettingsTab("server"); setServerContextMenu(null); }}>Server Settings</button>
@@ -4068,13 +4596,13 @@ export function App() {
             <div className="add-server-content">
               {addServerTab === "join" && (
                 <section className="card">
-                  <p className="hint" style={{ marginBottom: "0.5rem" }}>Paste an invite code, or use a link — if someone sent you a join link, open it to join automatically when logged in.</p>
-                  <input placeholder="Invite code" value={joinInviteCode ?? ""} onChange={(e) => setJoinInviteCode(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+                  <p className="hint" style={{ marginBottom: "0.5rem" }}>Paste an invite code or full join link. Invite links are previewed and need explicit accept.</p>
+                  <input placeholder="Invite code or join link" value={joinInviteCode ?? ""} onChange={(e) => setJoinInviteCode(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
                   <div className="row-actions" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                     <button className="ghost" onClick={previewInvite}>Preview</button>
-                    <button onClick={joinInvite}>Join</button>
+                    <button onClick={() => joinInvite(invitePendingCode || joinInviteCode)}>Accept Invite</button>
                   </div>
-                  {invitePreview && <p className="hint" style={{ marginTop: "0.5rem" }}>Invite: {invitePreview.code} · Uses: {invitePreview.uses}</p>}
+                  {invitePreview && <p className="hint" style={{ marginTop: "0.5rem" }}>Invite: {invitePreview.code} · Server: {invitePreview.serverName || invitePreview.server_id} · Uses: {invitePreview.uses}</p>}
                 </section>
               )}
 
@@ -4167,6 +4695,28 @@ export function App() {
 
               {settingsTab === "server" && (
                 <>
+                  {activeServer && canManageServer && (
+                    <section className="card">
+                      <h4>Server Branding</h4>
+                      <input
+                        placeholder="Server name"
+                        value={serverProfileForm.name ?? ""}
+                        onChange={(e) => setServerProfileForm((current) => ({ ...current, name: e.target.value }))}
+                      />
+                      <input
+                        placeholder="Logo URL"
+                        value={serverProfileForm.logoUrl ?? ""}
+                        onChange={(e) => setServerProfileForm((current) => ({ ...current, logoUrl: e.target.value }))}
+                      />
+                      <input
+                        placeholder="Banner URL"
+                        value={serverProfileForm.bannerUrl ?? ""}
+                        onChange={(e) => setServerProfileForm((current) => ({ ...current, bannerUrl: e.target.value }))}
+                      />
+                      <button onClick={saveActiveServerProfile}>Save Server Profile</button>
+                    </section>
+                  )}
+
                   <section className="card">
                     <h4>Add Server Provider</h4>
                     <input placeholder="Server name" value={newServerName ?? ""} onChange={(e) => setNewServerName(e.target.value)} />
@@ -4309,12 +4859,12 @@ export function App() {
                 <>
                   <section className="card">
                     <h4>Join Server</h4>
-                    <input placeholder="Paste invite code" value={joinInviteCode} onChange={(event) => setJoinInviteCode(event.target.value)} />
+                    <input placeholder="Paste invite code or join link" value={joinInviteCode} onChange={(event) => setJoinInviteCode(event.target.value)} />
                     <div className="row-actions">
                       <button className="ghost" onClick={previewInvite}>Preview</button>
-                      <button onClick={joinInvite}>Join</button>
+                      <button onClick={() => joinInvite(invitePendingCode || joinInviteCode)}>Accept Invite</button>
                     </div>
-                    {invitePreview && <p className="hint">Invite: {invitePreview.code} · Uses: {invitePreview.uses}</p>}
+                    {invitePreview && <p className="hint">Invite: {invitePreview.code} · Server: {invitePreview.serverName || invitePreview.server_id} · Uses: {invitePreview.uses}</p>}
                   </section>
 
                   <section className="card">
@@ -4359,6 +4909,9 @@ export function App() {
                                 />
                                 <strong>{ext.name}</strong>
                                 <span className="hint"> · {ext.id} · {ext.version || "0.1.0"}</span>
+                                <span className="hint" style={{ marginLeft: "6px", color: checked ? "#4ec97e" : "#f0a4a4" }}>
+                                  {checked ? "Enabled" : "Disabled"}
+                                </span>
                               </label>
                               {ext.description && <p className="hint" style={{ margin: "4px 0 0 24px" }}>{ext.description}</p>}
                               {clientExtensionLoadState[ext.id] && <p className="hint" style={{ margin: "2px 0 0 24px" }}>Status: {clientExtensionLoadState[ext.id]}</p>}

@@ -15,6 +15,12 @@ export async function guildJoinRoutes(app: FastifyInstance) {
     const g = await q<{ id: string }>(`SELECT id FROM guilds WHERE id=:guildId AND server_id=:coreServerId`, { guildId, coreServerId });
     if (!g.length) return rep.code(404).send({ error: "GUILD_NOT_FOUND" });
 
+    const ban = await q<{ user_id: string }>(
+      `SELECT user_id FROM guild_bans WHERE guild_id=:guildId AND user_id=:userId LIMIT 1`,
+      { guildId, userId }
+    );
+    if (ban.length) return rep.code(403).send({ error: "BANNED" });
+
     await q(
       `INSERT INTO guild_members (guild_id,user_id) VALUES (:guildId,:userId)
        ON DUPLICATE KEY UPDATE guild_id=guild_id`,

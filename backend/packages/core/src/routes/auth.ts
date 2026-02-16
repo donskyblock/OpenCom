@@ -17,6 +17,9 @@ const Login = z.object({
   password: z.string().min(1)
 });
 
+const ACCESS_TOKEN_TTL = "12h";
+const REFRESH_TOKEN_TTL_MS = 365 * 24 * 60 * 60 * 1000; // 1 year
+
 function randomToken(): string {
   return crypto.randomBytes(32).toString("hex");
 }
@@ -70,12 +73,12 @@ export async function authRoutes(app: FastifyInstance) {
     const ok = await verifyPassword(u.password_hash, body.password);
     if (!ok) return rep.code(401).send({ error: "INVALID_CREDENTIALS" });
 
-    const accessToken = app.jwt.sign({ sub: u.id, typ: "access" }, { expiresIn: "12h" });
+    const accessToken = app.jwt.sign({ sub: u.id, typ: "access" }, { expiresIn: ACCESS_TOKEN_TTL });
 
     const refresh = randomToken();
     const refreshId = ulidLike();
     const tokenHash = sha256Hex(refresh);
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace("T", " ");
+    const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS).toISOString().slice(0, 19).replace("T", " ");
 
     await q(
       `INSERT INTO refresh_tokens (id,user_id,token_hash,expires_at) VALUES (:id,:userId,:tokenHash,:expiresAt)`,
@@ -103,8 +106,21 @@ export async function authRoutes(app: FastifyInstance) {
     if (rt.revoked_at) return rep.code(401).send({ error: "REFRESH_REVOKED" });
     if (new Date(rt.expires_at).getTime() < Date.now()) return rep.code(401).send({ error: "REFRESH_EXPIRED" });
 
-    const accessToken = app.jwt.sign({ sub: rt.user_id, typ: "access" }, { expiresIn: "12h" });
-    return rep.send({ accessToken });
+    const nextRefresh = randomToken();
+    const nextRefreshId = ulidLike();
+    const nextTokenHash = sha256Hex(nextRefresh);
+    const nextExpiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS).toISOString().slice(0, 19).replace("T", " ");
+
+    await q(
+      `INSERT INTO refresh_tokens (id,user_id,token_hash,expires_at)
+       VALUES (:id,:userId,:tokenHash,:expiresAt)`,
+      { id: nextRefreshId, userId: rt.user_id, tokenHash: nextTokenHash, expiresAt: nextExpiresAt }
+    );
+    // Rotate refresh token on every refresh for better redundancy and session continuity.
+    await q(`UPDATE refresh_tokens SET revoked_at=NOW() WHERE id=:id`, { id: rt.id });
+
+    const accessToken = app.jwt.sign({ sub: rt.user_id, typ: "access" }, { expiresIn: ACCESS_TOKEN_TTL });
+    return rep.send({ accessToken, refreshToken: nextRefresh });
   });
 
   app.get("/v1/me", { preHandler: [app.authenticate] } as any, async (req: any) => {

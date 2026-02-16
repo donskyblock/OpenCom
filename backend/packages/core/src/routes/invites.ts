@@ -17,6 +17,30 @@ const CreateInvite = z.object({
   expiresAt: z.string().datetime().optional()
 });
 
+const JoinInviteBody = z.object({
+  accept: z.boolean().optional().default(true),
+  codeOrUrl: z.string().min(3).optional()
+});
+
+function parseInviteCodeInput(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (/^[a-zA-Z0-9_-]{3,32}$/.test(trimmed)) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    const q = url.searchParams.get("join");
+    if (q && /^[a-zA-Z0-9_-]{3,32}$/.test(q)) return q;
+    const fromHash = (url.hash || "").replace(/^#/, "");
+    if (fromHash.startsWith("join=")) {
+      const hashCode = decodeURIComponent(fromHash.slice(5));
+      if (/^[a-zA-Z0-9_-]{3,32}$/.test(hashCode)) return hashCode;
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
 async function getPlatformRole(userId: string): Promise<"user" | "admin" | "owner"> {
   const founder = await q<{ founder_user_id: string | null }>(`SELECT founder_user_id FROM platform_config WHERE id=1`);
   if (founder.length && founder[0].founder_user_id === userId) return "owner";
@@ -28,6 +52,98 @@ async function getPlatformRole(userId: string): Promise<"user" | "admin" | "owne
 }
 
 export async function inviteRoutes(app: FastifyInstance) {
+  async function joinByInviteCode(input: {
+    userId: string;
+    code: string;
+    accept: boolean;
+    log: any;
+  }) {
+    const rows = await q<any>(`SELECT * FROM invites WHERE code=:code`, { code: input.code });
+    if (!rows.length) return { status: 404, body: { error: "NOT_FOUND" } };
+
+    const inv = rows[0];
+    if (inv.expires_at && new Date(inv.expires_at).getTime() < Date.now()) return { status: 410, body: { error: "EXPIRED" } };
+    if (inv.max_uses && inv.uses >= inv.max_uses) return { status: 410, body: { error: "MAX_USES" } };
+    if (!input.accept) {
+      return { status: 200, body: { ok: false, requiresAccept: true, serverId: inv.server_id, code: input.code } };
+    }
+
+    await q(
+      `INSERT INTO memberships (server_id,user_id,roles)
+       VALUES (:serverId,:userId,:roles)
+       ON DUPLICATE KEY UPDATE user_id=user_id`,
+      { serverId: inv.server_id, userId: input.userId, roles: JSON.stringify(["member"]) }
+    );
+
+    await q(`UPDATE invites SET uses = uses + 1 WHERE code=:code`, { code: input.code });
+
+    // Add user to the node's guild so they see channels and can use the server
+    const serverRow = await q<{ base_url: string; default_guild_id: string | null }>(
+      `SELECT base_url, default_guild_id FROM servers WHERE id=:id`,
+      { id: inv.server_id }
+    );
+    if (serverRow.length && serverRow[0].default_guild_id) {
+      const baseUrl = (serverRow[0].base_url || "").replace(/\/$/, "");
+      const defaultGuildId = serverRow[0].default_guild_id;
+      const platformRole = await getPlatformRole(input.userId);
+      const officialBase = (env.OFFICIAL_NODE_BASE_URL || "").replace(/\/$/, "");
+      const audience =
+        officialBase && env.OFFICIAL_NODE_SERVER_ID && baseUrl === officialBase
+          ? env.OFFICIAL_NODE_SERVER_ID
+          : inv.server_id;
+      try {
+        const joinToken = await signMembershipToken(audience, input.userId, ["member"], platformRole, inv.server_id);
+        const joinRes = await fetch(`${baseUrl}/v1/guilds/${defaultGuildId}/join`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${joinToken}`
+          },
+          body: "{}"
+        });
+        if (!joinRes.ok) {
+          input.log.warn({ serverId: inv.server_id, userId: input.userId, status: joinRes.status }, "Invite join: failed to add user to node guild");
+        }
+
+        // Post a simple join embed to the first text channel so invite joins are visible.
+        try {
+          const channelsRes = await fetch(`${baseUrl}/v1/guilds/${defaultGuildId}/channels`, {
+            headers: { Authorization: `Bearer ${joinToken}` }
+          });
+          if (channelsRes.ok) {
+            const channelsPayload = await channelsRes.json() as { channels?: any[] };
+            const firstText = (channelsPayload.channels || []).find((channel) => channel.type === "text");
+            if (firstText?.id) {
+              await fetch(`${baseUrl}/v1/channels/${firstText.id}/messages`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${joinToken}`
+                },
+                body: JSON.stringify({
+                  content: `${input.userId} joined via invite ${input.code}`,
+                  embeds: [
+                    {
+                      title: "Member Joined",
+                      description: `${input.userId} accepted an invite.`,
+                      footer: { text: `Invite code: ${input.code}` }
+                    }
+                  ]
+                })
+              });
+            }
+          }
+        } catch (embedErr) {
+          input.log.warn({ err: embedErr, serverId: inv.server_id, userId: input.userId }, "Invite join: failed to post join embed");
+        }
+      } catch (err) {
+        input.log.warn({ err, serverId: inv.server_id, userId: input.userId }, "Invite join: error calling node guild join");
+      }
+    }
+
+    return { status: 200, body: { ok: true, serverId: inv.server_id } };
+  }
+
   app.post("/v1/invites", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
     const body = parseBody(CreateInvite, req.body);
@@ -46,13 +162,20 @@ export async function inviteRoutes(app: FastifyInstance) {
       { code, serverId: body.serverId, userId, maxUses: body.maxUses ?? null, expiresAt: body.expiresAt ?? null }
     );
 
-    return { code, serverId: body.serverId };
+    return {
+      code,
+      serverId: body.serverId,
+      joinUrl: `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/?join=${encodeURIComponent(code)}`
+    };
   });
 
   app.get("/v1/invites/:code", async (req, rep) => {
     const { code } = z.object({ code: z.string().min(3) }).parse(req.params);
     const rows = await q<any>(
-      `SELECT code, server_id, max_uses, uses, expires_at, created_at FROM invites WHERE code=:code`,
+      `SELECT i.code, i.server_id, i.max_uses, i.uses, i.expires_at, i.created_at, s.name AS server_name, s.logo_url AS server_logo_url
+       FROM invites i
+       JOIN servers s ON s.id = i.server_id
+       WHERE i.code=:code`,
       { code }
     );
     if (!rows.length) return rep.code(404).send({ error: "NOT_FOUND" });
@@ -61,61 +184,27 @@ export async function inviteRoutes(app: FastifyInstance) {
     if (inv.expires_at && new Date(inv.expires_at).getTime() < Date.now()) return rep.code(410).send({ error: "EXPIRED" });
     if (inv.max_uses && inv.uses >= inv.max_uses) return rep.code(410).send({ error: "MAX_USES" });
 
-    return inv;
+    return {
+      ...inv,
+      serverName: inv.server_name,
+      serverLogoUrl: inv.server_logo_url
+    };
+  });
+
+  app.post("/v1/invites/join", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const body = parseBody(JoinInviteBody, req.body || {});
+    const code = parseInviteCodeInput(body.codeOrUrl || "");
+    if (!code) return rep.code(400).send({ error: "INVALID_INVITE_INPUT" });
+    const result = await joinByInviteCode({ userId, code, accept: body.accept, log: req.log });
+    return rep.code(result.status).send(result.body);
   });
 
   app.post("/v1/invites/:code/join", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
     const { code } = z.object({ code: z.string().min(3) }).parse(req.params);
-
-    const rows = await q<any>(`SELECT * FROM invites WHERE code=:code`, { code });
-    if (!rows.length) return rep.code(404).send({ error: "NOT_FOUND" });
-
-    const inv = rows[0];
-    if (inv.expires_at && new Date(inv.expires_at).getTime() < Date.now()) return rep.code(410).send({ error: "EXPIRED" });
-    if (inv.max_uses && inv.uses >= inv.max_uses) return rep.code(410).send({ error: "MAX_USES" });
-
-    await q(
-      `INSERT INTO memberships (server_id,user_id,roles)
-       VALUES (:serverId,:userId,:roles)
-       ON DUPLICATE KEY UPDATE user_id=user_id`,
-      { serverId: inv.server_id, userId, roles: JSON.stringify(["member"]) }
-    );
-
-    await q(`UPDATE invites SET uses = uses + 1 WHERE code=:code`, { code });
-
-    // Add user to the node's guild so they see channels and can use the server
-    const serverRow = await q<{ base_url: string; default_guild_id: string | null }>(
-      `SELECT base_url, default_guild_id FROM servers WHERE id=:id`,
-      { id: inv.server_id }
-    );
-    if (serverRow.length && serverRow[0].default_guild_id) {
-      const baseUrl = (serverRow[0].base_url || "").replace(/\/$/, "");
-      const defaultGuildId = serverRow[0].default_guild_id;
-      const platformRole = await getPlatformRole(userId);
-      const officialBase = (env.OFFICIAL_NODE_BASE_URL || "").replace(/\/$/, "");
-      const audience =
-        officialBase && env.OFFICIAL_NODE_SERVER_ID && baseUrl === officialBase
-          ? env.OFFICIAL_NODE_SERVER_ID
-          : inv.server_id;
-      try {
-        const joinToken = await signMembershipToken(audience, userId, ["member"], platformRole, inv.server_id);
-        const joinRes = await fetch(`${baseUrl}/v1/guilds/${defaultGuildId}/join`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${joinToken}`
-          },
-          body: "{}"
-        });
-        if (!joinRes.ok) {
-          req.log.warn({ serverId: inv.server_id, userId, status: joinRes.status }, "Invite join: failed to add user to node guild");
-        }
-      } catch (err) {
-        req.log.warn({ err, serverId: inv.server_id, userId }, "Invite join: error calling node guild join");
-      }
-    }
-
-    return { ok: true, serverId: inv.server_id };
+    const body = parseBody(JoinInviteBody, req.body || {});
+    const result = await joinByInviteCode({ userId, code, accept: body.accept, log: req.log });
+    return rep.code(result.status).send(result.body);
   });
 }

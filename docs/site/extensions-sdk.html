@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenCom Extensions SDK</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>OpenCom Extensions SDK</h1>
+    <p>Build server and client extensions with realtime command registration, persisted config, and high-level OpenCom API helpers.</p>
+
+    <section>
+      <h2>Manifest</h2>
+      <pre><code>{
+  "id": "my-extension",
+  "name": "My Extension",
+  "author": "you",
+  "version": "1.0.0",
+  "scope": "server",
+  "entry": "index.js",
+  "permissions": ["all"],
+  "configDefaults": { "enabled": true }
+}</code></pre>
+    </section>
+
+    <section>
+      <h2>Config API</h2>
+      <pre><code>import { defineConfig, command } from "opencom-extension-sdk";
+
+export const configDefaults = defineConfig({ pingPrefix: "pong" });
+
+export const commands = [
+  command({
+    name: "ping",
+    async execute(ctx) {
+      const cfg = await ctx.config.get();
+      return { content: `${cfg.pingPrefix} ${ctx.userId}` };
+    }
+  })
+];</code></pre>
+      <p>Server owners can update extension config in realtime via:</p>
+      <ul>
+        <li><code>GET /v1/servers/:serverId/extensions/:extensionId/config</code></li>
+        <li><code>PUT /v1/servers/:serverId/extensions/:extensionId/config</code></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Realtime Extension Lifecycle</h2>
+      <p>Enabling/disabling an extension updates the running node immediately. Commands are registered/unregistered without restarts.</p>
+    </section>
+
+    <section>
+      <h2>Expanded API Helpers</h2>
+      <ul>
+        <li><code>apis.servers.refreshMembershipToken(serverId)</code></li>
+        <li><code>apis.servers.reorder(serverIds)</code></li>
+        <li><code>apis.invites.joinFromInput(codeOrUrl)</code></li>
+        <li><code>apis.nodeGuilds.kickMember(...)</code> / <code>banMember(...)</code></li>
+        <li><code>apis.nodeGuilds.reorderChannels(guildId, items)</code></li>
+        <li><code>apis.attachments.upload(...)</code></li>
+        <li><code>apis.extensions.setServerConfig(...)</code></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Hosting Docs</h2>
+      <p>This page is static. Host the <code>docs/site</code> folder on any static host (GitHub Pages, Netlify, nginx, Caddy).</p>
+    </section>
+
+    <section>
+      <a href="./index.html">← Back to docs home</a>
+    </section>
+  </main>
+</body>
+</html>

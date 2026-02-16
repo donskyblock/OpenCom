@@ -574,7 +574,7 @@ export function ServerAdminApp() {
                   {activeTab === "extensions" && (
                     <section style={{ maxWidth: "1000px" }}>
                       <h2>Extensions</h2>
-                      <p style={{ color: "var(--text-dim)", marginTop: 0 }}>Enable reviewed server extensions for this server node. Client extensions are listed for visibility in the repo catalog.</p>
+                      <p style={{ color: "var(--text-dim)", marginTop: 0 }}>Enable reviewed server extensions for this server node. Extension commands register/unregister in realtime while toggling.</p>
 
                       <div style={{ marginBottom: "20px", padding: "14px", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius)", background: "rgba(255,255,255,0.03)" }}>
                         <h3 style={{ marginTop: 0 }}>Server Extension Catalog ({extensionCatalog.serverExtensions.length})</h3>
@@ -590,8 +590,12 @@ export function ServerAdminApp() {
                                 <div key={ext.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: "1px solid var(--border-subtle)", borderRadius: "8px", padding: "10px 12px" }}>
                                   <div>
                                     <strong>{ext.name}</strong> <span style={{ color: "var(--text-dim)", fontSize: "12px" }}>v{ext.version}</span>
+                                    <span style={{ marginLeft: "8px", fontSize: "11px", padding: "2px 6px", borderRadius: "999px", background: enabled ? "rgba(78,201,126,0.25)" : "rgba(240,90,90,0.22)", color: enabled ? "#8af5b1" : "#ffc1c1" }}>
+                                      {enabled ? "Enabled" : "Disabled"}
+                                    </span>
                                     <p style={{ margin: "4px 0 0", color: "var(--text-dim)", fontSize: "12px" }}>{ext.description || "No description"}</p>
                                     <code style={{ fontSize: "11px" }}>{ext.id}</code>
+                                    {ext.author && <span style={{ marginLeft: "8px", color: "var(--text-dim)", fontSize: "11px" }}>by {ext.author}</span>}
                                   </div>
                                   <button onClick={() => toggleExtension(ext.id, !enabled)} style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--border-subtle)", background: enabled ? "rgba(240,90,90,0.2)" : "rgba(78,201,126,0.2)", color: "var(--text-main)", cursor: "pointer" }}>
                                     {enabled ? "Disable" : "Enable"}

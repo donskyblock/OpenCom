@@ -2,10 +2,12 @@ export type ExtensionManifest = {
   id: string;
   name: string;
   version?: string;
+  author?: string;
   description?: string;
   scope?: "client" | "server" | "both";
   entry?: string;
   permissions?: string[];
+  configDefaults?: Record<string, unknown>;
 };
 
 export type CommandOption = {
@@ -19,6 +21,11 @@ export type ExecuteContext = {
   userId: string;
   serverId: string;
   args: Record<string, unknown>;
+  config: {
+    get(): Promise<Record<string, unknown>>;
+    set(next: Record<string, unknown>): Promise<Record<string, unknown>>;
+    patch(partial: Record<string, unknown>): Promise<Record<string, unknown>>;
+  };
   apis: ReturnType<typeof createOpenComApiClient>;
   meta: {
     extensionId: string;
@@ -34,15 +41,18 @@ export type ExtensionCommand = {
 };
 
 export function defineExtension(manifest: ExtensionManifest): ExtensionManifest;
+export function defineConfig(defaults?: Record<string, unknown>): Record<string, unknown>;
 export function command(input: ExtensionCommand): ExtensionCommand;
 export function optionString(name: string, description: string, required?: boolean): CommandOption;
 export function optionNumber(name: string, description: string, required?: boolean): CommandOption;
 export function optionBoolean(name: string, description: string, required?: boolean): CommandOption;
 export function createServerContext<T extends object>(ctx: T): T & { log: (...args: any[]) => void };
+export function getExtensionConfig(ctx: ExecuteContext): ExecuteContext["config"];
 
 type ApiHttpSurface = {
   get(path: string, init?: RequestInit): Promise<any>;
   post(path: string, body?: unknown, init?: RequestInit): Promise<any>;
+  put(path: string, body?: unknown, init?: RequestInit): Promise<any>;
   patch(path: string, body?: unknown, init?: RequestInit): Promise<any>;
   del(path: string, init?: RequestInit): Promise<any>;
 };
@@ -87,26 +97,53 @@ export function createOpenComApiClient(input: {
     list(): Promise<any>;
     create(payload: Record<string, unknown>): Promise<any>;
     createOfficial(payload: Record<string, unknown>): Promise<any>;
+    updateProfile(serverId: string, payload: Record<string, unknown>): Promise<any>;
+    refreshMembershipToken(serverId: string): Promise<any>;
+    reorder(serverIds: string[]): Promise<any>;
     leave(serverId: string): Promise<any>;
     remove(serverId: string): Promise<any>;
+  };
+  invites: {
+    create(payload: Record<string, unknown>): Promise<any>;
+    preview(code: string): Promise<any>;
+    join(code: string, payload?: Record<string, unknown>): Promise<any>;
+    joinFromInput(codeOrUrl: string, payload?: Record<string, unknown>): Promise<any>;
   };
   nodeGuilds: {
     list(): Promise<any>;
     create(payload: Record<string, unknown>): Promise<any>;
     channels(guildId: string): Promise<any>;
     state(guildId: string): Promise<any>;
+    reorderChannels(guildId: string, items: Array<Record<string, unknown>>): Promise<any>;
     join(guildId: string): Promise<any>;
     leave(guildId: string): Promise<any>;
+    kickMember(guildId: string, memberId: string): Promise<any>;
+    banMember(guildId: string, memberId: string, payload?: Record<string, unknown>): Promise<any>;
+    unbanMember(guildId: string, memberId: string): Promise<any>;
   };
   channels: {
     create(guildId: string, payload: Record<string, unknown>): Promise<any>;
     update(channelId: string, payload: Record<string, unknown>): Promise<any>;
     remove(channelId: string): Promise<any>;
     messages(channelId: string, query?: string): Promise<any>;
+    setOverwrite(channelId: string, payload: Record<string, unknown>): Promise<any>;
+    deleteOverwrite(channelId: string, payload: Record<string, unknown>): Promise<any>;
+    syncPermissionsFromCategory(channelId: string): Promise<any>;
   };
   messages: {
     send(channelId: string, payload: Record<string, unknown>): Promise<any>;
     delete(channelId: string, messageId: string): Promise<any>;
+  };
+  attachments: {
+    upload(input: {
+      guildId: string;
+      channelId: string;
+      file: Blob | ArrayBuffer | Uint8Array;
+      fileName?: string;
+      contentType?: string;
+      messageId?: string;
+    }): Promise<any>;
+    getUrl(attachmentId: string): string;
   };
   voice: {
     join(channelId: string, payload?: Record<string, unknown>): Promise<any>;
@@ -119,6 +156,8 @@ export function createOpenComApiClient(input: {
     catalog(): Promise<any>;
     serverInstalled(serverId: string): Promise<any>;
     setServerState(serverId: string, extensionId: string, enabled: boolean): Promise<any>;
+    serverConfig(serverId: string, extensionId: string): Promise<any>;
+    setServerConfig(serverId: string, extensionId: string, config: Record<string, unknown>, mode?: "replace" | "patch"): Promise<any>;
     nodeCatalog(): Promise<any>;
     nodeInstalled(): Promise<any>;
     nodeCommands(): Promise<any>;

@@ -10,6 +10,26 @@ type Mention = { userId: string; display: string };
 
 type MentionMeta = { mentionEveryone: boolean; mentions: Mention[] };
 
+type MessageEmbed = {
+  title?: string;
+  description?: string;
+  url?: string;
+  color?: number;
+  image?: { url: string };
+  thumbnail?: { url: string };
+  footer?: { text: string };
+};
+
+const EmbedSchema = z.object({
+  title: z.string().max(256).optional(),
+  description: z.string().max(4096).optional(),
+  url: z.string().url().optional(),
+  color: z.number().int().min(0).max(16777215).optional(),
+  image: z.object({ url: z.string().url() }).optional(),
+  thumbnail: z.object({ url: z.string().url() }).optional(),
+  footer: z.object({ text: z.string().max(256) }).optional()
+});
+
 function normalizeMentionToken(value: string) {
   return value.trim().toLowerCase();
 }
@@ -56,6 +76,30 @@ function resolveMessageMentions(content: string, directory: Map<string, { userId
   return { mentionEveryone, mentions: Array.from(mentions.values()) };
 }
 
+function extractLinkEmbeds(content: string) {
+  const regex = /(https?:\/\/[^\s<>"'`]+)/gi;
+  const links = new Set<string>();
+  let match = regex.exec(content || "");
+  while (match) {
+    links.add(match[1]);
+    match = regex.exec(content || "");
+  }
+
+  return Array.from(links).slice(0, 5).map((urlValue) => {
+    try {
+      const parsed = new URL(urlValue);
+      return {
+        type: "link",
+        url: urlValue,
+        title: parsed.hostname,
+        description: parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : undefined
+      };
+    } catch {
+      return { type: "link", url: urlValue, title: "Link" };
+    }
+  });
+}
+
 export async function messageRoutes(
   app: FastifyInstance,
   broadcastToChannel: (channelId: string, event: any) => void,
@@ -90,7 +134,7 @@ export async function messageRoutes(
     let rows: any[];
     if (qs.before) {
       rows = await q<any>(
-        `SELECT m.id, m.author_id, m.content, m.created_at
+        `SELECT m.id, m.author_id, m.content, m.embeds_json, m.created_at
          FROM messages m
          WHERE m.channel_id=:channelId AND m.created_at < :before
          ORDER BY m.created_at DESC
@@ -99,7 +143,7 @@ export async function messageRoutes(
       );
     } else {
       rows = await q<any>(
-        `SELECT m.id, m.author_id, m.content, m.created_at
+        `SELECT m.id, m.author_id, m.content, m.embeds_json, m.created_at
          FROM messages m
          WHERE m.channel_id=:channelId
          ORDER BY m.created_at DESC
@@ -109,7 +153,20 @@ export async function messageRoutes(
     }
     rows = rows.map((r: any) => {
       const mentionMeta = resolveMessageMentions(r.content || "", mentionDirectory);
-      return { ...r, username: r.author_id, pfp_url: null, ...mentionMeta };
+      let embeds: any[] = [];
+      try {
+        embeds = Array.isArray(r.embeds_json) ? r.embeds_json : JSON.parse(r.embeds_json || "[]");
+      } catch {
+        embeds = [];
+      }
+      return {
+        ...r,
+        username: r.author_id,
+        pfp_url: null,
+        embeds: Array.isArray(embeds) ? embeds : [],
+        linkEmbeds: extractLinkEmbeds(r.content || ""),
+        ...mentionMeta
+      };
     });
 
     // Attachments for returned messages
@@ -149,7 +206,8 @@ export async function messageRoutes(
 
     const body = z.object({
       content: z.string().min(1).max(4000),
-      attachmentIds: z.array(z.string().min(3)).max(10).optional()
+      attachmentIds: z.array(z.string().min(3)).max(10).optional(),
+      embeds: z.array(EmbedSchema).max(5).optional()
     }).parse(req.body);
 
     const ch = await q<{ id: string; guild_id: string }>(
@@ -194,11 +252,19 @@ export async function messageRoutes(
     const createdAt = new Date().toISOString();
     const mentionDirectory = await loadGuildMentionDirectory(guildId);
     const mentionMeta = resolveMessageMentions(body.content || "", mentionDirectory);
+    const embeds = (body.embeds || []) as MessageEmbed[];
 
     await q(
-      `INSERT INTO messages (id,channel_id,author_id,content,created_at)
-       VALUES (:id,:channelId,:authorId,:content,:createdAt)`,
-      { id, channelId, authorId: authorId, content: body.content, createdAt: createdAt.slice(0, 19).replace("T", " ") }
+      `INSERT INTO messages (id,channel_id,author_id,content,embeds_json,created_at)
+       VALUES (:id,:channelId,:authorId,:content,:embedsJson,:createdAt)`,
+      {
+        id,
+        channelId,
+        authorId: authorId,
+        content: body.content,
+        embedsJson: JSON.stringify(embeds),
+        createdAt: createdAt.slice(0, 19).replace("T", " ")
+      }
     );
 
     // Link attachments to message
@@ -216,6 +282,8 @@ export async function messageRoutes(
         id,
         authorId,
         content: body.content,
+        embeds,
+        linkEmbeds: extractLinkEmbeds(body.content || ""),
         createdAt,
         attachments: attachmentIds.map(aid => ({ id: aid, url: `/v1/attachments/${aid}` })),
         mentionEveryone: mentionMeta.mentionEveryone,
