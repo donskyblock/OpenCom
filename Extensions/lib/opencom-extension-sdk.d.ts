@@ -115,6 +115,9 @@ export function createOpenComApiClient(input: {
     channels(guildId: string): Promise<any>;
     state(guildId: string): Promise<any>;
     reorderChannels(guildId: string, items: Array<Record<string, unknown>>): Promise<any>;
+    emotes(guildId: string): Promise<any>;
+    createEmote(guildId: string, payload: Record<string, unknown>): Promise<any>;
+    deleteEmote(guildId: string, emoteId: string): Promise<any>;
     join(guildId: string): Promise<any>;
     leave(guildId: string): Promise<any>;
     kickMember(guildId: string, memberId: string): Promise<any>;

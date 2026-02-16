@@ -1080,6 +1080,13 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
   line-height: 1;
   vertical-align: middle;
 }
+.message-custom-emote {
+  width: 1.3em;
+  height: 1.3em;
+  object-fit: contain;
+  vertical-align: middle;
+  display: inline-block;
+}
 .mention-click {
   border: none;
   cursor: pointer;
