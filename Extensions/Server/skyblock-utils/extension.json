@@ -1,0 +1,10 @@
+{
+  "id": "skyblock-utils",
+  "name": "Hypixel Skyblock Utils",
+  "version": "0.1.0",
+  "description": "A simeple extensions that implements some useful features for interacting with hypixel skyblock.",
+  "scope": "server",
+  "entry": "index.js",
+  "permissions": ["all"]
+}
+ 
