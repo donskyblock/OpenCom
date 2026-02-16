@@ -39,7 +39,9 @@ const Env = z.object({
   MEDIASOUP_RTC_MIN_PORT: z.coerce.number().default(40000),
   MEDIASOUP_RTC_MAX_PORT: z.coerce.number().default(40100),
 
-  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("warn"),
+  LOG_DIR: z.string().default("./logs"),
+  LOG_TO_FILE: boolFlag.default(true),
   DEBUG_HTTP: boolFlag.default(false),
   DEBUG_VOICE: boolFlag.default(false)
 });

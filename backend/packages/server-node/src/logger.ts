@@ -1,4 +1,6 @@
 import { env } from "./env.js";
+import fs from "node:fs";
+import path from "node:path";
 
 type Level = "debug" | "info" | "warn" | "error";
 type Ctx = Record<string, unknown>;
@@ -44,10 +46,30 @@ function write(level: Level, scope: string, message: string, context?: Ctx) {
   const renderedCtx = ctx ? ` ${JSON.stringify(ctx)}` : "";
   const line = `[${stamp}] [${prefix}] [${scope}] ${message}${renderedCtx}`;
 
+  if (env.LOG_TO_FILE) {
+    appendLogFileLine(line);
+  }
+
   if (level === "warn" || level === "error") {
     console.error(line);
   } else {
     console.log(line);
+  }
+}
+
+let logDirReady = false;
+
+function appendLogFileLine(line: string) {
+  try {
+    if (!logDirReady) {
+      fs.mkdirSync(env.LOG_DIR, { recursive: true });
+      logDirReady = true;
+    }
+    const day = new Date().toISOString().slice(0, 10);
+    const filePath = path.join(env.LOG_DIR, `server-node-${day}.log`);
+    fs.appendFileSync(filePath, `${line}\n`, "utf8");
+  } catch {
+    // Avoid crashing logging path if disk/filesystem is unavailable.
   }
 }
 

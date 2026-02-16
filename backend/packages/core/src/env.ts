@@ -1,5 +1,15 @@
 import { z } from "zod";
 
+const boolFlag = z.preprocess(
+  (value) => {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value === 1;
+    if (typeof value === "string") return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+    return false;
+  },
+  z.boolean()
+);
+
 const Env = z.object({
   CORE_PORT: z.coerce.number().default(3001),
   CORE_HOST: z.string().default("127.0.0.1"),
@@ -12,6 +22,9 @@ const Env = z.object({
   /** Optional TLS key file for native wss listener. */
   CORE_GATEWAY_TLS_KEY_FILE: z.string().min(1).optional(),
   CORE_DATABASE_URL: z.string().min(1),
+  CORE_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("warn"),
+  CORE_LOG_DIR: z.string().default("./logs"),
+  CORE_LOG_TO_FILE: boolFlag.default(true),
   CORE_JWT_ACCESS_SECRET: z.string().min(16),
   CORE_JWT_REFRESH_SECRET: z.string().min(16),
 
