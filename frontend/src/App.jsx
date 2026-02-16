@@ -381,6 +381,11 @@ function parseInviteCodeFromInput(value = "") {
     const parsed = new URL(trimmed);
     const queryCode = parsed.searchParams.get("join");
     if (queryCode && /^[a-zA-Z0-9_-]{3,32}$/.test(queryCode)) return queryCode;
+    for (const key of parsed.searchParams.keys()) {
+      if (/^join[a-zA-Z0-9_-]{3,32}$/.test(key)) {
+        return key;
+      }
+    }
     const hash = (parsed.hash || "").replace(/^#/, "");
     if (hash.startsWith("join=")) {
       const hashCode = decodeURIComponent(hash.slice(5));
@@ -498,6 +503,8 @@ export function App() {
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState("");
   const [showEmotePicker, setShowEmotePicker] = useState(false);
+  const [newServerEmoteName, setNewServerEmoteName] = useState("");
+  const [newServerEmoteUrl, setNewServerEmoteUrl] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const [invitePendingCode, setInvitePendingCode] = useState("");
 
@@ -516,8 +523,13 @@ export function App() {
 
   const [newServerName, setNewServerName] = useState("");
   const [newServerBaseUrl, setNewServerBaseUrl] = useState("https://");
+  const [newServerLogoUrl, setNewServerLogoUrl] = useState("");
+  const [newServerBannerUrl, setNewServerBannerUrl] = useState("");
   const [inviteServerId, setInviteServerId] = useState("");
   const [inviteCode, setInviteCode] = useState("");
+  const [inviteJoinUrl, setInviteJoinUrl] = useState("");
+  const [inviteCustomCode, setInviteCustomCode] = useState("");
+  const [invitePermanent, setInvitePermanent] = useState(false);
   const [joinInviteCode, setJoinInviteCode] = useState("");
   const [invitePreview, setInvitePreview] = useState(null);
   const [newChannelName, setNewChannelName] = useState("");
@@ -542,6 +554,8 @@ export function App() {
   const [selfStatus, setSelfStatus] = useState(localStorage.getItem(SELF_STATUS_KEY) || "online");
   const [showPinned, setShowPinned] = useState(false);
   const [newOfficialServerName, setNewOfficialServerName] = useState("");
+  const [newOfficialServerLogoUrl, setNewOfficialServerLogoUrl] = useState("");
+  const [newOfficialServerBannerUrl, setNewOfficialServerBannerUrl] = useState("");
   const [pinnedServerMessages, setPinnedServerMessages] = useState(getStoredJson(PINNED_SERVER_KEY, {}));
   const [pinnedDmMessages, setPinnedDmMessages] = useState(getStoredJson(PINNED_DM_KEY, {}));
   const [newRoleName, setNewRoleName] = useState("");
@@ -936,6 +950,15 @@ export function App() {
 
   const sortedChannels = useMemo(() => [...(channels || [])].filter(Boolean).sort((a, b) => (a.position ?? 0) - (b.position ?? 0)), [channels]);
   const categoryChannels = useMemo(() => sortedChannels.filter((channel) => channel && channel.type === "category"), [sortedChannels]);
+  const serverEmoteByName = useMemo(() => {
+    const map = new Map();
+    for (const emote of (guildState?.emotes || [])) {
+      const name = String(emote?.name || "").toLowerCase();
+      if (!name) continue;
+      map.set(name, emote);
+    }
+    return map;
+  }, [guildState?.emotes]);
 
   const filteredFriends = useMemo(() => {
     const query = friendQuery.trim().toLowerCase();
@@ -1732,9 +1755,7 @@ export function App() {
 
   // Handle invite link: ?join=CODE — pre-fill join form and require explicit accept.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const joinCode = params.get("join") || (window.location.hash && window.location.hash.startsWith("#join=") && decodeURIComponent(window.location.hash.slice(6))) || null;
-    const code = parseInviteCodeFromInput(joinCode || "");
+    const code = parseInviteCodeFromInput(window.location.href || "");
     if (!code) return;
     setJoinInviteCode(code);
     setInvitePendingCode(code);
@@ -1743,6 +1764,9 @@ export function App() {
     previewInvite(code);
     const url = new URL(window.location.href);
     url.searchParams.delete("join");
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (/^join[a-zA-Z0-9_-]{3,32}$/.test(key)) url.searchParams.delete(key);
+    }
     if (url.hash.startsWith("#join=")) url.hash = url.hash.replace(/#join=[^#&]*/, "").replace(/^#&?|&#?$/, "") || "";
     window.history.replaceState({}, "", url.pathname + (url.search || "") + (url.hash ? "#" + url.hash : ""));
   }, []);
@@ -2715,15 +2739,22 @@ export function App() {
   }
 
   async function createServer() {
-    if (!newServerName.trim() || !newServerBaseUrl.trim()) return;
+    if (!newServerName.trim() || !newServerBaseUrl.trim() || !newServerLogoUrl.trim()) return;
     try {
       await api("/v1/servers", {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ name: newServerName.trim(), baseUrl: newServerBaseUrl.trim() })
+        body: JSON.stringify({
+          name: newServerName.trim(),
+          baseUrl: newServerBaseUrl.trim(),
+          logoUrl: newServerLogoUrl.trim(),
+          bannerUrl: newServerBannerUrl.trim() || null
+        })
       });
       setNewServerName("");
       setNewServerBaseUrl("https://");
+      setNewServerLogoUrl("");
+      setNewServerBannerUrl("");
       setStatus("Server provider added.");
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
       setServers(refreshed.servers || []);
@@ -2766,12 +2797,19 @@ export function App() {
   async function createInvite() {
     if (!inviteServerId) return;
     try {
+      const payload = {
+        serverId: inviteServerId,
+        code: inviteCustomCode.trim() || undefined,
+        permanent: invitePermanent
+      };
       const data = await api("/v1/invites", {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ serverId: inviteServerId })
+        body: JSON.stringify(payload)
       });
       setInviteCode(data.code);
+      setInviteJoinUrl(data.joinUrl || "");
+      setInviteCustomCode("");
       setStatus("Invite code generated.");
     } catch (error) {
       setStatus(`Invite failed: ${error.message}`);
@@ -2846,6 +2884,40 @@ export function App() {
       setGuildState(state);
     } catch (error) {
       setStatus(`Create channel failed: ${error.message}`);
+    }
+  }
+
+  async function createServerEmote() {
+    if (!activeServer || !activeGuildId || !newServerEmoteName.trim() || !newServerEmoteUrl.trim()) return;
+    try {
+      await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/emotes`, activeServer.membershipToken, {
+        method: "POST",
+        body: JSON.stringify({
+          name: newServerEmoteName.trim().toLowerCase(),
+          imageUrl: newServerEmoteUrl.trim()
+        })
+      });
+      setNewServerEmoteName("");
+      setNewServerEmoteUrl("");
+      const state = await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/state`, activeServer.membershipToken);
+      setGuildState(state);
+      setStatus("Custom emote created.");
+    } catch (error) {
+      setStatus(`Create emote failed: ${error.message}`);
+    }
+  }
+
+  async function removeServerEmote(emoteId) {
+    if (!activeServer || !activeGuildId || !emoteId) return;
+    try {
+      await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/emotes/${emoteId}`, activeServer.membershipToken, {
+        method: "DELETE"
+      });
+      const state = await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/state`, activeServer.membershipToken);
+      setGuildState(state);
+      setStatus("Custom emote removed.");
+    } catch (error) {
+      setStatus(`Remove emote failed: ${error.message}`);
     }
   }
 
@@ -3466,14 +3538,20 @@ export function App() {
 
   async function createOfficialServer() {
     const name = newOfficialServerName.trim();
-    if (!name || !accessToken) return;
+    if (!name || !accessToken || !newOfficialServerLogoUrl.trim()) return;
     try {
       const data = await api("/v1/servers/official", {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ name })
+        body: JSON.stringify({
+          name,
+          logoUrl: newOfficialServerLogoUrl.trim(),
+          bannerUrl: newOfficialServerBannerUrl.trim() || null
+        })
       });
       setNewOfficialServerName("");
+      setNewOfficialServerLogoUrl("");
+      setNewOfficialServerBannerUrl("");
       setStatus("Your server was created.");
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
       const next = refreshed.servers || [];
@@ -3593,12 +3671,34 @@ export function App() {
         displayName: member.username || member.id,
         bio: "Profile details are private or unavailable.",
         badges: [],
+        badgeDetails: [],
         status: getPresence(member.id) || "offline",
         platformTitle: null,
         createdAt: null,
         roleIds: member.roleIds || []
       });
     }
+  }
+
+  function getBadgePresentation(badge) {
+    if (badge && typeof badge === "object" && (badge.bgColor || badge.icon || badge.name)) {
+      return {
+        icon: badge.icon || "🏷️",
+        name: badge.name || String(badge.id || "Badge"),
+        bgColor: badge.bgColor || "#3a4f72",
+        fgColor: badge.fgColor || "#ffffff"
+      };
+    }
+    const id = String(badge?.id || badge || "").toLowerCase();
+    if (id === "platform_owner") return { icon: "👑", name: "Platform Owner", bgColor: "#2d6cdf", fgColor: "#ffffff" };
+    if (id === "platform_admin") return { icon: "🔨", name: "Platform Admin", bgColor: "#2d6cdf", fgColor: "#ffffff" };
+    if (id === "boost") return { icon: "➕", name: "Boost", bgColor: "#4f7ecf", fgColor: "#ffffff" };
+    return {
+      icon: badge?.icon || "🏷️",
+      name: badge?.name || id || "Badge",
+      bgColor: badge?.bgColor || "#3a4f72",
+      fgColor: badge?.fgColor || "#ffffff"
+    };
   }
 
   function insertEmoteToken(name) {
@@ -3631,6 +3731,17 @@ export function App() {
         const emote = BUILTIN_EMOTES[token];
         if (emote) {
           nodes.push(<span key={`${keyPrefix}-emote-${index}`} className="message-emote" title={`:${token}:`}>{emote}</span>);
+        } else if (serverEmoteByName.has(token)) {
+          const custom = serverEmoteByName.get(token);
+          nodes.push(
+            <img
+              key={`${keyPrefix}-custom-emote-${index}`}
+              className="message-custom-emote"
+              src={custom.imageUrl || custom.image_url}
+              alt={`:${token}:`}
+              title={`:${token}:`}
+            />
+          );
         } else {
           nodes.push(<span key={`${keyPrefix}-raw-${index}`}>{emoteMatch[0]}</span>);
         }
@@ -3889,7 +4000,14 @@ export function App() {
       </aside>
 
       <aside className={`channel-sidebar ${isInVoiceChannel ? "voice-connected" : ""}`}>
-        <header className="sidebar-header">
+        <header
+          className="sidebar-header"
+          style={activeServer?.bannerUrl ? {
+            backgroundImage: `linear-gradient(rgba(10,16,30,0.72), rgba(10,16,30,0.86)), url(${profileImageUrl(activeServer.bannerUrl)})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center"
+          } : undefined}
+        >
           <h2>{navMode === "servers" ? (activeServer?.name || "No server") : navMode.toUpperCase()}</h2>
           <small>{navMode === "servers" ? (activeGuild?.name || "Choose a channel") : "Unified communication hub"}</small>
         </header>
@@ -4076,7 +4194,21 @@ export function App() {
               placeholder="Server name"
               style={{ width: "100%", marginBottom: "0.75rem", padding: "0.5rem" }}
             />
-            <button onClick={createOfficialServer} disabled={!newOfficialServerName.trim()}>Create your server</button>
+            <input
+              type="text"
+              value={newOfficialServerLogoUrl}
+              onChange={(e) => setNewOfficialServerLogoUrl(e.target.value)}
+              placeholder="Logo URL (.png/.jpg/.webp/.svg)"
+              style={{ width: "100%", marginBottom: "0.75rem", padding: "0.5rem" }}
+            />
+            <input
+              type="text"
+              value={newOfficialServerBannerUrl}
+              onChange={(e) => setNewOfficialServerBannerUrl(e.target.value)}
+              placeholder="Banner URL (optional)"
+              style={{ width: "100%", marginBottom: "0.75rem", padding: "0.5rem" }}
+            />
+            <button onClick={createOfficialServer} disabled={!newOfficialServerName.trim() || !newOfficialServerLogoUrl.trim()}>Create your server</button>
           </div>
         )}
         {navMode === "servers" && servers.length > 0 && (
@@ -4331,6 +4463,21 @@ export function App() {
                         >
                           <span>{value}</span>
                           <small>:{name}:</small>
+                        </button>
+                      ))}
+                      {(guildState?.emotes || []).map((emote) => (
+                        <button
+                          key={emote.id || emote.name}
+                          type="button"
+                          className="emote-item"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            insertEmoteToken(String(emote.name || "").toLowerCase());
+                          }}
+                          title={`:${emote.name}:`}
+                        >
+                          <img className="message-custom-emote" src={emote.imageUrl || emote.image_url} alt={`:${emote.name}:`} />
+                          <small>:{emote.name}:</small>
                         </button>
                       ))}
                     </div>
@@ -4611,7 +4758,9 @@ export function App() {
                   <p className="hint" style={{ marginBottom: "0.5rem" }}>Connect to a server node by URL (self-hosted or provider).</p>
                   <input placeholder="Server name" value={newServerName ?? ""} onChange={(e) => setNewServerName(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
                   <input placeholder="https://node.example.com" value={newServerBaseUrl ?? "https://"} onChange={(e) => setNewServerBaseUrl(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
-                  <button onClick={createServer}>Add Server</button>
+                  <input placeholder="Logo URL (.png/.jpg/.webp/.svg)" value={newServerLogoUrl ?? ""} onChange={(e) => setNewServerLogoUrl(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+                  <input placeholder="Banner URL (optional)" value={newServerBannerUrl ?? ""} onChange={(e) => setNewServerBannerUrl(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+                  <button onClick={createServer} disabled={!newServerName.trim() || !newServerBaseUrl.trim() || !newServerLogoUrl.trim()}>Add Server</button>
                 </section>
               )}
 
@@ -4619,7 +4768,9 @@ export function App() {
                 <section className="card">
                   <p className="hint" style={{ marginBottom: "0.5rem" }}>One server hosted by us—name it and customize channels and roles.</p>
                   <input placeholder="Server name" value={newOfficialServerName ?? ""} onChange={(e) => setNewOfficialServerName(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
-                  <button onClick={createOfficialServer} disabled={!newOfficialServerName?.trim()}>Create your server</button>
+                  <input placeholder="Logo URL (.png/.jpg/.webp/.svg)" value={newOfficialServerLogoUrl ?? ""} onChange={(e) => setNewOfficialServerLogoUrl(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+                  <input placeholder="Banner URL (optional)" value={newOfficialServerBannerUrl ?? ""} onChange={(e) => setNewOfficialServerBannerUrl(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+                  <button onClick={createOfficialServer} disabled={!newOfficialServerName?.trim() || !newOfficialServerLogoUrl?.trim()}>Create your server</button>
                 </section>
               )}
             </div>
@@ -4639,6 +4790,23 @@ export function App() {
             <p className="hint">@{memberProfileCard.username} · {presenceLabel(getPresence(memberProfileCard?.id) || memberProfileCard?.status || "offline")}</p>
             {memberProfileCard.platformTitle && <p className="hint">{memberProfileCard.platformTitle}</p>}
             {formatAccountCreated(memberProfileCard.createdAt) && <p className="hint">Account created: {formatAccountCreated(memberProfileCard.createdAt)}</p>}
+            {Array.isArray(memberProfileCard.badgeDetails) && memberProfileCard.badgeDetails.length > 0 && (
+              <div className="popout-roles">
+                {memberProfileCard.badgeDetails.map((badge, index) => {
+                  const display = getBadgePresentation(badge);
+                  return (
+                    <span
+                      key={`${badge.id || badge.name || "badge"}-${index}`}
+                      className="popout-role-tag"
+                      title={display.name}
+                      style={{ backgroundColor: display.bgColor, color: display.fgColor, borderColor: display.bgColor }}
+                    >
+                      {display.icon}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
             {(memberProfileCard.roleIds?.length > 0) && guildState?.roles && (
               <div className="popout-roles">
                 {(guildState.roles || [])
@@ -4721,7 +4889,9 @@ export function App() {
                     <h4>Add Server Provider</h4>
                     <input placeholder="Server name" value={newServerName ?? ""} onChange={(e) => setNewServerName(e.target.value)} />
                     <input placeholder="https://node.provider.tld" value={newServerBaseUrl ?? "https://"} onChange={(e) => setNewServerBaseUrl(e.target.value)} />
-                    <button onClick={createServer}>Add Server</button>
+                    <input placeholder="Logo URL (.png/.jpg/.webp/.svg)" value={newServerLogoUrl ?? ""} onChange={(e) => setNewServerLogoUrl(e.target.value)} />
+                    <input placeholder="Banner URL (optional)" value={newServerBannerUrl ?? ""} onChange={(e) => setNewServerBannerUrl(e.target.value)} />
+                    <button onClick={createServer} disabled={!newServerName.trim() || !newServerBaseUrl.trim() || !newServerLogoUrl.trim()}>Add Server</button>
                   </section>
 
                   {activeServer && canManageServer && (
@@ -4774,6 +4944,35 @@ export function App() {
                         </select>
                       )}
                       <button onClick={createChannel}>Create Channel</button>
+                    </section>
+                  )}
+
+                  {activeServer && canManageServer && (
+                    <section className="card">
+                      <h4>Custom Emotes</h4>
+                      <p className="hint">Use emotes in chat with <code>:name:</code>.</p>
+                      <input
+                        placeholder="Emote name (example: hype)"
+                        value={newServerEmoteName}
+                        onChange={(event) => setNewServerEmoteName(event.target.value)}
+                      />
+                      <input
+                        placeholder="Emote image URL (.png/.gif/.webp/.svg)"
+                        value={newServerEmoteUrl}
+                        onChange={(event) => setNewServerEmoteUrl(event.target.value)}
+                      />
+                      <button onClick={createServerEmote}>Create Emote</button>
+                      <ul className="channel-perms-role-list" style={{ marginTop: "10px" }}>
+                        {(guildState?.emotes || []).map((emote) => (
+                          <li key={emote.id}>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                              <img className="message-custom-emote" src={emote.imageUrl || emote.image_url} alt={emote.name} />
+                              <code>:{emote.name}:</code>
+                            </span>
+                            <button className="ghost" style={{ marginLeft: "8px" }} onClick={() => removeServerEmote(emote.id)}>Remove</button>
+                          </li>
+                        ))}
+                      </ul>
                     </section>
                   )}
 
@@ -4869,18 +5068,32 @@ export function App() {
 
                   <section className="card">
                     <h4>Create Invite</h4>
+                    <p className="hint">Boost perk: custom code + permanent invite links (example: <code>?joinOpen</code>).</p>
                     <select value={inviteServerId} onChange={(event) => setInviteServerId(event.target.value)}>
                       <option value="">Select server</option>
                       {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
                     </select>
+                    <input
+                      placeholder="Custom code (Boost perk, optional)"
+                      value={inviteCustomCode}
+                      onChange={(event) => setInviteCustomCode(event.target.value)}
+                    />
+                    <label style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <input
+                        type="checkbox"
+                        checked={invitePermanent}
+                        onChange={(event) => setInvitePermanent(event.target.checked)}
+                      />
+                      Permanent invite (Boost perk)
+                    </label>
                     <button onClick={createInvite}>Generate Invite</button>
                     {inviteCode && (
                       <>
                         <p className="hint">Code: <code>{inviteCode}</code></p>
-                        <p className="hint">Invite link (share this — opens app and joins when logged in):</p>
+                        <p className="hint">Invite link (share this):</p>
                         <div className="invite-link-row">
-                          <input readOnly className="invite-link-input" value={`${typeof window !== "undefined" ? window.location.origin + (window.location.pathname || "/") : ""}?join=${encodeURIComponent(inviteCode)}`} />
-                          <button type="button" onClick={() => { const u = `${window.location.origin}${window.location.pathname || "/"}?join=${encodeURIComponent(inviteCode)}`; navigator.clipboard.writeText(u).then(() => setStatus("Invite link copied.")).catch(() => setStatus("Could not copy.")); }}>Copy link</button>
+                          <input readOnly className="invite-link-input" value={inviteJoinUrl || `${typeof window !== "undefined" ? window.location.origin + (window.location.pathname || "/") : ""}?join=${encodeURIComponent(inviteCode)}`} />
+                          <button type="button" onClick={() => { const u = inviteJoinUrl || `${window.location.origin}${window.location.pathname || "/"}?join=${encodeURIComponent(inviteCode)}`; navigator.clipboard.writeText(u).then(() => setStatus("Invite link copied.")).catch(() => setStatus("Could not copy.")); }}>Copy link</button>
                         </div>
                       </>
                     )}

@@ -32,6 +32,14 @@ const ReorderServersBody = z.object({
   serverIds: z.array(z.string().min(3)).min(1).max(200)
 });
 
+function isValidImageUrl(value: string | null | undefined) {
+  if (value == null) return true;
+  const trimmed = String(value).trim();
+  if (!trimmed) return false;
+  if (!/^https?:\/\//i.test(trimmed)) return false;
+  return /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(trimmed);
+}
+
 async function getPlatformRole(userId: string): Promise<"user" | "admin" | "owner"> {
   const founder = await q<{ founder_user_id: string | null }>(`SELECT founder_user_id FROM platform_config WHERE id=1`);
   if (founder.length && founder[0].founder_user_id === userId) return "owner";
@@ -88,6 +96,9 @@ export async function serverRoutes(app: FastifyInstance) {
   app.post("/v1/servers/official", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
     const body = parseBody(CreateOfficialServer, req.body);
+    if (!body.logoUrl) return rep.code(400).send({ error: "LOGO_REQUIRED" });
+    if (!isValidImageUrl(body.logoUrl)) return rep.code(400).send({ error: "INVALID_LOGO_URL" });
+    if (!isValidImageUrl(body.bannerUrl ?? null)) return rep.code(400).send({ error: "INVALID_BANNER_URL" });
 
     if (!OFFICIAL_NODE_BASE_URL) {
       return rep.code(503).send({ error: "OFFICIAL_SERVER_UNAVAILABLE", message: "Official server node URL is not configured." });
@@ -142,6 +153,9 @@ export async function serverRoutes(app: FastifyInstance) {
   app.post("/v1/servers", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
     const body = parseBody(CreateServer, req.body);
+    if (!body.logoUrl) return rep.code(400).send({ error: "LOGO_REQUIRED" });
+    if (!isValidImageUrl(body.logoUrl)) return rep.code(400).send({ error: "INVALID_LOGO_URL" });
+    if (!isValidImageUrl(body.bannerUrl ?? null)) return rep.code(400).send({ error: "INVALID_BANNER_URL" });
 
     const platformRole = await getPlatformRole(userId);
     if (platformRole === "user") {
@@ -275,6 +289,13 @@ export async function serverRoutes(app: FastifyInstance) {
     const userId = req.user.sub as string;
     const { serverId } = z.object({ serverId: z.string().min(3) }).parse(req.params);
     const body = parseBody(UpdateServerProfile, req.body);
+    if (body.logoUrl === null) return rep.code(400).send({ error: "LOGO_REQUIRED" });
+    if (body.logoUrl !== undefined && body.logoUrl !== null && !isValidImageUrl(body.logoUrl)) {
+      return rep.code(400).send({ error: "INVALID_LOGO_URL" });
+    }
+    if (body.bannerUrl !== undefined && body.bannerUrl !== null && !isValidImageUrl(body.bannerUrl)) {
+      return rep.code(400).send({ error: "INVALID_BANNER_URL" });
+    }
 
     const server = await q<{ owner_user_id: string }>(`SELECT owner_user_id FROM servers WHERE id=:serverId`, { serverId });
     if (!server.length) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
@@ -344,6 +365,10 @@ export async function serverRoutes(app: FastifyInstance) {
     if (!server.length) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
 
     let roles: string[] = JSON.parse(membership[0].roles || "[]");
+    const hasBoost = await q<{ badge: string }>(
+      `SELECT badge FROM user_badges WHERE user_id=:userId AND badge='boost' LIMIT 1`,
+      { userId }
+    );
     const platformRole = await getPlatformRole(userId);
     const isPlatformStaff = platformRole === "admin" || platformRole === "owner";
     const isServerOwner = server[0].owner_user_id === userId;
@@ -355,6 +380,7 @@ export async function serverRoutes(app: FastifyInstance) {
       if (!roles.includes("platform_admin")) roles.push("platform_admin");
       if (!roles.includes("platform_owner")) roles.push("platform_owner");
     }
+    if (hasBoost.length > 0 && !roles.includes("boost")) roles.push("boost");
 
     const idForToken = (OFFICIAL_NODE_BASE_URL && OFFICIAL_NODE_SERVER_ID && server[0].base_url === OFFICIAL_NODE_BASE_URL)
       ? OFFICIAL_NODE_SERVER_ID

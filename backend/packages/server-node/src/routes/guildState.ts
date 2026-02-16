@@ -71,6 +71,13 @@ export async function guildStateRoutes(app: FastifyInstance) {
       `SELECT user_id, role_id FROM member_roles WHERE guild_id=:guildId`,
       { guildId }
     );
+    const emotes = await q<{ id: string; guild_id: string; name: string; image_url: string; created_by: string; created_at: string }>(
+      `SELECT id,guild_id,name,image_url,created_by,created_at
+       FROM guild_emotes
+       WHERE guild_id=:guildId
+       ORDER BY name ASC`,
+      { guildId }
+    );
 
     const voiceStatesRaw = await q<{ user_id: string; channel_id: string; muted: number; deafened: number; updated_at: string }>(
       `SELECT user_id,channel_id,muted,deafened,updated_at
@@ -98,6 +105,14 @@ export async function guildStateRoutes(app: FastifyInstance) {
         roleIds: roleIdsByUser.get(member.user_id) || []
       })),
       me: { userId, roleIds: myRoleIds.map(r => r.role_id) },
+      emotes: emotes.map((emote) => ({
+        id: emote.id,
+        guildId: emote.guild_id,
+        name: emote.name,
+        imageUrl: emote.image_url,
+        createdBy: emote.created_by,
+        createdAt: emote.created_at
+      })),
       voiceStates: voiceStates.map((vs) => ({
         userId: vs.user_id,
         channelId: vs.channel_id,

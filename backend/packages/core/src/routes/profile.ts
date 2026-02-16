@@ -130,11 +130,57 @@ export async function profileRoutes(app: FastifyInstance) {
     );
     if (!u.length) return rep.code(404).send({ error: "NOT_FOUND" });
 
-    const badges = await q<{ badge: string }>(`SELECT badge FROM user_badges WHERE user_id=:id`, { id });
+    const badges = await q<{ badge: string; created_at: string }>(
+      `SELECT badge, created_at FROM user_badges WHERE user_id=:id`,
+      { id }
+    );
 
     const founder = await q<{ founder_user_id: string | null }>(`SELECT founder_user_id FROM platform_config WHERE id=1`);
     const isOwner = founder.length && founder[0].founder_user_id === id;
     const isAdmin = !!(await q<{ user_id: string }>(`SELECT user_id FROM platform_admins WHERE user_id=:id`, { id })).length;
+
+    const now = Date.now();
+    const badgeDetails = badges.map((row) => {
+      const badgeId = row.badge;
+      const createdAt = row.created_at ?? null;
+      const detail: any = {
+        id: badgeId,
+        name: badgeId,
+        createdAt,
+        icon: "🏷️",
+        bgColor: "#3a4f72",
+        fgColor: "#ffffff"
+      };
+      if (badgeId === "boost") {
+        const years = createdAt ? (now - new Date(createdAt).getTime()) / (365 * 24 * 60 * 60 * 1000) : 0;
+        detail.name = years >= 2 ? "Boost (2+ years)" : "Boost";
+        detail.icon = "➕";
+        detail.bgColor = years >= 2 ? "#d4af37" : "#4f7ecf";
+        detail.fgColor = "#ffffff";
+      }
+      return detail;
+    });
+
+    if (isAdmin && !isOwner) {
+      badgeDetails.push({
+        id: "platform_admin",
+        name: "Platform Admin",
+        icon: "🔨",
+        bgColor: "#2d6cdf",
+        fgColor: "#ffffff",
+        createdAt: null
+      });
+    }
+    if (isOwner) {
+      badgeDetails.push({
+        id: "platform_owner",
+        name: "Platform Owner",
+        icon: "👑",
+        bgColor: "#2d6cdf",
+        fgColor: "#ffffff",
+        createdAt: null
+      });
+    }
 
     return {
       id: u[0].id,
@@ -145,6 +191,7 @@ export async function profileRoutes(app: FastifyInstance) {
       bannerUrl: u[0].banner_url ?? null,
       createdAt: u[0].created_at ?? null,
       badges: badges.map(b => b.badge),
+      badgeDetails,
       platformRole: isOwner ? "owner" : (isAdmin ? "admin" : "user"),
       platformTitle: isOwner ? "Platform Owner" : (isAdmin ? "Platform Admin" : null)
     };

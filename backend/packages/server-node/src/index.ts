@@ -19,6 +19,7 @@ import { discordCompatRoutes } from "./routes/discordCompat.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { restorePersistedExtensions } from "./extensions/host.js";
 import { createLogger } from "./logger.js";
+import { emoteRoutes } from "./routes/emotes.js";
 
 const logger = createLogger("server");
 
@@ -45,6 +46,7 @@ const gw = attachNodeGateway(app);
 await guildRoutes(app);
 await guildJoinRoutes(app);
 await guildStateRoutes(app);
+await emoteRoutes(app);
 
 await channelRoutes(app, gw.broadcastGuild);
 await messageRoutes(app, gw.broadcastToChannel, gw.broadcastMention);
