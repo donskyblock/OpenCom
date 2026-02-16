@@ -60,6 +60,27 @@ const BUILTIN_EMOTES = {
   sob: "😭"
 };
 
+const GUILD_PERM = {
+  VIEW_CHANNEL: 1n << 0n,
+  SEND_MESSAGES: 1n << 1n,
+  MANAGE_CHANNELS: 1n << 2n,
+  MANAGE_ROLES: 1n << 3n,
+  KICK_MEMBERS: 1n << 4n,
+  BAN_MEMBERS: 1n << 5n,
+  ADMINISTRATOR: 1n << 60n
+};
+
+function parsePermissionBits(value) {
+  try {
+    if (typeof value === "bigint") return value;
+    if (typeof value === "number") return BigInt(value);
+    if (typeof value === "string" && value.trim()) return BigInt(value.trim());
+    return 0n;
+  } catch {
+    return 0n;
+  }
+}
+
 function isVoiceDebugEnabled() {
   const envEnabled = String(import.meta.env.VITE_DEBUG_VOICE || "").trim() === "1";
   const storageEnabled = typeof window !== "undefined" && localStorage.getItem(DEBUG_VOICE_STORAGE_KEY) === "1";
@@ -561,6 +582,10 @@ export function App() {
   const [newRoleName, setNewRoleName] = useState("");
   const [selectedRoleId, setSelectedRoleId] = useState("");
   const [selectedMemberId, setSelectedMemberId] = useState("");
+  const [moderationMemberId, setModerationMemberId] = useState("");
+  const [moderationBanReason, setModerationBanReason] = useState("");
+  const [moderationUnbanUserId, setModerationUnbanUserId] = useState("");
+  const [moderationBusy, setModerationBusy] = useState(false);
   const [profileCardPosition, setProfileCardPosition] = useState({ x: 26, y: 26 });
   const [draggingProfileCard, setDraggingProfileCard] = useState(false);
 
@@ -572,6 +597,7 @@ export function App() {
   const [addServerTab, setAddServerTab] = useState("create");
   const [serverContextMenu, setServerContextMenu] = useState(null);
   const [messageContextMenu, setMessageContextMenu] = useState(null);
+  const [memberContextMenu, setMemberContextMenu] = useState(null);
   const [replyTarget, setReplyTarget] = useState(null);
   const [serverPingCounts, setServerPingCounts] = useState({});
   const [memberProfileCard, setMemberProfileCard] = useState(null);
@@ -943,10 +969,47 @@ export function App() {
   const activeChannel = useMemo(() => channels.find((channel) => channel.id === activeChannelId) || null, [channels, activeChannelId]);
   const activeDm = useMemo(() => dms.find((dm) => dm.id === activeDmId) || null, [dms, activeDmId]);
 
+  const myGuildPermissions = useMemo(() => {
+    const roles = guildState?.roles || [];
+    const myRoleIds = new Set(guildState?.me?.roleIds || []);
+    let total = 0n;
+    for (const role of roles) {
+      if (!role) continue;
+      if (role.is_everyone || myRoleIds.has(role.id)) {
+        total |= parsePermissionBits(role.permissions);
+      }
+    }
+    return total;
+  }, [guildState?.roles, guildState?.me?.roleIds]);
+
+  const hasGuildPermission = useMemo(() => {
+    return (bit) => {
+      if ((myGuildPermissions & GUILD_PERM.ADMINISTRATOR) === GUILD_PERM.ADMINISTRATOR) return true;
+      return (myGuildPermissions & bit) === bit;
+    };
+  }, [myGuildPermissions]);
+
   const canManageServer = useMemo(() => {
     if (!activeServer) return false;
-    return (activeServer.roles || []).includes("owner") || (activeServer.roles || []).includes("platform_admin");
-  }, [activeServer]);
+    const coreManage = (activeServer.roles || []).includes("owner") || (activeServer.roles || []).includes("platform_admin");
+    return coreManage || hasGuildPermission(GUILD_PERM.MANAGE_CHANNELS) || hasGuildPermission(GUILD_PERM.MANAGE_ROLES);
+  }, [activeServer, hasGuildPermission]);
+
+  const canKickMembers = useMemo(() => {
+    if (!activeServer) return false;
+    return (activeServer.roles || []).includes("owner")
+      || (activeServer.roles || []).includes("platform_admin")
+      || hasGuildPermission(GUILD_PERM.KICK_MEMBERS);
+  }, [activeServer, hasGuildPermission]);
+
+  const canBanMembers = useMemo(() => {
+    if (!activeServer) return false;
+    return (activeServer.roles || []).includes("owner")
+      || (activeServer.roles || []).includes("platform_admin")
+      || hasGuildPermission(GUILD_PERM.BAN_MEMBERS);
+  }, [activeServer, hasGuildPermission]);
+
+  const canModerateMembers = canKickMembers || canBanMembers;
 
   const sortedChannels = useMemo(() => [...(channels || [])].filter(Boolean).sort((a, b) => (a.position ?? 0) - (b.position ?? 0)), [channels]);
   const categoryChannels = useMemo(() => sortedChannels.filter((channel) => channel && channel.type === "category"), [sortedChannels]);
@@ -1252,11 +1315,14 @@ export function App() {
     const onGlobalClick = () => {
       setServerContextMenu(null);
       setMessageContextMenu(null);
+      setMemberContextMenu(null);
       if (!settingsOpen) setMemberProfileCard(null);
     };
     const onEscape = (event) => {
       if (event.key === "Escape") {
         setServerContextMenu(null);
+        setMessageContextMenu(null);
+        setMemberContextMenu(null);
         setMemberProfileCard(null);
         setSettingsOpen(false);
       }
@@ -3057,6 +3123,69 @@ export function App() {
     }
   }
 
+  async function refreshActiveGuildState() {
+    if (!activeServer || !activeGuildId) return;
+    const state = await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/state`, activeServer.membershipToken);
+    setGuildState(state);
+  }
+
+  async function kickMember(memberId) {
+    if (!activeServer || !activeGuildId || !memberId || !canKickMembers || moderationBusy) return;
+    const member = resolvedMemberList.find((item) => item.id === memberId);
+    const label = member?.username || memberId;
+    if (!window.confirm(`Kick ${label}? They can rejoin with an invite.`)) return;
+
+    setModerationBusy(true);
+    try {
+      await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/members/${memberId}/kick`, activeServer.membershipToken, { method: "POST", body: "{}" });
+      await refreshActiveGuildState();
+      if (memberProfileCard?.id === memberId) setMemberProfileCard(null);
+      setStatus(`Kicked ${label}.`);
+    } catch (error) {
+      setStatus(`Kick failed: ${error.message}`);
+    } finally {
+      setModerationBusy(false);
+    }
+  }
+
+  async function banMember(memberId, reason = "") {
+    if (!activeServer || !activeGuildId || !memberId || !canBanMembers || moderationBusy) return;
+    const member = resolvedMemberList.find((item) => item.id === memberId);
+    const label = member?.username || memberId;
+    if (!window.confirm(`Ban ${label}? This removes them and blocks rejoin until unbanned.`)) return;
+
+    setModerationBusy(true);
+    try {
+      const payload = {};
+      if (reason.trim()) payload.reason = reason.trim().slice(0, 256);
+      await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/members/${memberId}/ban`, activeServer.membershipToken, {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      await refreshActiveGuildState();
+      if (memberProfileCard?.id === memberId) setMemberProfileCard(null);
+      setStatus(`Banned ${label}.`);
+    } catch (error) {
+      setStatus(`Ban failed: ${error.message}`);
+    } finally {
+      setModerationBusy(false);
+    }
+  }
+
+  async function unbanMember(memberId) {
+    if (!activeServer || !activeGuildId || !memberId || !canBanMembers || moderationBusy) return;
+    setModerationBusy(true);
+    try {
+      await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/bans/${memberId}`, activeServer.membershipToken, { method: "DELETE" });
+      setStatus(`Unbanned ${memberId}.`);
+      setModerationUnbanUserId("");
+    } catch (error) {
+      setStatus(`Unban failed: ${error.message}`);
+    } finally {
+      setModerationBusy(false);
+    }
+  }
+
   async function updateRole(roleId, { color, position }) {
     if (!activeServer || !roleId) return;
     try {
@@ -3091,6 +3220,8 @@ export function App() {
 
   function openServerContextMenu(event, server) {
     event.preventDefault();
+    setMessageContextMenu(null);
+    setMemberContextMenu(null);
     setServerContextMenu({ server, x: event.clientX, y: event.clientY });
   }
 
@@ -3574,7 +3705,19 @@ export function App() {
     event.preventDefault();
     const x = Math.min(event.clientX, window.innerWidth - 240);
     const y = Math.min(event.clientY, window.innerHeight - 180);
+    setMemberContextMenu(null);
     setMessageContextMenu({ x, y, message: { ...message, pinned: isMessagePinned(message) } });
+  }
+
+  function openMemberContextMenu(event, member) {
+    if (!member?.id) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const x = Math.min(event.clientX, window.innerWidth - 250);
+    const y = Math.min(event.clientY, window.innerHeight - 220);
+    setServerContextMenu(null);
+    setMessageContextMenu(null);
+    setMemberContextMenu({ x, y, member });
   }
 
   const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // 25MB for raw image upload
@@ -4251,7 +4394,14 @@ export function App() {
                     </div>
                     <div className="msg-body">
                       <strong className="msg-author">
-                        <button className="name-btn" style={roleColor ? { color: roleColor } : undefined} onClick={() => openMemberProfile({ id: group.authorId, username: group.author, status: getPresence(group.authorId), pfp_url: group.pfpUrl })}>{group.author}</button>
+                        <button
+                          className="name-btn"
+                          style={roleColor ? { color: roleColor } : undefined}
+                          onClick={() => openMemberProfile({ id: group.authorId, username: group.author, status: getPresence(group.authorId), pfp_url: group.pfpUrl })}
+                          onContextMenu={(event) => openMemberContextMenu(event, { id: group.authorId, username: group.author, pfp_url: group.pfpUrl, roleIds: member?.roleIds || [] })}
+                        >
+                          {group.author}
+                        </button>
                         {topRole && <span className="msg-role-tag">{topRole.name}</span>}
                         <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span>
                       </strong>
@@ -4527,7 +4677,13 @@ export function App() {
                         const inMyCall = memberVoice?.channelId && memberVoice.channelId === voiceConnectedChannelId;
                         const speaking = !!inMyCall && !!voiceSpeakingByGuild[activeGuildId]?.[member.id];
                         return (
-                          <button className="member-row" key={member.id} title={`View ${member.username}`} onClick={(event) => { event.stopPropagation(); openMemberProfile(member); }}>
+                          <button
+                            className="member-row"
+                            key={member.id}
+                            title={`View ${member.username}`}
+                            onClick={(event) => { event.stopPropagation(); openMemberProfile(member); }}
+                            onContextMenu={(event) => openMemberContextMenu(event, member)}
+                          >
                             {member.pfp_url ? (
                               <img src={profileImageUrl(member.pfp_url)} alt={member.username} className={`avatar member-avatar ${speaking ? "speaking" : ""}`} style={{ objectFit: "cover" }} />
                             ) : (
@@ -4576,7 +4732,13 @@ export function App() {
                   </div>
                   <div className="msg-body">
                     <strong className="msg-author">
-                      <button className="name-btn" onClick={() => openMemberProfile({ id: group.authorId, username: group.author, status: getPresence(group.authorId), pfp_url: group.pfpUrl })}>{group.author}</button>
+                      <button
+                        className="name-btn"
+                        onClick={() => openMemberProfile({ id: group.authorId, username: group.author, status: getPresence(group.authorId), pfp_url: group.pfpUrl })}
+                        onContextMenu={(event) => openMemberContextMenu(event, { id: group.authorId, username: group.author, pfp_url: group.pfpUrl })}
+                      >
+                        {group.author}
+                      </button>
                       <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span>
                     </strong>
                     {group.messages.map((message) => (
@@ -4710,6 +4872,52 @@ export function App() {
         </div>
       )}
 
+      {memberContextMenu && (
+        <div className="server-context-menu" style={{ top: memberContextMenu.y, left: memberContextMenu.x }} onClick={(event) => event.stopPropagation()}>
+          <button onClick={() => { openMemberProfile(memberContextMenu.member); setMemberContextMenu(null); }}>View Profile</button>
+          <button onClick={() => { openDmFromFriend({ id: memberContextMenu.member.id, username: memberContextMenu.member.username || memberContextMenu.member.id }); setMemberContextMenu(null); }}>
+            Message
+          </button>
+          <button onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(memberContextMenu.member.id || "");
+              setStatus("User ID copied.");
+            } catch {
+              setStatus("Could not copy user ID.");
+            }
+            setMemberContextMenu(null);
+          }}>
+            Copy User ID
+          </button>
+          {canKickMembers && memberContextMenu.member.id !== me?.id && (
+            <button className="danger" onClick={async () => {
+              await kickMember(memberContextMenu.member.id);
+              setMemberContextMenu(null);
+            }}>
+              Kick Member
+            </button>
+          )}
+          {canBanMembers && memberContextMenu.member.id !== me?.id && (
+            <button className="danger" onClick={async () => {
+              await banMember(memberContextMenu.member.id, "");
+              setMemberContextMenu(null);
+            }}>
+              Ban Member
+            </button>
+          )}
+          {canModerateMembers && (
+            <button onClick={() => {
+              setModerationMemberId(memberContextMenu.member.id || "");
+              setSettingsOpen(true);
+              setSettingsTab("moderation");
+              setMemberContextMenu(null);
+            }}>
+              Open Moderation Panel
+            </button>
+          )}
+        </div>
+      )}
+
       {serverContextMenu && (
         <div className="server-context-menu" style={{ top: serverContextMenu.y, left: serverContextMenu.x }} onClick={(event) => event.stopPropagation()}>
           <button onClick={() => openServerFromContext(serverContextMenu.server.id)}>Open Server</button>
@@ -4821,6 +5029,12 @@ export function App() {
             <p>{memberProfileCard.bio || "No bio set."}</p>
             <div className="popout-actions">
               <button className="ghost" onClick={() => openDmFromFriend({ id: memberProfileCard.id, username: memberProfileCard.username })}>Message</button>
+              {canKickMembers && memberProfileCard.id !== me?.id && (
+                <button className="ghost" onClick={() => kickMember(memberProfileCard.id)}>Kick</button>
+              )}
+              {canBanMembers && memberProfileCard.id !== me?.id && (
+                <button className="danger" onClick={() => banMember(memberProfileCard.id, "")}>Ban</button>
+              )}
               <button onClick={() => setMemberProfileCard(null)}>Close</button>
             </div>
           </div>
@@ -4837,6 +5051,9 @@ export function App() {
               <button className={settingsTab === "billing" ? "active" : "ghost"} onClick={() => { setSettingsTab("billing"); loadBoostStatus(); }}>💳 Billing</button>
               <button className={settingsTab === "server" ? "active" : "ghost"} onClick={() => setSettingsTab("server")}>Server</button>
               <button className={settingsTab === "roles" ? "active" : "ghost"} onClick={() => setSettingsTab("roles")}>Roles</button>
+              {canModerateMembers && (
+                <button className={settingsTab === "moderation" ? "active" : "ghost"} onClick={() => setSettingsTab("moderation")}>Moderation</button>
+              )}
               <button className={settingsTab === "invites" ? "active" : "ghost"} onClick={() => setSettingsTab("invites")}>Invites</button>
               <button className={settingsTab === "appearance" ? "active" : "ghost"} onClick={() => setSettingsTab("appearance")}>Appearance</button>
               <button className={settingsTab === "extensions" ? "active" : "ghost"} onClick={() => setSettingsTab("extensions")}>Extensions</button>
@@ -5051,6 +5268,45 @@ export function App() {
                     </select>
                     <button onClick={assignRoleToMember}>Assign Role</button>
                   </section>
+                </>
+              )}
+
+              {settingsTab === "moderation" && canModerateMembers && (
+                <>
+                  <section className="card">
+                    <h4>Member moderation</h4>
+                    <p className="hint">Kick removes a member from this guild. Ban removes and blocks rejoin until unbanned.</p>
+                    <select value={moderationMemberId} onChange={(event) => setModerationMemberId(event.target.value)}>
+                      <option value="">Select member</option>
+                      {resolvedMemberList
+                        .filter((member) => member.id !== me?.id)
+                        .map((member) => <option key={member.id} value={member.id}>{member.username}</option>)}
+                    </select>
+                    {canBanMembers && (
+                      <input
+                        placeholder="Ban reason (optional)"
+                        value={moderationBanReason}
+                        onChange={(event) => setModerationBanReason(event.target.value)}
+                      />
+                    )}
+                    <div className="row-actions">
+                      {canKickMembers && <button disabled={!moderationMemberId || moderationBusy} onClick={() => kickMember(moderationMemberId)}>Kick Member</button>}
+                      {canBanMembers && <button className="danger" disabled={!moderationMemberId || moderationBusy} onClick={() => banMember(moderationMemberId, moderationBanReason)}>Ban Member</button>}
+                    </div>
+                  </section>
+
+                  {canBanMembers && (
+                    <section className="card">
+                      <h4>Unban user</h4>
+                      <p className="hint">Paste a user ID and remove their ban record.</p>
+                      <input
+                        placeholder="User ID to unban"
+                        value={moderationUnbanUserId}
+                        onChange={(event) => setModerationUnbanUserId(event.target.value)}
+                      />
+                      <button disabled={!moderationUnbanUserId.trim() || moderationBusy} onClick={() => unbanMember(moderationUnbanUserId.trim())}>Unban User</button>
+                    </section>
+                  )}
                 </>
               )}
 
