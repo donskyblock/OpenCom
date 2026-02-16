@@ -57,12 +57,12 @@ export const commands = [
         const input = `${username}'s ${skill} level is ${skillLevel}`;
         const me = await ctx.apis.node.get("/v1/me").catch(() => null);
         return {
-        content: `${input}`,
-        user: me?.user?.username || ctx.userId,
-        serverId: ctx.serverId
-      };
-    }
-  }),
+            content: `${input}`,
+            user: me?.user?.username || ctx.userId,
+            serverId: ctx.serverId
+        };
+        }
+    }),
   command({
     name: "dungeon",
     description: "Get a player's catacombs level",
@@ -73,12 +73,12 @@ export const commands = [
         const input = `${username} is catacombs ${cata}`;
         const me = await ctx.apis.node.get("/v1/me").catch(() => null);
         return {
-        content: `${input}`,
-        user: me?.user?.username || ctx.userId,
-        serverId: ctx.serverId
-      };
-    }
-  }),
+            content: `${input}`,
+            user: me?.user?.username || ctx.userId,
+            serverId: ctx.serverId
+        };
+        }
+    }),
 ];
 
 export async function activate(ctx) {
