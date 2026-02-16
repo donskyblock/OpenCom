@@ -1,16 +1,50 @@
 import { command, createServerContext, optionString } from "../../lib/opencom-extension-sdk.js";
 
 
-function getSkillLevel(username) {
-    return 0
+async function getSkillLevel(username, skill) {
+    res = await fetch(`https://api.donskyblock.xyz/skill?name=${username}&skill=${skill}`, {
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    });
+    const data = await res.json();
+    if (data.success != true){
+        return 0;
+    }
+    const skill_level = data.level;
+    return skill_level;
 }
 
-function getsSlayerLevel(username, slayer) {
-    return 0
+
+async function getSlayerLevel(username, slayer) {
+    res = await fetch(`https://api.donskyblock.xyz/slayer?name=${username}&slayer=${slayer}`, {
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    });
+    const data = await res.json();
+    if (data.success != true){
+        return 0;
+    }
+    const slayer_level = data.level;
+    return slayer_level;
 }
 
-function getDungeonLevel(username) {
-    return 0
+async function getDungeonLevel(username) {
+    res = await fetch(`https://api.donskyblock.xyz/cata?name=${username}`, {
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    });
+    const data = await res.json();
+    if (data.success != true){
+        return 0;
+    }
+    const slayer_level = data.level;
+    return slayer_level;
 }
 
 
@@ -36,7 +70,7 @@ export const commands = [
     async execute(ctx) {
         const username = String(ctx.args?.username);
         const slayer = String(ctx.args?.slayer);
-        const slayerLevel = getsSlayerLevel(username, slayer);
+        const slayerLevel = getSlayerLevel(username, slayer);
         const input = `${username}'s ${slayer} slayer level is ${slayerLevel}`;
         const me = await ctx.apis.node.get("/v1/me").catch(() => null);
       return {
