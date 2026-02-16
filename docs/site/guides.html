@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenCom Docs - Guides</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
+      <div class="nav-group"><div class="nav-title">Get Started</div><a class="nav-link" href="./index.html">Welcome</a><a class="nav-link" href="./quickstart.html">Quickstart</a></div>
+      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a></div>
+      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a></div>
+      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
+    </aside>
+
+    <div class="content-wrap">
+      <header class="topbar">
+        <button class="mobile-toggle" id="mobile-toggle">Menu</button>
+        <div class="search"><input id="doc-search" placeholder="Search docs..." /><div class="search-results" id="search-results"></div></div>
+        <div class="search-hint">Press <kbd>/</kbd> to search</div>
+      </header>
+
+      <main class="content">
+        <section class="hero">
+          <div class="eyebrow">Guides</div>
+          <h1>Platform features</h1>
+          <p class="lead">Reference behavior for attachments, embeds, invites, badges, and boost perks.</p>
+        </section>
+
+        <h2 id="attachments">Attachments and embeds</h2>
+        <ul>
+          <li>Attachments use multipart upload via <code>/v1/attachments/upload</code>.</li>
+          <li>Tier limits are applied server-side and include boost perks (up to 100 MB for qualified users).</li>
+          <li>Messages can include structured embeds and link previews.</li>
+          <li>Extension commands can return embed payloads the same way as normal message API flows.</li>
+        </ul>
+
+        <h2 id="invites">Invites and join flow</h2>
+        <ul>
+          <li>Join accepts invite code or full URL in one input.</li>
+          <li>Opening invite links should resolve invite metadata and prompt user confirmation before joining.</li>
+          <li>Invite events can emit richer message/embed history entries in the server feed.</li>
+          <li>Boost-enabled servers can request custom permanent invite aliases when permitted by policy.</li>
+        </ul>
+
+        <h2 id="badges">Badges and boost perks</h2>
+        <ul>
+          <li>Platform owner badge: crown icon style.</li>
+          <li>Platform admin badge: hammer icon style.</li>
+          <li>Boost badge: plus icon with tiered background colors (2+ year tier supports gold background).</li>
+          <li>UI should expose badge name on hover tooltip.</li>
+        </ul>
+
+        <h2>Server branding</h2>
+        <ul>
+          <li>Server logo and banner fields are editable via profile routes.</li>
+          <li>Image validation should reject invalid formats/sizes and return actionable errors.</li>
+        </ul>
+      </main>
+    </div>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

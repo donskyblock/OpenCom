@@ -28,12 +28,12 @@ Fill `backend/.env` values (DB/JWT/JWK vars especially).
 ## 2) One-command setup
 ### Linux/macOS
 ```bash
-./scripts/setup.sh all
+./scripts/dev/setup.sh all
 ```
 
 ### Windows
 ```bat
-scripts\setup.bat all
+scripts\dev\setup.bat all
 ```
 
 What this does:
@@ -44,23 +44,23 @@ What this does:
 ### Fully inclusive backend DB setup (env + database + tables)
 For local MariaDB installed on the host (uses `sudo mysql` for provisioning):
 ```bash
-./scripts/setup-database.sh --init-env --provision-local-db
+./scripts/dev/setup-database.sh --init-env --provision-local-db
 ```
 
 For dockerized MariaDB from `backend/docker-compose.yml`:
 ```bash
-./scripts/setup-database.sh --init-env --with-docker
+./scripts/dev/setup-database.sh --init-env --with-docker
 ```
 
 ## 3) Run services
 ### Linux/macOS
 ```bash
-./scripts/start.sh all
+./scripts/dev/start.sh all
 ```
 
 ### Windows
 ```bat
-scripts\start.bat all
+scripts\dev\start.bat all
 ```
 
 You can also run targets individually:
@@ -72,22 +72,22 @@ You can also run targets individually:
 ## 4) Migration commands
 Run migrations only (expects backend/.env and DB access already set up):
 ```bash
-./scripts/setup-database.sh
+./scripts/dev/setup-database.sh
 ```
 
 Run full env + DB provisioning + migrations (host MariaDB + sudo):
 ```bash
-./scripts/setup-database.sh --init-env --provision-local-db
+./scripts/dev/setup-database.sh --init-env --provision-local-db
 ```
 
 Run full env + docker infra + migrations:
 ```bash
-./scripts/setup-database.sh --init-env --with-docker
+./scripts/dev/setup-database.sh --init-env --with-docker
 ```
 
 Equivalent manual commands:
 ```bash
-./scripts/init-env.sh
+./scripts/dev/init-env.sh
 cd backend
 npm run migrate:core
 npm run migrate:node

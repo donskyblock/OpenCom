@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenCom Docs - Quickstart</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
+      <div class="nav-group"><div class="nav-title">Get Started</div><a class="nav-link" href="./index.html">Welcome</a><a class="nav-link" href="./quickstart.html">Quickstart</a></div>
+      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a></div>
+      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a></div>
+      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
+    </aside>
+
+    <div class="content-wrap">
+      <header class="topbar">
+        <button class="mobile-toggle" id="mobile-toggle">Menu</button>
+        <div class="search"><input id="doc-search" placeholder="Search docs..." /><div class="search-results" id="search-results"></div></div>
+        <div class="search-hint">Press <kbd>/</kbd> to search</div>
+      </header>
+
+      <main class="content">
+        <section class="hero">
+          <div class="eyebrow">Get Started</div>
+          <h1>Quickstart</h1>
+          <p class="lead">Minimal setup path for local development on Linux, macOS, and Windows.</p>
+        </section>
+
+        <h2>Prerequisites</h2>
+        <ul>
+          <li>Node.js 20+</li>
+          <li>npm 10+</li>
+          <li>Docker + Docker Compose (recommended)</li>
+        </ul>
+
+        <h2>Clone and setup</h2>
+        <pre><code>git clone &lt;repo-url&gt;
+cd OpenCom
+cp backend/.env.example backend/.env
+./scripts/dev/setup.sh all</code></pre>
+
+        <h2>Run services</h2>
+        <pre><code>./scripts/dev/start.sh all</code></pre>
+
+        <h2>Windows commands</h2>
+        <pre><code>scripts\setup.bat all
+scripts\start.bat all</code></pre>
+
+        <h2>Database migrations</h2>
+        <pre><code>./scripts/dev/setup-database.sh
+# or full provision:
+./scripts/dev/setup-database.sh --init-env --with-docker</code></pre>
+
+        <h2>Common URLs</h2>
+        <table>
+          <thead><tr><th>Service</th><th>URL</th></tr></thead>
+          <tbody>
+            <tr><td>Frontend</td><td><code>https://opencom.donskyblock.xyz</code></td></tr>
+            <tr><td>Core API</td><td><code>https://openapi.donskyblock.xyz</code></td></tr>
+          </tbody>
+        </table>
+
+        <p class="footer">For full environment setup detail, see <code>docs/SETUP_GUIDE.md</code>.</p>
+      </main>
+    </div>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

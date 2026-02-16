@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenCom Docs - Server Node API</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
+      <div class="nav-group"><div class="nav-title">Get Started</div><a class="nav-link" href="./index.html">Welcome</a><a class="nav-link" href="./quickstart.html">Quickstart</a></div>
+      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a></div>
+      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a></div>
+      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
+    </aside>
+
+    <div class="content-wrap">
+      <header class="topbar">
+        <button class="mobile-toggle" id="mobile-toggle">Menu</button>
+        <div class="search"><input id="doc-search" placeholder="Search docs..." /><div class="search-results" id="search-results"></div></div>
+        <div class="search-hint">Press <kbd>/</kbd> to search</div>
+      </header>
+
+      <main class="content">
+        <section class="hero">
+          <div class="eyebrow">API</div>
+          <h1>Server Node API reference</h1>
+          <p class="lead">Server Node executes guild state. Includes channels, messages, emotes, attachments, voice flow, extension runtime, and moderation actions.</p>
+        </section>
+
+        <h2>Guilds, channels, messages</h2>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/v1/guilds</code></td><td>List memberships</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds</code></td><td>Create guild</td></tr>
+            <tr><td>GET</td><td><code>/v1/guilds/:guildId/channels</code></td><td>List channels (hidden-channel aware)</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/channels/reorder</code></td><td>Reorder channels/categories</td></tr>
+            <tr><td>POST</td><td><code>/v1/channels/:channelId/messages</code></td><td>Send message</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/channels/:channelId/messages/:messageId</code></td><td>Delete message</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Attachments, embeds, emotes</h2>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>POST</td><td><code>/v1/attachments/upload</code></td><td>Tier-aware upload (boost perks supported)</td></tr>
+            <tr><td>GET</td><td><code>/v1/attachments/:id</code></td><td>Fetch attachment object</td></tr>
+            <tr><td>GET</td><td><code>/v1/guilds/:guildId/emotes</code></td><td>List custom server emotes</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/emotes</code></td><td>Create custom emote</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/guilds/:guildId/emotes/:emoteId</code></td><td>Delete emote</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Voice and moderation</h2>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>POST</td><td><code>/v1/channels/:channelId/voice/join</code></td><td>Join voice channel</td></tr>
+            <tr><td>POST</td><td><code>/v1/channels/:channelId/voice/leave</code></td><td>Leave voice channel</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/members/:memberId/kick</code></td><td>Kick member</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/members/:memberId/ban</code></td><td>Ban member</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/guilds/:guildId/bans/:memberId</code></td><td>Unban member</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Node extension runtime</h2>
+        <ul>
+          <li><code>GET /v1/extensions</code> and <code>GET /v1/extensions/commands</code></li>
+          <li><code>GET/PUT /v1/extensions/:extensionId/config</code></li>
+          <li><code>POST /v1/extensions/activate</code> and <code>POST /v1/extensions/:extensionId/deactivate</code></li>
+          <li><code>POST /v1/extensions/commands/:commandName/execute</code></li>
+        </ul>
+
+        <p class="footer">Source routes live in <code>backend/packages/server-node/src/routes</code>.</p>
+      </main>
+    </div>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

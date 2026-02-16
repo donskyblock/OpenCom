@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenCom Docs - Core API</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
+      <div class="nav-group"><div class="nav-title">Get Started</div><a class="nav-link" href="./index.html">Welcome</a><a class="nav-link" href="./quickstart.html">Quickstart</a></div>
+      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a></div>
+      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a></div>
+      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
+    </aside>
+
+    <div class="content-wrap">
+      <header class="topbar">
+        <button class="mobile-toggle" id="mobile-toggle">Menu</button>
+        <div class="search"><input id="doc-search" placeholder="Search docs..." /><div class="search-results" id="search-results"></div></div>
+        <div class="search-hint">Press <kbd>/</kbd> to search</div>
+      </header>
+
+      <main class="content">
+        <section class="hero">
+          <div class="eyebrow">API</div>
+          <h1>Core API reference</h1>
+          <p class="lead">Core handles identity, sessions, server registry, invites, social, billing, profile metadata, and extension orchestration.</p>
+        </section>
+
+        <h2>Authentication</h2>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>POST</td><td><code>/v1/auth/register</code></td><td>Create account</td></tr>
+            <tr><td>POST</td><td><code>/v1/auth/login</code></td><td>Issue access + refresh tokens</td></tr>
+            <tr><td>POST</td><td><code>/v1/auth/refresh</code></td><td>Rotate access token</td></tr>
+            <tr><td>GET</td><td><code>/v1/auth/sessions</code></td><td>List active sessions</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/auth/sessions/:sessionId</code></td><td>Revoke one session</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Servers and membership</h2>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>POST</td><td><code>/v1/servers</code></td><td>Create server registration</td></tr>
+            <tr><td>GET</td><td><code>/v1/servers</code></td><td>List user servers</td></tr>
+            <tr><td>PATCH</td><td><code>/v1/servers/:serverId/profile</code></td><td>Update server logo/banner/profile</td></tr>
+            <tr><td>POST</td><td><code>/v1/servers/reorder</code></td><td>Reorder server list</td></tr>
+            <tr><td>POST</td><td><code>/v1/servers/:serverId/membership-token</code></td><td>Refresh membership token</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Invites</h2>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>POST</td><td><code>/v1/invites</code></td><td>Create invite (supports custom/permanent when allowed)</td></tr>
+            <tr><td>GET</td><td><code>/v1/invites/:code</code></td><td>Resolve invite preview/metadata</td></tr>
+            <tr><td>POST</td><td><code>/v1/invites/join</code></td><td>Join via code or URL input</td></tr>
+            <tr><td>POST</td><td><code>/v1/invites/:code/join</code></td><td>Join via explicit invite code</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Extensions from Core</h2>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/v1/extensions/catalog</code></td><td>Global extension registry</td></tr>
+            <tr><td>GET</td><td><code>/v1/servers/:serverId/extensions</code></td><td>Server extension state</td></tr>
+            <tr><td>GET</td><td><code>/v1/servers/:serverId/extensions/:extensionId/config</code></td><td>Resolved extension config</td></tr>
+            <tr><td>PUT</td><td><code>/v1/servers/:serverId/extensions/:extensionId/config</code></td><td>Update extension config in realtime</td></tr>
+            <tr><td>POST</td><td><code>/v1/servers/:serverId/extensions/:extensionId</code></td><td>Enable/disable extension</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Other route groups</h2>
+        <ul>
+          <li><code>/v1/social/*</code> friends, requests, DM threads/messages</li>
+          <li><code>/v1/profile-images/*</code> profile image hosting</li>
+          <li><code>/v1/billing/boost/*</code> boost status and checkout sync</li>
+          <li><code>/v1/admin/*</code> platform admin and badges</li>
+        </ul>
+
+        <p class="footer">Source routes live in <code>backend/packages/core/src/routes</code>.</p>
+      </main>
+    </div>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

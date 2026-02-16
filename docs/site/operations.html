@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenCom Docs - Operations</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
+      <div class="nav-group"><div class="nav-title">Get Started</div><a class="nav-link" href="./index.html">Welcome</a><a class="nav-link" href="./quickstart.html">Quickstart</a></div>
+      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a></div>
+      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a></div>
+      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
+    </aside>
+
+    <div class="content-wrap">
+      <header class="topbar">
+        <button class="mobile-toggle" id="mobile-toggle">Menu</button>
+        <div class="search"><input id="doc-search" placeholder="Search docs..." /><div class="search-results" id="search-results"></div></div>
+        <div class="search-hint">Press <kbd>/</kbd> to search</div>
+      </header>
+
+      <main class="content">
+        <section class="hero">
+          <div class="eyebrow">Operations</div>
+          <h1>Runtime operations and reliability</h1>
+          <p class="lead">Operational references for auth/session durability, logging behavior, and environment variables.</p>
+        </section>
+
+        <h2 id="auth">Auth and token refresh</h2>
+        <ul>
+          <li>Frontend should refresh membership tokens before expiry using the membership-token route.</li>
+          <li>Access token refresh is handled via <code>POST /v1/auth/refresh</code>.</li>
+          <li>Longer refresh lifetime reduces forced logouts, but requires strong revocation + session security controls.</li>
+          <li>Use session listing/revoke routes for incident response and account safety.</li>
+        </ul>
+
+        <h2 id="logging">Logging and diagnostics</h2>
+        <ul>
+          <li>Terminal output defaults to cleaner logs; request-level HTTP noise can be toggled with env flags.</li>
+          <li>Log files should be persisted to a logging directory for audit and debugging.</li>
+          <li>Debug flags: <code>DEBUG_HTTP=1</code>, <code>DEBUG_VOICE=1</code>, <code>LOG_LEVEL=debug|info|warn|error</code>.</li>
+          <li>Warnings and errors are prioritized in output for signal over noise.</li>
+        </ul>
+
+        <h2 id="env">Recommended env variables</h2>
+        <table>
+          <thead><tr><th>Variable</th><th>Scope</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>CORE_JWT_ACCESS_SECRET</code></td><td>Core</td><td>Access token signing secret</td></tr>
+            <tr><td><code>CORE_JWT_REFRESH_SECRET</code></td><td>Core</td><td>Refresh token signing secret</td></tr>
+            <tr><td><code>LOG_LEVEL</code></td><td>Core/Node</td><td>Logger threshold</td></tr>
+            <tr><td><code>DEBUG_HTTP</code></td><td>Node</td><td>Enable HTTP request debug logs</td></tr>
+            <tr><td><code>DEBUG_VOICE</code></td><td>Node</td><td>Enable voice diagnostics route</td></tr>
+          </tbody>
+        </table>
+
+        <p class="footer">Voice debugging checklist lives in <code>docs/VOICE_DEBUGGING.md</code>.</p>
+      </main>
+    </div>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>
