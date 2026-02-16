@@ -1,0 +1,6 @@
+ALTER TABLE servers
+  ADD COLUMN IF NOT EXISTS logo_url TEXT NULL,
+  ADD COLUMN IF NOT EXISTS banner_url TEXT NULL;
+
+ALTER TABLE memberships
+  ADD COLUMN IF NOT EXISTS display_order INT NULL;

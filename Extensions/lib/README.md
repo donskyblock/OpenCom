@@ -1,6 +1,6 @@
 # opencom-extension-sdk
 
-Official SDK for building OpenCom extensions with command support and API helpers.
+Official SDK for building OpenCom extensions with command support, persisted config, and API helpers.
 
 ## Install
 
@@ -16,8 +16,12 @@ import { defineExtension, command, optionString } from "opencom-extension-sdk";
 export const manifest = defineExtension({
   id: "my-tools",
   name: "My Tools",
+  author: "you",
   version: "1.0.0",
-  scope: "server"
+  scope: "server",
+  configDefaults: {
+    greetingPrefix: "Hello"
+  }
 });
 
 export const commands = [
@@ -26,8 +30,9 @@ export const commands = [
     description: "Say hi",
     options: [optionString("name", "Target name", false)],
     async execute(ctx) {
+      const cfg = await ctx.config.get();
       const name = String(ctx.args.name || "friend");
-      return { content: `Hello ${name}!`, ephemeral: false };
+      return { content: `${cfg.greetingPrefix} ${name}!`, embeds: [] };
     }
   })
 ];
@@ -52,8 +57,14 @@ Command names are namespaced as:
 Every command execute context includes:
 - `ctx.apis.core.*` for Core API
 - `ctx.apis.node.*` for Node API
+- `ctx.config.get/set/patch` for server-scoped extension config
 
-The SDK also exposes `createOpenComApiClient()` if you need standalone clients.
+The SDK also exposes `createOpenComApiClient()` if you need standalone clients, including:
+- invites (`joinFromInput`)
+- server token refresh (`servers.refreshMembershipToken`)
+- moderation (`nodeGuilds.kickMember/banMember`)
+- attachment uploads (`attachments.upload`)
+- extension config endpoints (`extensions.serverConfig/setServerConfig`)
 
 ## Returned command payload
 

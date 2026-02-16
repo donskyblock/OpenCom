@@ -1,22 +1,52 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { q } from "../db.js";
-import { executeRegisteredCommand, listCommandsForServer, readServerExtensionCatalog, syncExtensionsForServer } from "../extensions/host.js";
+import {
+  activateExtensionForServer,
+  deactivateExtensionForServer,
+  executeRegisteredCommand,
+  getExtensionConfigForServer,
+  listCommandsForServer,
+  readServerExtensionCatalog,
+  setExtensionConfigForServer,
+  syncExtensionsForServer
+} from "../extensions/host.js";
 
 const SyncExtensionsBody = z.object({
   extensions: z.array(z.object({
     id: z.string().min(2),
     name: z.string().min(1),
     version: z.string().min(1),
+    author: z.string().min(1).optional(),
     description: z.string().optional(),
     entry: z.string().optional(),
     scope: z.enum(["client", "server", "both"]).optional(),
-    permissions: z.array(z.string()).optional()
+    permissions: z.array(z.string()).optional(),
+    configDefaults: z.record(z.any()).optional()
   }))
 });
 
 const ExecuteCommandBody = z.object({
   args: z.record(z.any()).optional()
+});
+
+const ExtensionConfigBody = z.object({
+  config: z.record(z.any()).default({}),
+  mode: z.enum(["replace", "patch"]).optional().default("replace")
+});
+
+const ActivateExtensionBody = z.object({
+  extension: z.object({
+    id: z.string().min(2),
+    name: z.string().min(1),
+    version: z.string().min(1),
+    author: z.string().min(1).optional(),
+    description: z.string().optional(),
+    entry: z.string().optional(),
+    scope: z.enum(["client", "server", "both"]).optional(),
+    permissions: z.array(z.string()).optional(),
+    configDefaults: z.record(z.any()).optional()
+  })
 });
 
 export async function extensionRoutes(app: FastifyInstance) {
@@ -40,6 +70,26 @@ export async function extensionRoutes(app: FastifyInstance) {
   app.get("/v1/extensions/commands", { preHandler: [app.authenticate] } as any, async (req: any) => {
     const serverId = req.auth.coreServerId as string;
     return { commands: listCommandsForServer(serverId) };
+  });
+
+  app.get("/v1/extensions/:extensionId/config", { preHandler: [app.authenticate] } as any, async (req: any) => {
+    const serverId = req.auth.coreServerId as string;
+    const { extensionId } = z.object({ extensionId: z.string().min(2) }).parse(req.params);
+    const config = await getExtensionConfigForServer(serverId, extensionId);
+    return { extensionId, config };
+  });
+
+  app.put("/v1/extensions/:extensionId/config", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const serverId = req.auth.coreServerId as string;
+    const actorRoles = req.auth.roles || [];
+    if (!actorRoles.includes("owner") && !actorRoles.includes("platform_admin") && !actorRoles.includes("platform_owner")) {
+      return rep.code(403).send({ error: "NOT_OWNER" });
+    }
+
+    const { extensionId } = z.object({ extensionId: z.string().min(2) }).parse(req.params);
+    const body = ExtensionConfigBody.parse(req.body || {});
+    const config = await setExtensionConfigForServer(serverId, extensionId, body.config, body.mode);
+    return { ok: true, extensionId, config };
   });
 
   app.post("/v1/extensions/commands/:commandName/execute", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
@@ -73,5 +123,27 @@ export async function extensionRoutes(app: FastifyInstance) {
 
     await syncExtensionsForServer(serverId, body.extensions);
     return { ok: true, serverId, count: body.extensions.length };
+  });
+
+  app.post("/v1/extensions/activate", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const serverId = req.auth.coreServerId as string;
+    const actorRoles = req.auth.roles || [];
+    if (!actorRoles.includes("owner") && !actorRoles.includes("platform_admin") && !actorRoles.includes("platform_owner")) {
+      return rep.code(403).send({ error: "NOT_OWNER" });
+    }
+    const body = ActivateExtensionBody.parse(req.body || {});
+    await activateExtensionForServer(serverId, body.extension, req.auth.token as string | undefined);
+    return { ok: true, serverId, extensionId: body.extension.id };
+  });
+
+  app.post("/v1/extensions/:extensionId/deactivate", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const serverId = req.auth.coreServerId as string;
+    const actorRoles = req.auth.roles || [];
+    if (!actorRoles.includes("owner") && !actorRoles.includes("platform_admin") && !actorRoles.includes("platform_owner")) {
+      return rep.code(403).send({ error: "NOT_OWNER" });
+    }
+    const { extensionId } = z.object({ extensionId: z.string().min(2) }).parse(req.params);
+    await deactivateExtensionForServer(serverId, extensionId);
+    return { ok: true, serverId, extensionId };
   });
 }

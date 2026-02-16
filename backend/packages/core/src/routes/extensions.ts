@@ -13,10 +13,12 @@ type ExtensionManifest = {
   id: string;
   name: string;
   version: string;
+  author?: string;
   description?: string;
   scope: ExtensionScope;
   entry?: string;
   permissions?: string[];
+  configDefaults?: Record<string, unknown>;
 };
 
 const SetExtensionState = z.object({
@@ -64,10 +66,12 @@ async function readExtensionCatalog(): Promise<{ clientExtensions: ExtensionMani
           id,
           name: parsed?.name || entry.name,
           version: parsed?.version || "0.1.0",
+          author: parsed?.author,
           description: parsed?.description,
           scope: parsed?.scope || scope,
           entry: parsed?.entry || "index.js",
-          permissions: Array.isArray(parsed?.permissions) ? parsed?.permissions : ["all"]
+          permissions: Array.isArray(parsed?.permissions) ? parsed?.permissions : ["all"],
+          configDefaults: parsed?.configDefaults && typeof parsed.configDefaults === "object" ? parsed.configDefaults as Record<string, unknown> : {}
         } as ExtensionManifest;
       }));
       return manifests.sort((a, b) => a.name.localeCompare(b.name));
@@ -140,6 +144,74 @@ export async function extensionRoutes(app: FastifyInstance) {
     };
   });
 
+  app.get("/v1/servers/:serverId/extensions/:extensionId/config", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const { serverId, extensionId } = z.object({ serverId: z.string().min(3), extensionId: z.string().min(2) }).parse(req.params);
+
+    const memberRows = await q<{ roles: string }>(
+      `SELECT roles FROM memberships WHERE server_id=:serverId AND user_id=:userId LIMIT 1`,
+      { serverId, userId }
+    );
+    if (!memberRows.length) return rep.code(403).send({ error: "NOT_A_MEMBER" });
+
+    const serverRows = await q<{ base_url: string }>(`SELECT base_url FROM servers WHERE id=:serverId LIMIT 1`, { serverId });
+    const baseUrl = serverRows[0]?.base_url;
+    if (!baseUrl) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
+
+    const memberRoles: string[] = JSON.parse(memberRows[0].roles || "[]");
+    const platformRole = await getPlatformRole(userId);
+    const token = await signMembershipToken(serverId, userId, memberRoles, platformRole, serverId);
+
+    try {
+      const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/extensions/${encodeURIComponent(extensionId)}/config`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) return rep.code(response.status).send({ error: "NODE_CONFIG_FETCH_FAILED" });
+      return response.json();
+    } catch (error) {
+      app.log.warn({ err: error, serverId, extensionId }, "Failed to fetch extension config from node");
+      return rep.code(502).send({ error: "NODE_UNREACHABLE" });
+    }
+  });
+
+  app.put("/v1/servers/:serverId/extensions/:extensionId/config", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const { serverId, extensionId } = z.object({ serverId: z.string().min(3), extensionId: z.string().min(2) }).parse(req.params);
+    const body = parseBody(z.object({ config: z.record(z.any()).default({}), mode: z.enum(["replace", "patch"]).default("replace") }), req.body);
+
+    const memberRows = await q<{ roles: string }>(
+      `SELECT roles FROM memberships WHERE server_id=:serverId AND user_id=:userId LIMIT 1`,
+      { serverId, userId }
+    );
+    if (!memberRows.length) return rep.code(403).send({ error: "NOT_A_MEMBER" });
+
+    const memberRoles: string[] = JSON.parse(memberRows[0].roles || "[]");
+    const platformRole = await getPlatformRole(userId);
+    const isOwnerOrStaff = memberRoles.includes("owner") || platformRole === "admin" || platformRole === "owner";
+    if (!isOwnerOrStaff) return rep.code(403).send({ error: "NOT_OWNER" });
+
+    const serverRows = await q<{ base_url: string }>(`SELECT base_url FROM servers WHERE id=:serverId LIMIT 1`, { serverId });
+    const baseUrl = serverRows[0]?.base_url;
+    if (!baseUrl) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
+
+    const token = await signMembershipToken(serverId, userId, memberRoles, platformRole, serverId);
+    try {
+      const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/extensions/${encodeURIComponent(extensionId)}/config`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) return rep.code(response.status).send({ error: "NODE_CONFIG_UPDATE_FAILED" });
+      return response.json();
+    } catch (error) {
+      app.log.warn({ err: error, serverId, extensionId }, "Failed to update extension config on node");
+      return rep.code(502).send({ error: "NODE_UNREACHABLE" });
+    }
+  });
+
   app.post("/v1/servers/:serverId/extensions/:extensionId", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
     const { serverId, extensionId } = z.object({ serverId: z.string().min(3), extensionId: z.string().min(2) }).parse(req.params);
@@ -176,20 +248,39 @@ export async function extensionRoutes(app: FastifyInstance) {
     const baseUrl = serverRows[0]?.base_url;
     if (baseUrl) {
       try {
+        const token = await signMembershipToken(serverId, userId, memberRoles, platformRole, serverId);
+        if (body.enabled) {
+          await fetch(`${baseUrl.replace(/\/$/, "")}/v1/extensions/activate`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({ extension: manifest })
+          });
+        } else {
+          await fetch(`${baseUrl.replace(/\/$/, "")}/v1/extensions/${encodeURIComponent(manifest.id)}/deactivate`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`
+            },
+            body: "{}"
+          });
+        }
+
+        // Keep node state coherent by forcing a full sync after point updates.
         const activeRows = await q<{ manifest_json: string }>(
           `SELECT manifest_json FROM server_extensions WHERE server_id=:serverId AND enabled=1`,
           { serverId }
         );
-        const token = await signMembershipToken(serverId, userId, memberRoles, platformRole, serverId);
         await fetch(`${baseUrl.replace(/\/$/, "")}/v1/extensions/sync`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`
           },
-          body: JSON.stringify({
-            extensions: activeRows.map((row) => JSON.parse(row.manifest_json || "{}"))
-          })
+          body: JSON.stringify({ extensions: activeRows.map((row) => JSON.parse(row.manifest_json || "{}")) })
         });
       } catch (error) {
         app.log.warn({ err: error, serverId }, "Failed to sync extension state to server node");

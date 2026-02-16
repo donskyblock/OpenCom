@@ -1,5 +1,15 @@
 import { z } from "zod";
 
+const boolFlag = z.preprocess(
+  (value) => {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value === 1;
+    if (typeof value === "string") return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+    return false;
+  },
+  z.boolean()
+);
+
 const Env = z.object({
   CORE_PORT: z.coerce.number().default(3001),
   CORE_HOST: z.string().default("127.0.0.1"),
@@ -12,6 +22,9 @@ const Env = z.object({
   /** Optional TLS key file for native wss listener. */
   CORE_GATEWAY_TLS_KEY_FILE: z.string().min(1).optional(),
   CORE_DATABASE_URL: z.string().min(1),
+  CORE_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("warn"),
+  CORE_LOG_DIR: z.string().default("./logs"),
+  CORE_LOG_TO_FILE: boolFlag.default(true),
   CORE_JWT_ACCESS_SECRET: z.string().min(16),
   CORE_JWT_REFRESH_SECRET: z.string().min(16),
 
@@ -36,7 +49,18 @@ const Env = z.object({
   STRIPE_PRICE_ID_BOOST_GBP_10: z.string().min(1).optional(),
   STRIPE_SUCCESS_URL: z.string().url().optional(),
   STRIPE_CANCEL_URL: z.string().url().optional(),
-  STRIPE_CUSTOMER_PORTAL_RETURN_URL: z.string().url().optional()
+  STRIPE_CUSTOMER_PORTAL_RETURN_URL: z.string().url().optional(),
+
+  // Auth email verification
+  AUTH_REQUIRE_EMAIL_VERIFICATION: boolFlag.default(true),
+  AUTH_EMAIL_VERIFICATION_TOKEN_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
+  APP_BASE_URL: z.string().url().default("http://localhost:5173"),
+  SMTP_HOST: z.string().min(1).optional(),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+  SMTP_SECURE: boolFlag.default(false),
+  SMTP_USER: z.string().min(1).optional(),
+  SMTP_PASS: z.string().min(1).optional(),
+  SMTP_FROM: z.string().email().optional()
 });
 
 export const env = Env.parse(process.env);

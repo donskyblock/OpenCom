@@ -4,6 +4,8 @@ import { ulidLike } from "@ods/shared/ids.js";
 import { q } from "../db.js";
 import { requireGuildMember } from "../auth/requireGuildMember.js";
 import { requireManageChannels } from "../permissions/hierarchy.js";
+import { resolveChannelPermissions } from "../permissions/resolve.js";
+import { Perm, has } from "../permissions/bits.js";
 
 export async function channelRoutes(
   app: FastifyInstance,
@@ -20,7 +22,7 @@ export async function channelRoutes(
       return rep.code(403).send({ error: "NOT_GUILD_MEMBER" });
     }
 
-    const channels = await q<any>(
+    const allChannels = await q<any>(
       `SELECT id,guild_id,name,type,position,parent_id,created_at
        FROM channels
        WHERE guild_id=:guildId
@@ -28,7 +30,91 @@ export async function channelRoutes(
       { guildId }
     );
 
+    const channels: any[] = [];
+    for (const channel of allChannels) {
+      const perms = await resolveChannelPermissions({
+        guildId,
+        channelId: channel.id,
+        userId,
+        roles: req.auth.roles || []
+      });
+      if (!has(perms, Perm.VIEW_CHANNEL)) continue;
+      channels.push(channel);
+    }
+
     return { channels };
+  });
+
+  app.post("/v1/guilds/:guildId/channels/reorder", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { guildId } = z.object({ guildId: z.string().min(3) }).parse(req.params);
+    const userId = req.auth.userId as string;
+    const body = z.object({
+      items: z.array(
+        z.object({
+          id: z.string().min(3),
+          position: z.number().int().min(0),
+          parentId: z.string().min(3).nullable().optional()
+        })
+      ).min(1).max(500)
+    }).parse(req.body || {});
+
+    try {
+      await requireGuildMember(guildId, userId, req.auth.roles, req.auth.coreServerId);
+    } catch {
+      return rep.code(403).send({ error: "NOT_GUILD_MEMBER" });
+    }
+
+    const anyChannel = await q<{ id: string }>(
+      `SELECT id FROM channels WHERE guild_id=:guildId ORDER BY created_at ASC LIMIT 1`,
+      { guildId }
+    );
+    if (!anyChannel.length) return rep.code(404).send({ error: "NO_CHANNELS" });
+
+    try {
+      await requireManageChannels({ guildId, channelIdForPerms: anyChannel[0].id, actorId: userId, actorRoles: req.auth.roles });
+    } catch {
+      return rep.code(403).send({ error: "MISSING_PERMS" });
+    }
+
+    const validChannels = await q<{ id: string; type: string }>(
+      `SELECT id,type FROM channels WHERE guild_id=:guildId`,
+      { guildId }
+    );
+    const validChannelIds = new Set(validChannels.map((channel) => channel.id));
+    const categories = new Set(validChannels.filter((channel) => channel.type === "category").map((channel) => channel.id));
+
+    for (const item of body.items) {
+      if (!validChannelIds.has(item.id)) return rep.code(400).send({ error: "INVALID_CHANNEL", channelId: item.id });
+      if (item.parentId !== undefined && item.parentId !== null && !categories.has(item.parentId)) {
+        return rep.code(400).send({ error: "INVALID_PARENT", channelId: item.id, parentId: item.parentId });
+      }
+    }
+
+    for (const item of body.items) {
+      await q(
+        `UPDATE channels
+         SET position=:position,
+             parent_id=CASE WHEN :parentSet=1 THEN :parentId ELSE parent_id END
+         WHERE id=:channelId AND guild_id=:guildId`,
+        {
+          guildId,
+          channelId: item.id,
+          position: item.position,
+          parentSet: item.parentId !== undefined ? 1 : 0,
+          parentId: item.parentId ?? null
+        }
+      );
+    }
+
+    const channels = await q<any>(
+      `SELECT id,guild_id,name,type,position,parent_id,created_at
+       FROM channels
+       WHERE guild_id=:guildId
+       ORDER BY position ASC, created_at ASC`,
+      { guildId }
+    );
+    broadcastGuild(guildId, "CHANNEL_REORDER", { channels });
+    return rep.send({ ok: true, count: body.items.length });
   });
 
   // Create channel (requires MANAGE_CHANNELS)
@@ -192,6 +278,14 @@ export async function channelRoutes(
     if (ch[0].type !== "voice") return rep.code(400).send({ error: "NOT_VOICE_CHANNEL" });
 
     const guildId = ch[0].guild_id;
+
+    try { await requireGuildMember(guildId, userId, req.auth.roles, req.auth.coreServerId); }
+    catch { return rep.code(403).send({ error: "NOT_GUILD_MEMBER" }); }
+
+    const perms = await resolveChannelPermissions({ guildId, channelId, userId, roles: req.auth.roles || [] });
+    if (!has(perms, Perm.VIEW_CHANNEL) || !has(perms, Perm.CONNECT)) {
+      return rep.code(403).send({ error: "MISSING_PERMS" });
+    }
 
     // Leave any other voice channels in this guild first
     await q(

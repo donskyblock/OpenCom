@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenCom Docs - Extensions SDK</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
+      <div class="nav-group"><div class="nav-title">Get Started</div><a class="nav-link" href="./index.html">Welcome</a><a class="nav-link" href="./quickstart.html">Quickstart</a></div>
+      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a></div>
+      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a></div>
+      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
+    </aside>
+
+    <div class="content-wrap">
+      <header class="topbar">
+        <button class="mobile-toggle" id="mobile-toggle">Menu</button>
+        <div class="search"><input id="doc-search" placeholder="Search docs..." /><div class="search-results" id="search-results"></div></div>
+        <div class="search-hint">Press <kbd>/</kbd> to search</div>
+      </header>
+
+      <main class="content">
+        <section class="hero">
+          <div class="eyebrow">Extensions</div>
+          <h1>OpenCom Extension SDK</h1>
+          <p class="lead">Build server extensions with command registration, persisted config, runtime lifecycle hooks, and high-level API clients.</p>
+        </section>
+
+        <h2>Manifest</h2>
+        <pre><code>{
+  "id": "my-extension",
+  "name": "My Extension",
+  "author": "you",
+  "version": "1.0.0",
+  "scope": "server",
+  "entry": "index.js",
+  "permissions": ["all"],
+  "configDefaults": { "featureEnabled": true }
+}</code></pre>
+
+        <h2>Config system</h2>
+        <pre><code>import { command, defineConfig } from "opencom-extension-sdk";
+
+export const configDefaults = defineConfig({
+  pingPrefix: "pong"
+});
+
+export const commands = [
+  command({
+    name: "ping",
+    async execute(ctx) {
+      const cfg = await ctx.config.get();
+      return { content: `${cfg.pingPrefix} ${ctx.userId}` };
+    }
+  })
+];</code></pre>
+
+        <h2>Realtime lifecycle</h2>
+        <p>Extensions can be activated/deactivated without node restarts. Command availability updates immediately when extension state changes.</p>
+
+        <h2 id="helpers">SDK API helpers</h2>
+        <ul>
+          <li><code>apis.servers.refreshMembershipToken(serverId)</code></li>
+          <li><code>apis.servers.reorder(serverIds)</code></li>
+          <li><code>apis.invites.joinFromInput(codeOrUrl)</code></li>
+          <li><code>apis.nodeGuilds.kickMember(...)</code> / <code>banMember(...)</code> / <code>unbanMember(...)</code></li>
+          <li><code>apis.nodeGuilds.reorderChannels(guildId, items)</code></li>
+          <li><code>apis.attachments.upload(file, options)</code></li>
+          <li><code>apis.extensions.serverConfig(serverId, extensionId)</code></li>
+          <li><code>apis.extensions.setServerConfig(serverId, extensionId, config)</code></li>
+        </ul>
+
+        <h2>Config endpoints</h2>
+        <ul>
+          <li><code>GET /v1/servers/:serverId/extensions/:extensionId/config</code></li>
+          <li><code>PUT /v1/servers/:serverId/extensions/:extensionId/config</code></li>
+        </ul>
+
+        <p class="footer">Package location: <code>Extensions/lib</code>. More examples in <code>docs/extensions-sdk.md</code>.</p>
+      </main>
+    </div>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

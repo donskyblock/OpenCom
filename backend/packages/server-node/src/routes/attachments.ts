@@ -20,7 +20,7 @@ export async function attachmentRoutes(app: FastifyInstance) {
   });
 
   // Upload (multipart/form-data)
-  // fields: guildId, channelId, uploaderId, (optional) messageId
+  // fields: guildId, channelId, (optional) uploaderId, (optional) messageId
   // file field name: "file"
   app.post("/v1/attachments/upload", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     
@@ -28,7 +28,8 @@ export async function attachmentRoutes(app: FastifyInstance) {
 
     let guildId = "";
     let channelId = "";
-    let uploaderId = req.auth.userId as string;
+    const authUserId = req.auth.userId as string;
+    let uploaderId = authUserId;
     let messageId: string | null = null;
 
     let filePart: any = null;
@@ -48,11 +49,13 @@ export async function attachmentRoutes(app: FastifyInstance) {
     const parsed = z.object({
       guildId: z.string().min(3),
       channelId: z.string().min(3),
-      uploaderId: z.string().min(3),
+      uploaderId: z.string().min(3).optional(),
       messageId: z.string().min(3).nullable().optional()
     }).parse({ guildId, channelId, uploaderId, messageId });
 
     if (!filePart) return rep.code(400).send({ error: "FILE_REQUIRED" });
+    if (parsed.uploaderId && parsed.uploaderId !== authUserId) return rep.code(403).send({ error: "BAD_UPLOADER" });
+    uploaderId = authUserId;
 
     // Validate channel belongs to guild
     const ch = await q<{ id: string }>(
@@ -65,7 +68,7 @@ export async function attachmentRoutes(app: FastifyInstance) {
     const perms = await resolveChannelPermissions({
       guildId: parsed.guildId,
       channelId: parsed.channelId,
-      userId: parsed.uploaderId,
+      userId: uploaderId,
       roles: req.auth.roles
     });
 
@@ -75,6 +78,7 @@ export async function attachmentRoutes(app: FastifyInstance) {
 
 
     const isBoostUser = (req.auth.roles || []).includes("boost");
+    const tier = isBoostUser ? "boost" : "default";
     const maxUploadBytes = isBoostUser ? env.ATTACHMENT_BOOST_MAX_BYTES : env.ATTACHMENT_MAX_BYTES;
 
     const attachmentId = ulidLike();
@@ -117,7 +121,7 @@ export async function attachmentRoutes(app: FastifyInstance) {
         guildId: parsed.guildId,
         channelId: parsed.channelId,
         messageId: parsed.messageId ?? null,
-        uploaderId: parsed.uploaderId,
+        uploaderId,
         objectKey: relPath, // disk path relative to storage root
         fileName: originalName,
         contentType,
@@ -133,6 +137,8 @@ export async function attachmentRoutes(app: FastifyInstance) {
       fileName: originalName,
       contentType,
       sizeBytes,
+      tier,
+      maxBytes: maxUploadBytes,
       expiresAt: expiresAt.toISOString(),
       url: publicUrl
     });
