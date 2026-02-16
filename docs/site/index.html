@@ -3,52 +3,91 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OpenCom Docs</title>
+  <title>OpenCom Docs - Welcome</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <main class="container">
-    <h1>OpenCom Documentation</h1>
-    <p>Open-source Discord-like platform docs and quickstart.</p>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
+      <div class="nav-group">
+        <div class="nav-title">Get Started</div>
+        <a class="nav-link" href="./index.html">Welcome</a>
+        <a class="nav-link" href="./quickstart.html">Quickstart</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">API</div>
+        <a class="nav-link" href="./api-core.html">Core API</a>
+        <a class="nav-link" href="./api-server-node.html">Server Node API</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Extensions</div>
+        <a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Guides</div>
+        <a class="nav-link" href="./guides.html">Feature Guides</a>
+        <a class="nav-link" href="./operations.html">Operations</a>
+      </div>
+    </aside>
 
-    <section>
-      <h2>Planned Production URLs</h2>
-      <ul>
-        <li>Frontend: <code>https://opencom.donskyblock.xyz</code></li>
-        <li>Core API: <code>https://openapi.donskyblock.xyz</code></li>
-      </ul>
-    </section>
+    <div class="content-wrap">
+      <header class="topbar">
+        <button class="mobile-toggle" id="mobile-toggle">Menu</button>
+        <div class="search">
+          <input id="doc-search" placeholder="Search docs..." />
+          <div class="search-results" id="search-results"></div>
+        </div>
+        <div class="search-hint">Press <kbd>/</kbd> to search</div>
+      </header>
 
-    <section>
-      <h2>Quick Setup</h2>
-      <p>Linux/macOS:</p>
-      <pre><code>./scripts/setup.sh all
-./scripts/start.sh all</code></pre>
-      <p>Windows:</p>
-      <pre><code>scripts\setup.bat all
-scripts\start.bat all</code></pre>
-    </section>
+      <main class="content">
+        <section class="hero">
+          <div class="eyebrow">OpenCom Documentation</div>
+          <h1>Build and run OpenCom faster</h1>
+          <p class="lead">This docs portal covers platform setup, API routes, extension development, and operational behavior like token refresh, logging, and deployments.</p>
+          <div class="panel"><span class="badge">Static + host-anywhere</span> All files are plain HTML/CSS/JS from <code>docs/site</code>. Deploy to GitHub Pages, Netlify, Cloudflare Pages, nginx, or Caddy.</div>
+        </section>
 
-    <section>
-      <h2>Project Structure</h2>
-      <ul>
-        <li><code>backend/</code> — Core + Server Node services</li>
-        <li><code>frontend/</code> — React client</li>
-        <li><code>scripts/</code> — setup/start scripts</li>
-        <li><code>docs/</code> — markdown guide + static docs site</li>
-      </ul>
-    </section>
+        <section class="card-grid">
+          <article class="card">
+            <a href="./quickstart.html">Quickstart</a>
+            <p>One-path setup for local development and first run scripts.</p>
+          </article>
+          <article class="card">
+            <a href="./api-core.html">Core API</a>
+            <p>Auth, profile, invites, servers, social, billing, and admin routes.</p>
+          </article>
+          <article class="card">
+            <a href="./api-server-node.html">Server Node API</a>
+            <p>Guilds, channels, messages, attachments, voice, emotes, and moderation.</p>
+          </article>
+          <article class="card">
+            <a href="./extensions-sdk.html">Extension SDK</a>
+            <p>Manifest, config system, realtime extension lifecycle, API helpers.</p>
+          </article>
+          <article class="card">
+            <a href="./guides.html">Guides</a>
+            <p>Embeds, attachment tiers, invite UX, badges, and boost behavior.</p>
+          </article>
+          <article class="card">
+            <a href="./operations.html">Operations</a>
+            <p>Logging controls, diagnostics, env values, auth token strategy.</p>
+          </article>
+        </section>
 
-    <section>
-      <h2>Detailed Guides</h2>
-      <p>See repository docs:</p>
-      <ul>
-        <li><a href="./extensions-sdk.html">Extensions SDK Web Docs</a></li>
-        <li><code>docs/SETUP_GUIDE.md</code></li>
-        <li><code>frontend/README.md</code></li>
-        <li><code>backend/README.md</code></li>
-      </ul>
-    </section>
-  </main>
+        <h2>Documentation scope</h2>
+        <ul>
+          <li>Developer onboarding and local setup</li>
+          <li>Server-side and core API reference</li>
+          <li>Extension authoring and SDK APIs</li>
+          <li>Platform feature guides and runbook material</li>
+        </ul>
+
+        <p class="footer">Need markdown source docs too? See <code>docs/SETUP_GUIDE.md</code>, <code>docs/extensions-sdk.md</code>, and <code>docs/VOICE_DEBUGGING.md</code>.</p>
+      </main>
+    </div>
+  </div>
+  <script src="./app.js"></script>
 </body>
 </html>
