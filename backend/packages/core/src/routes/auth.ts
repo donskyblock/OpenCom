@@ -57,6 +57,15 @@ async function sendEmailVerificationForUser(userId: string, email: string) {
   await sendVerificationEmail(email, token);
 }
 
+function mapMailError(error: unknown): string {
+  const code = String((error as Error)?.message || "").trim();
+  if (code === "SMTP_NOT_CONFIGURED") return "SMTP_NOT_CONFIGURED";
+  if (code === "SMTP_AUTH_FAILED") return "SMTP_AUTH_FAILED";
+  if (code === "SMTP_CONNECTION_FAILED") return "SMTP_CONNECTION_FAILED";
+  if (code === "EMAIL_SEND_FAILED") return "EMAIL_SEND_FAILED";
+  return "EMAIL_SEND_FAILED";
+}
+
 export async function authRoutes(app: FastifyInstance) {
 
   app.decorate("authenticate", async function (request: any, reply: any) {
@@ -86,10 +95,7 @@ export async function authRoutes(app: FastifyInstance) {
         await sendEmailVerificationForUser(id, body.email);
       } catch (error) {
         await q(`DELETE FROM users WHERE id=:id`, { id });
-        if ((error as Error)?.message === "SMTP_NOT_CONFIGURED") {
-          return rep.code(500).send({ error: "SMTP_NOT_CONFIGURED" });
-        }
-        return rep.code(500).send({ error: "EMAIL_SEND_FAILED" });
+        return rep.code(500).send({ error: mapMailError(error) });
       }
     }
 
@@ -189,10 +195,7 @@ export async function authRoutes(app: FastifyInstance) {
       await sendEmailVerificationForUser(rows[0].id, rows[0].email);
       return rep.send({ ok: true });
     } catch (error) {
-      if ((error as Error)?.message === "SMTP_NOT_CONFIGURED") {
-        return rep.code(500).send({ error: "SMTP_NOT_CONFIGURED" });
-      }
-      return rep.code(500).send({ error: "EMAIL_SEND_FAILED" });
+      return rep.code(500).send({ error: mapMailError(error) });
     }
   });
 

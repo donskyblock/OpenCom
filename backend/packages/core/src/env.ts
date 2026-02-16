@@ -60,7 +60,7 @@ const Env = z.object({
   SMTP_SECURE: boolFlag.default(false),
   SMTP_USER: z.string().min(1).optional(),
   SMTP_PASS: z.string().min(1).optional(),
-  SMTP_FROM: z.string().email().optional()
+  SMTP_FROM: z.string().min(1).optional()
 });
 
 export const env = Env.parse(process.env);

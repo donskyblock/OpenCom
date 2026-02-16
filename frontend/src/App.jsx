@@ -318,7 +318,9 @@ async function api(path, options = {}) {
       }
     }
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || `HTTP_${response.status}`);
+    const err = new Error(errorData.error || `HTTP_${response.status}`);
+    err.status = response.status;
+    throw err;
   }
 
   return response.json();
@@ -760,7 +762,7 @@ export function App() {
   }, [activeServerId, servers]);
 
   useEffect(() => {
-    if (!accessToken) {
+    if (!accessToken || !me?.id) {
       setClientExtensionCatalog([]);
       return;
     }
@@ -768,7 +770,7 @@ export function App() {
     api("/v1/extensions/catalog", { headers: { Authorization: `Bearer ${accessToken}` } })
       .then((data) => setClientExtensionCatalog(data.clientExtensions || []))
       .catch(() => setClientExtensionCatalog([]));
-  }, [accessToken]);
+  }, [accessToken, me?.id]);
 
   useEffect(() => {
     const selectedServer = servers.find((server) => server.id === activeServerId) || null;
@@ -979,6 +981,13 @@ export function App() {
 
   const activeServer = useMemo(() => servers.find((server) => server.id === activeServerId) || null, [servers, activeServerId]);
   const activeGuild = useMemo(() => guilds.find((guild) => guild.id === activeGuildId) || null, [guilds, activeGuildId]);
+  const workingGuildId = useMemo(() => (
+    activeGuildId
+    || activeGuild?.id
+    || guildState?.guild?.id
+    || activeServer?.defaultGuildId
+    || ""
+  ), [activeGuildId, activeGuild?.id, guildState?.guild?.id, activeServer?.defaultGuildId]);
   const voiceConnectedChannelId = voiceSession.channelId;
   const voiceConnectedGuildId = voiceSession.guildId;
   const isInVoiceChannel = !!voiceConnectedChannelId;
@@ -2273,6 +2282,18 @@ export function App() {
         setStatus("Auth failed: EMAIL_NOT_VERIFIED. Use the resend button below if needed.");
         return;
       }
+      if (error?.message === "SMTP_NOT_CONFIGURED") {
+        setStatus("Auth failed: SMTP is not configured on the API server, so verification emails cannot be sent yet.");
+        return;
+      }
+      if (error?.message === "SMTP_AUTH_FAILED") {
+        setStatus("Auth failed: SMTP auth failed. Check Zoho SMTP username/app password.");
+        return;
+      }
+      if (error?.message === "SMTP_CONNECTION_FAILED") {
+        setStatus("Auth failed: SMTP connection failed. Check server network + SMTP host/port/TLS.");
+        return;
+      }
       setStatus(`Auth failed: ${error.message}`);
     }
   }
@@ -2292,6 +2313,18 @@ export function App() {
       setPendingVerificationEmail(targetEmail);
       setStatus("If the account exists and is unverified, a new verification email has been sent.");
     } catch (error) {
+      if (error?.message === "SMTP_NOT_CONFIGURED") {
+        setStatus("Resend failed: SMTP is not configured on the API server. Set SMTP_* (or Zoho SMTP envs) and restart backend.");
+        return;
+      }
+      if (error?.message === "SMTP_AUTH_FAILED") {
+        setStatus("Resend failed: SMTP auth failed. Check Zoho username and app password.");
+        return;
+      }
+      if (error?.message === "SMTP_CONNECTION_FAILED") {
+        setStatus("Resend failed: could not connect to SMTP server. Check host/port/TLS/firewall.");
+        return;
+      }
       setStatus(`Resend failed: ${error.message}`);
     }
   }
@@ -3030,7 +3063,7 @@ export function App() {
     return picked;
   }
 
-  async function applyPrivateVisibilityToChannel(channelId, allowedRoleIds = [], server = activeServer, guildId = activeGuildId) {
+  async function applyPrivateVisibilityToChannel(channelId, allowedRoleIds = [], server = activeServer, guildId = workingGuildId) {
     if (!server || !guildId || !channelId) return;
     const everyoneRole = (guildState?.roles || []).find((role) => role.is_everyone);
     if (!everyoneRole) throw new Error("EVERYONE_ROLE_NOT_FOUND");
@@ -3058,7 +3091,7 @@ export function App() {
     }
   }
 
-  async function createChannelWithOptions({ server = activeServer, guildId = activeGuildId, name, type = "text", parentId = "", privateRoleIds = null }) {
+  async function createChannelWithOptions({ server = activeServer, guildId = workingGuildId, name, type = "text", parentId = "", privateRoleIds = null }) {
     if (!server || !guildId || !name?.trim()) return null;
 
     const payload = { name: name.trim(), type };
@@ -3074,7 +3107,7 @@ export function App() {
       await applyPrivateVisibilityToChannel(channelId, privateRoleIds, server, guildId);
     }
 
-    if (server.id === activeServerId && guildId === activeGuildId) {
+    if (server.id === activeServerId && guildId === workingGuildId) {
       const state = await nodeApi(server.baseUrl, `/v1/guilds/${guildId}/state`, server.membershipToken);
       setGuildState(state);
     }
@@ -3082,8 +3115,11 @@ export function App() {
     return channelId;
   }
 
-  async function promptCreateChannelFlow({ server = activeServer, guildId = activeGuildId, fixedType = "", fixedParentId = "" } = {}) {
-    if (!server || !guildId) return;
+  async function promptCreateChannelFlow({ server = activeServer, guildId = workingGuildId, fixedType = "", fixedParentId = "" } = {}) {
+    if (!server || !guildId) {
+      setStatus("No active guild selected yet. Open a channel first, then try again.");
+      return;
+    }
 
     const type = fixedType || (window.prompt("Channel type: text, voice, or category", "text") || "").trim().toLowerCase();
     if (!["text", "voice", "category"].includes(type)) {
@@ -3127,11 +3163,11 @@ export function App() {
   }
 
   async function createChannel() {
-    if (!activeServer || !activeGuildId || !newChannelName.trim()) return;
+    if (!activeServer || !workingGuildId || !newChannelName.trim()) return;
     try {
       await createChannelWithOptions({
         server: activeServer,
-        guildId: activeGuildId,
+        guildId: workingGuildId,
         name: newChannelName,
         type: newChannelType,
         parentId: newChannelType !== "category" ? newChannelParentId : ""
@@ -3434,7 +3470,7 @@ export function App() {
   }
 
   async function saveChannelName(channelId, currentName) {
-    if (!activeServer || !activeGuildId) return;
+    if (!activeServer || !workingGuildId) return;
     const nextName = (window.prompt("Channel name:", currentName || "") || "").trim();
     if (!nextName || nextName === currentName) return;
     await nodeApi(activeServer.baseUrl, `/v1/channels/${channelId}`, activeServer.membershipToken, {
@@ -3444,22 +3480,22 @@ export function App() {
   }
 
   async function setChannelVisibilityByRoles(channelId) {
-    if (!activeServer || !activeGuildId || !channelId) return;
+    if (!activeServer || !workingGuildId || !channelId) return;
     const roleList = (guildState?.roles || []).filter((role) => !role.is_everyone).map((role) => role.name).join(", ");
     const rawRoles = window.prompt(`Visible to roles (comma-separated names or IDs). Leave blank to keep private for admins only.\nAvailable: ${roleList}`, "");
     if (rawRoles == null) return;
     const allowedRoleIds = parseRoleInputToIds(rawRoles);
-    await applyPrivateVisibilityToChannel(channelId, allowedRoleIds, activeServer, activeGuildId);
+    await applyPrivateVisibilityToChannel(channelId, allowedRoleIds, activeServer, workingGuildId);
   }
 
   async function openChannelSettings(channel) {
-    if (!channel || !canManageServer || !activeServer || !activeGuildId) return;
+    if (!channel || !canManageServer || !activeServer || !workingGuildId) return;
     try {
       await saveChannelName(channel.id, channel.name);
       if (window.confirm("Configure visibility (private roles) for this channel/category?")) {
         await setChannelVisibilityByRoles(channel.id);
       }
-      const state = await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/state`, activeServer.membershipToken);
+      const state = await nodeApi(activeServer.baseUrl, `/v1/guilds/${workingGuildId}/state`, activeServer.membershipToken);
       setGuildState(state);
       setStatus("Channel settings updated.");
     } catch (error) {
@@ -3471,7 +3507,7 @@ export function App() {
   }
 
   async function deleteChannelById(channel) {
-    if (!channel || !canManageServer || !activeServer || !activeGuildId) return;
+    if (!channel || !canManageServer || !activeServer || !workingGuildId) return;
     const kind = channel.type === "category" ? "category" : "channel";
     if (!window.confirm(`Delete ${kind} "${channel.name}"?`)) return;
 
@@ -3491,7 +3527,7 @@ export function App() {
       });
 
       if (activeChannelId === channel.id) setActiveChannelId("");
-      const state = await nodeApi(activeServer.baseUrl, `/v1/guilds/${activeGuildId}/state`, activeServer.membershipToken);
+      const state = await nodeApi(activeServer.baseUrl, `/v1/guilds/${workingGuildId}/state`, activeServer.membershipToken);
       setGuildState(state);
       setStatus(`${kind[0].toUpperCase()}${kind.slice(1)} deleted.`);
     } catch (error) {
@@ -4477,7 +4513,7 @@ export function App() {
                             type="button"
                             className="channel-action-btn"
                             title="Create channel in category"
-                            onClick={() => promptCreateChannelFlow({ fixedType: "text", fixedParentId: category.id })}
+                            onClick={(event) => { event.stopPropagation(); promptCreateChannelFlow({ fixedType: "text", fixedParentId: category.id }); }}
                           >
                             ＋
                           </button>
@@ -4485,7 +4521,7 @@ export function App() {
                             type="button"
                             className="channel-action-btn"
                             title="Category settings"
-                            onClick={() => openChannelSettings(category)}
+                            onClick={(event) => { event.stopPropagation(); openChannelSettings(category); }}
                           >
                             ⚙
                           </button>
@@ -4529,14 +4565,14 @@ export function App() {
                                 </span>
                               </button>
                               {canManageServer && (
-                                <button
-                                  type="button"
-                                  className="channel-action-btn channel-row-cog"
-                                  title="Channel settings"
-                                  onClick={() => openChannelSettings(channel)}
-                                >
-                                  ⚙
-                                </button>
+                              <button
+                                type="button"
+                                className="channel-action-btn channel-row-cog"
+                                title="Channel settings"
+                                onClick={(event) => { event.stopPropagation(); openChannelSettings(channel); }}
+                              >
+                                ⚙
+                              </button>
                               )}
                             </div>
                             {channel.type === "voice" && (voiceMembersByChannel.get(channel.id)?.length || 0) > 0 && (
@@ -5276,7 +5312,7 @@ export function App() {
       {serverContextMenu && (
         <div className="server-context-menu" style={{ top: serverContextMenu.y, left: serverContextMenu.x }} onClick={(event) => event.stopPropagation()}>
           <button onClick={() => openServerFromContext(serverContextMenu.server.id)}>Open Server</button>
-          {canManageServer && serverContextMenu.server.id === activeServerId && !!activeGuildId && (
+          {canManageServer && serverContextMenu.server.id === activeServerId && !!workingGuildId && (
             <>
               <button onClick={() => { promptCreateChannelFlow({ fixedType: "text" }); setServerContextMenu(null); }}>Create Text Channel</button>
               <button onClick={() => { promptCreateChannelFlow({ fixedType: "voice" }); setServerContextMenu(null); }}>Create Voice Channel</button>
