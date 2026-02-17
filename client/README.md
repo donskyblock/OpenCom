@@ -33,7 +33,7 @@ OPENCOM_APP_URL="https://opencom.online" npm run start:remote
 When the desktop app is running, it exposes a local HTTP bridge:
 
 - Host: `127.0.0.1`
-- Port: `6463` (override with `OPENCOM_RPC_PORT`)
+- Port: `6483` (override with `OPENCOM_RPC_PORT`)
 
 Endpoints:
 
@@ -44,7 +44,7 @@ Endpoints:
 Example set activity:
 
 ```bash
-curl -X POST http://127.0.0.1:6463/rpc/activity \
+curl -X POST http://127.0.0.1:6483/rpc/activity \
   -H "Content-Type: application/json" \
   -d '{
     "activity": {
@@ -60,7 +60,7 @@ curl -X POST http://127.0.0.1:6463/rpc/activity \
 Clear activity:
 
 ```bash
-curl -X DELETE http://127.0.0.1:6463/rpc/activity
+curl -X DELETE http://127.0.0.1:6483/rpc/activity
 ```
 
 Note: bridge becomes `ready: true` after you log in to OpenCom desktop (the frontend shares auth context with the shell).
