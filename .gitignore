@@ -142,3 +142,4 @@ vite.config.ts.timestamp-*
 client/src/web/index.html
 client/src/web/assets/index-Cbol0dkw.js
 client/src/web/assets/index-Dz6Dwfd9.css
+frontend/public/downloads/*
