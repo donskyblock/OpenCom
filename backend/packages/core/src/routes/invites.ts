@@ -27,8 +27,12 @@ function parseInviteCodeInput(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return "";
   if (/^[a-zA-Z0-9_-]{3,32}$/.test(trimmed)) return trimmed;
+  const directPathMatch = trimmed.match(/^\/join\/([a-zA-Z0-9_-]{3,32})\/?$/);
+  if (directPathMatch?.[1]) return directPathMatch[1];
   try {
     const url = new URL(trimmed);
+    const pathMatch = (url.pathname || "").match(/^\/join\/([a-zA-Z0-9_-]{3,32})\/?$/);
+    if (pathMatch?.[1]) return pathMatch[1];
     const q = url.searchParams.get("join");
     if (q && /^[a-zA-Z0-9_-]{3,32}$/.test(q)) return q;
     for (const key of url.searchParams.keys()) {
