@@ -474,6 +474,38 @@ function formatMessageTime(value) {
   return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+function rpcFormFromActivity(activity = null) {
+  return {
+    name: activity?.name || "",
+    details: activity?.details || "",
+    state: activity?.state || "",
+    largeImageUrl: activity?.largeImageUrl || "",
+    largeImageText: activity?.largeImageText || "",
+    smallImageUrl: activity?.smallImageUrl || "",
+    smallImageText: activity?.smallImageText || "",
+    button1Label: activity?.buttons?.[0]?.label || "",
+    button1Url: activity?.buttons?.[0]?.url || "",
+    button2Label: activity?.buttons?.[1]?.label || "",
+    button2Url: activity?.buttons?.[1]?.url || ""
+  };
+}
+
+function rpcActivityFromForm(form) {
+  const buttons = [];
+  if (form.button1Label.trim() && form.button1Url.trim()) buttons.push({ label: form.button1Label.trim(), url: form.button1Url.trim() });
+  if (form.button2Label.trim() && form.button2Url.trim()) buttons.push({ label: form.button2Label.trim(), url: form.button2Url.trim() });
+  return {
+    name: form.name.trim() || undefined,
+    details: form.details.trim() || undefined,
+    state: form.state.trim() || undefined,
+    largeImageUrl: form.largeImageUrl.trim() || undefined,
+    largeImageText: form.largeImageText.trim() || undefined,
+    smallImageUrl: form.smallImageUrl.trim() || undefined,
+    smallImageText: form.smallImageText.trim() || undefined,
+    buttons: buttons.length ? buttons : undefined
+  };
+}
+
 function getMessageDayKey(value) {
   if (!value) return "";
   const date = new Date(value);
@@ -562,6 +594,19 @@ export function App() {
 
   const [profile, setProfile] = useState(null);
   const [profileForm, setProfileForm] = useState({ displayName: "", bio: "", pfpUrl: "", bannerUrl: "" });
+  const [rpcForm, setRpcForm] = useState({
+    name: "",
+    details: "",
+    state: "",
+    largeImageUrl: "",
+    largeImageText: "",
+    smallImageUrl: "",
+    smallImageText: "",
+    button1Label: "",
+    button1Url: "",
+    button2Label: "",
+    button2Url: ""
+  });
   const [serverProfileForm, setServerProfileForm] = useState({ name: "", logoUrl: "", bannerUrl: "" });
 
   const [newServerName, setNewServerName] = useState("");
@@ -691,6 +736,10 @@ export function App() {
     if (!userId) return "offline";
     if (userId === me?.id) return selfStatus;
     return presenceByUserId[userId]?.status ?? "offline";
+  }
+  function getRichPresence(userId) {
+    if (!userId) return null;
+    return presenceByUserId[userId]?.richPresence ?? null;
   }
   const presenceLabels = { online: "Online", idle: "Idle", dnd: "Do Not Disturb", offline: "Offline" };
   function presenceLabel(status) {
@@ -1248,6 +1297,15 @@ export function App() {
   }, [accessToken]);
 
   useEffect(() => {
+    try {
+      window.opencomDesktopBridge?.setPresenceAuth?.({
+        accessToken: accessToken || "",
+        coreApi: CORE_API
+      });
+    } catch {}
+  }, [accessToken]);
+
+  useEffect(() => {
     if (accessToken || !refreshToken) return;
     refreshAccessTokenWithRefreshToken()
       .then((data) => {
@@ -1257,6 +1315,18 @@ export function App() {
       })
       .catch(() => {});
   }, [accessToken, refreshToken]);
+
+  const selfRichPresenceSnapshot = useMemo(
+    () => JSON.stringify((me?.id ? presenceByUserId[me.id]?.richPresence : null) || null),
+    [me?.id, presenceByUserId]
+  );
+
+  useEffect(() => {
+    if (!me?.id) return;
+    let parsed = null;
+    try { parsed = JSON.parse(selfRichPresenceSnapshot); } catch {}
+    setRpcForm(rpcFormFromActivity(parsed));
+  }, [me?.id, selfRichPresenceSnapshot]);
 
   useEffect(() => {
     if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
@@ -1551,7 +1621,14 @@ export function App() {
           }
         }
         if (msg.op === "DISPATCH" && msg.t === "PRESENCE_UPDATE" && msg.d?.userId) {
-          setPresenceByUserId((prev) => ({ ...prev, [msg.d.userId]: { status: msg.d.status ?? "offline", customStatus: msg.d.customStatus ?? null } }));
+          setPresenceByUserId((prev) => ({
+            ...prev,
+            [msg.d.userId]: {
+              status: msg.d.status ?? "offline",
+              customStatus: msg.d.customStatus ?? null,
+              richPresence: msg.d.richPresence ?? null
+            }
+          }));
         }
         if (msg.op === "DISPATCH" && msg.t === "SOCIAL_DM_MESSAGE_CREATE" && msg.d?.threadId && msg.d?.message?.id) {
           const threadId = msg.d.threadId;
@@ -2894,6 +2971,51 @@ export function App() {
       const msg = error?.message || "";
       if (msg.includes("INVALID_IMAGE")) setStatus("Invalid image. Use PNG, JPG, GIF, or WebP under 4MB.");
       else setStatus(`Profile update failed: ${msg}`);
+    }
+  }
+
+  async function saveRichPresence() {
+    if (!accessToken) return;
+    const activity = rpcActivityFromForm(rpcForm);
+    if (!activity.name && !activity.details && !activity.state && !activity.largeImageUrl && !activity.smallImageUrl && !activity.buttons) {
+      setStatus("Add at least one rich presence field before saving.");
+      return;
+    }
+    try {
+      await api("/v1/presence/rpc", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ activity })
+      });
+      if (me?.id) {
+        setPresenceByUserId((prev) => ({
+          ...prev,
+          [me.id]: { ...(prev[me.id] || {}), status: prev[me.id]?.status || selfStatus, customStatus: prev[me.id]?.customStatus ?? null, richPresence: activity }
+        }));
+      }
+      setStatus("Rich presence updated.");
+    } catch (error) {
+      setStatus(`Rich presence update failed: ${error.message}`);
+    }
+  }
+
+  async function clearRichPresence() {
+    if (!accessToken) return;
+    try {
+      await api("/v1/presence/rpc", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      if (me?.id) {
+        setPresenceByUserId((prev) => ({
+          ...prev,
+          [me.id]: { ...(prev[me.id] || {}), status: prev[me.id]?.status || selfStatus, customStatus: prev[me.id]?.customStatus ?? null, richPresence: null }
+        }));
+      }
+      setRpcForm(rpcFormFromActivity(null));
+      setStatus("Rich presence cleared.");
+    } catch (error) {
+      setStatus(`Clear rich presence failed: ${error.message}`);
     }
   }
 
@@ -5417,6 +5539,26 @@ export function App() {
           <div className="popout-drag-handle" onMouseDown={startDraggingProfileCard}>Drag</div>
           <div className="popout-banner" style={{ backgroundImage: memberProfileCard.bannerUrl ? `url(${profileImageUrl(memberProfileCard.bannerUrl)})` : undefined }} />
           <div className="popout-content">
+            {(() => {
+              const rich = getRichPresence(memberProfileCard.id);
+              return rich ? (
+                <div className="message-embed-card" style={{ marginBottom: "8px" }}>
+                  {rich.largeImageUrl && <img src={rich.largeImageUrl} alt={rich.largeImageText || "Activity"} style={{ width: "100%", borderRadius: "8px", marginBottom: "6px" }} />}
+                  <strong>{rich.name || "Activity"}</strong>
+                  {rich.details && <p>{rich.details}</p>}
+                  {rich.state && <p>{rich.state}</p>}
+                  {Array.isArray(rich.buttons) && rich.buttons.length > 0 && (
+                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
+                      {rich.buttons.map((button, index) => (
+                        <a key={`${button.url}-${index}`} href={button.url} target="_blank" rel="noreferrer" className="ghost" style={{ padding: "4px 8px", borderRadius: "8px", border: "1px solid var(--border-subtle)", textDecoration: "none", color: "var(--text-soft)" }}>
+                          {button.label}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null;
+            })()}
             <div className="avatar popout-avatar">{memberProfileCard.pfpUrl ? <img src={profileImageUrl(memberProfileCard.pfpUrl)} alt="Profile avatar" className="avatar-image" /> : getInitials(memberProfileCard.displayName || memberProfileCard.username || "User")}</div>
             <h4>{memberProfileCard.displayName || memberProfileCard.username}</h4>
             <p className="hint">@{memberProfileCard.username} · {presenceLabel(getPresence(memberProfileCard?.id) || memberProfileCard?.status || "offline")}</p>
@@ -5499,6 +5641,25 @@ export function App() {
                   <label>Banner URL<input value={profileForm.bannerUrl} onChange={(event) => setProfileForm((current) => ({ ...current, bannerUrl: event.target.value }))} /></label>
                   <label>Upload Banner<input type="file" accept="image/*" onChange={onBannerUpload} /></label>
                   <button onClick={saveProfile}>Save Profile</button>
+
+                  <hr style={{ borderColor: "var(--border-subtle)", width: "100%" }} />
+                  <h4>Rich Presence (RPC-style)</h4>
+                  <p className="hint">No app ID needed. Set activity text, image URLs, and optional buttons.</p>
+                  <label>Activity Name<input value={rpcForm.name} onChange={(event) => setRpcForm((current) => ({ ...current, name: event.target.value }))} placeholder="Playing OpenCom" /></label>
+                  <label>Details<input value={rpcForm.details} onChange={(event) => setRpcForm((current) => ({ ...current, details: event.target.value }))} placeholder="In a voice channel" /></label>
+                  <label>State<input value={rpcForm.state} onChange={(event) => setRpcForm((current) => ({ ...current, state: event.target.value }))} placeholder="With friends" /></label>
+                  <label>Large Image URL<input value={rpcForm.largeImageUrl} onChange={(event) => setRpcForm((current) => ({ ...current, largeImageUrl: event.target.value }))} placeholder="https://..." /></label>
+                  <label>Large Image Text<input value={rpcForm.largeImageText} onChange={(event) => setRpcForm((current) => ({ ...current, largeImageText: event.target.value }))} placeholder="Tooltip text" /></label>
+                  <label>Small Image URL<input value={rpcForm.smallImageUrl} onChange={(event) => setRpcForm((current) => ({ ...current, smallImageUrl: event.target.value }))} placeholder="https://..." /></label>
+                  <label>Small Image Text<input value={rpcForm.smallImageText} onChange={(event) => setRpcForm((current) => ({ ...current, smallImageText: event.target.value }))} placeholder="Tooltip text" /></label>
+                  <label>Button 1 Label<input value={rpcForm.button1Label} onChange={(event) => setRpcForm((current) => ({ ...current, button1Label: event.target.value }))} placeholder="Watch" /></label>
+                  <label>Button 1 URL<input value={rpcForm.button1Url} onChange={(event) => setRpcForm((current) => ({ ...current, button1Url: event.target.value }))} placeholder="https://..." /></label>
+                  <label>Button 2 Label<input value={rpcForm.button2Label} onChange={(event) => setRpcForm((current) => ({ ...current, button2Label: event.target.value }))} placeholder="Join" /></label>
+                  <label>Button 2 URL<input value={rpcForm.button2Url} onChange={(event) => setRpcForm((current) => ({ ...current, button2Url: event.target.value }))} placeholder="https://..." /></label>
+                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                    <button onClick={saveRichPresence}>Save Rich Presence</button>
+                    <button className="ghost" onClick={clearRichPresence}>Clear</button>
+                  </div>
                 </div>
               )}
 

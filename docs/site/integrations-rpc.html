@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenCom Docs - Extension and RPC Apps</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
+      <div class="nav-group"><div class="nav-title">Get Started</div><a class="nav-link" href="./index.html">Welcome</a><a class="nav-link" href="./quickstart.html">Quickstart</a></div>
+      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a><a class="nav-link" href="./api-methods.html">Method Index</a></div>
+      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a><a class="nav-link" href="./integrations-rpc.html">Extension + RPC Apps</a></div>
+      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./platform-guide.html">Platform Guide</a><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
+    </aside>
+
+    <div class="content-wrap">
+      <header class="topbar">
+        <button class="mobile-toggle" id="mobile-toggle">Menu</button>
+        <div class="search"><input id="doc-search" placeholder="Search docs..." /><div class="search-results" id="search-results"></div></div>
+        <div class="search-hint">Press <kbd>/</kbd> to search</div>
+      </header>
+
+      <main class="content">
+        <section class="hero">
+          <div class="eyebrow">Integrations</div>
+          <h1>Building Extensions and RPC Applications</h1>
+          <p class="lead">Implementation details for OpenCom extension developers and rich-presence/RPC app developers, including auth, endpoint flows, payload schema, and desktop bridge behavior.</p>
+        </section>
+
+        <h2>Auth model</h2>
+        <ul>
+          <li>All API calls use bearer access tokens from <code>POST /v1/auth/login</code> and <code>POST /v1/auth/refresh</code>.</li>
+          <li>Refresh token is rotated each refresh request; store latest returned refresh token.</li>
+          <li>If <code>AUTH_REQUIRE_EMAIL_VERIFICATION=true</code>, login returns <code>403 EMAIL_NOT_VERIFIED</code> until user verifies email.</li>
+          <li>For desktop local RPC bridge, auth is injected from the logged in app session, not from the external RPC app.</li>
+        </ul>
+
+        <h2>Email verification endpoints</h2>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Body</th><th>Success</th><th>Error cases</th></tr></thead>
+          <tbody>
+            <tr><td>POST</td><td><code>/v1/auth/verify-email</code></td><td><code>{ token: string }</code></td><td><code>{ ok: true }</code></td><td><code>INVALID_VERIFICATION_TOKEN</code>, <code>VERIFICATION_TOKEN_USED</code>, <code>VERIFICATION_TOKEN_EXPIRED</code></td></tr>
+            <tr><td>POST</td><td><code>/v1/auth/resend-verification</code></td><td><code>{ email: string }</code></td><td><code>{ ok: true }</code></td><td><code>SMTP_NOT_CONFIGURED</code>, <code>SMTP_AUTH_FAILED</code>, <code>SMTP_CONNECTION_FAILED</code>, <code>EMAIL_SEND_FAILED</code></td></tr>
+          </tbody>
+        </table>
+
+        <h2>Rich presence payload (no app ID)</h2>
+        <p>OpenCom does not require Discord-style application registration. You send activity directly.</p>
+        <pre><code>{
+  "activity": {
+    "name": "OpenCom",
+    "details": "Working on docs",
+    "state": "Editing API references",
+    "largeImageUrl": "https://cdn.example.com/rpc-large.png",
+    "largeImageText": "OpenCom",
+    "smallImageUrl": "https://cdn.example.com/rpc-small.png",
+    "smallImageText": "Docs",
+    "buttons": [
+      { "label": "Open Site", "url": "https://opencom.online" }
+    ],
+    "startTimestamp": 1739815000,
+    "endTimestamp": 1739818600
+  }
+}</code></pre>
+        <ul>
+          <li>Buttons max: 2.</li>
+          <li>Image URLs must be valid URL strings.</li>
+          <li>To clear activity, send <code>DELETE /v1/presence/rpc</code> or desktop bridge <code>DELETE /rpc/activity</code>.</li>
+        </ul>
+
+        <h2>Desktop local RPC bridge</h2>
+        <p>Bridge defaults to <code>127.0.0.1:6463</code> and forwards to Core presence routes.</p>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Body</th><th>Response</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/rpc/health</code></td><td>None</td><td><code>{ ok, service, ready, coreApi }</code></td></tr>
+            <tr><td>POST</td><td><code>/rpc/activity</code></td><td><code>{ activity: ... }</code></td><td>Proxied response from <code>/v1/presence/rpc</code></td></tr>
+            <tr><td>DELETE</td><td><code>/rpc/activity</code></td><td>None</td><td>Proxied response from <code>DELETE /v1/presence/rpc</code></td></tr>
+          </tbody>
+        </table>
+        <ul>
+          <li><code>ready=false</code> means user auth is not yet registered in desktop runtime.</li>
+          <li>Bridge error surface includes <code>RPC_NOT_READY</code>, <code>RPC_BRIDGE_ERROR</code>, proxied HTTP status errors.</li>
+        </ul>
+
+        <h2>Extension runtime methods (server node)</h2>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Purpose</th><th>Permission requirements</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/v1/extensions</code></td><td>Current active extension manifests</td><td>Authenticated tenant member</td></tr>
+            <tr><td>GET</td><td><code>/v1/extensions/commands</code></td><td>Registered runtime command list</td><td>Authenticated tenant member</td></tr>
+            <tr><td>GET</td><td><code>/v1/extensions/:extensionId/config</code></td><td>Read merged config</td><td>Authenticated tenant member</td></tr>
+            <tr><td>PUT</td><td><code>/v1/extensions/:extensionId/config</code></td><td>Set config (<code>replace</code> or <code>patch</code>)</td><td><code>owner</code> / <code>platform_admin</code> / <code>platform_owner</code></td></tr>
+            <tr><td>POST</td><td><code>/v1/extensions/activate</code></td><td>Activate extension manifest</td><td><code>owner</code> / <code>platform_admin</code> / <code>platform_owner</code></td></tr>
+            <tr><td>POST</td><td><code>/v1/extensions/:extensionId/deactivate</code></td><td>Deactivate extension</td><td><code>owner</code> / <code>platform_admin</code> / <code>platform_owner</code></td></tr>
+            <tr><td>POST</td><td><code>/v1/extensions/commands/:commandName/execute</code></td><td>Execute command with <code>args</code></td><td>Authenticated tenant member</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Practical flow: external RPC app</h2>
+        <ol>
+          <li>Poll <code>GET /rpc/health</code> until <code>ready=true</code>.</li>
+          <li>Send rich activity with <code>POST /rpc/activity</code>.</li>
+          <li>Update on interval or event changes in your app state.</li>
+          <li>Clear on shutdown with <code>DELETE /rpc/activity</code>.</li>
+        </ol>
+
+        <h2>Practical flow: server extension</h2>
+        <ol>
+          <li>Sync or activate extension manifest.</li>
+          <li>Read/write config via config endpoints.</li>
+          <li>Expose runtime commands and execute via command execute endpoint.</li>
+          <li>Use SDK helpers for invites, moderation, channels, attachments, and presence.</li>
+        </ol>
+
+        <p class="footer">Complete endpoint list: <a href="./api-methods.html">Method Index</a>. SDK summary: <a href="./extensions-sdk.html">Extension SDK</a>.</p>
+      </main>
+    </div>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

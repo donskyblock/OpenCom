@@ -11,9 +11,9 @@
     <aside class="sidebar" id="sidebar">
       <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
       <div class="nav-group"><div class="nav-title">Get Started</div><a class="nav-link" href="./index.html">Welcome</a><a class="nav-link" href="./quickstart.html">Quickstart</a></div>
-      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a></div>
-      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a></div>
-      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
+      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a><a class="nav-link" href="./api-methods.html">Method Index</a></div>
+      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a><a class="nav-link" href="./integrations-rpc.html">Extension + RPC Apps</a></div>
+      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./platform-guide.html">Platform Guide</a><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
     </aside>
 
     <div class="content-wrap">
@@ -36,9 +36,24 @@
           <tbody>
             <tr><td>POST</td><td><code>/v1/auth/register</code></td><td>Create account</td></tr>
             <tr><td>POST</td><td><code>/v1/auth/login</code></td><td>Issue access + refresh tokens</td></tr>
+            <tr><td>POST</td><td><code>/v1/auth/verify-email</code></td><td>Consume email verification token</td></tr>
+            <tr><td>POST</td><td><code>/v1/auth/resend-verification</code></td><td>Send new verification email for unverified account</td></tr>
             <tr><td>POST</td><td><code>/v1/auth/refresh</code></td><td>Rotate access token</td></tr>
+            <tr><td>GET</td><td><code>/v1/me</code></td><td>Resolve authenticated user identity</td></tr>
             <tr><td>GET</td><td><code>/v1/auth/sessions</code></td><td>List active sessions</td></tr>
             <tr><td>DELETE</td><td><code>/v1/auth/sessions/:sessionId</code></td><td>Revoke one session</td></tr>
+            <tr><td>PATCH</td><td><code>/v1/auth/password</code></td><td>Change password</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Presence and rich presence</h2>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/v1/presence</code></td><td>Get presence for one or many user IDs</td></tr>
+            <tr><td>POST</td><td><code>/v1/presence/rpc</code></td><td>Set RPC-style activity (name/details/state/image URLs/buttons)</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/presence/rpc</code></td><td>Clear RPC-style activity</td></tr>
+            <tr><td>WS</td><td><code>/gateway</code></td><td>Realtime presence + social dispatch</td></tr>
           </tbody>
         </table>
 
@@ -80,12 +95,16 @@
         <h2>Other route groups</h2>
         <ul>
           <li><code>/v1/social/*</code> friends, requests, DM threads/messages</li>
+          <li><code>/v1/me/profile</code>, <code>/v1/users/:id/profile</code>, and profile image uploads</li>
           <li><code>/v1/profile-images/*</code> profile image hosting</li>
           <li><code>/v1/billing/boost/*</code> boost status and checkout sync</li>
           <li><code>/v1/admin/*</code> platform admin and badges</li>
         </ul>
 
-        <p class="footer">Source routes live in <code>backend/packages/core/src/routes</code>.</p>
+        <h2>Need every method?</h2>
+        <p>Use the complete matrix in <a href="./api-methods.html">Method Index</a>. It includes all Core routes plus notes on auth and behavior.</p>
+
+        <p class="footer">Source routes live in <code>backend/packages/core/src/routes</code>. See <a href="./platform-guide.html">Platform Guide</a> for full cross-component coverage.</p>
       </main>
     </div>
   </div>

@@ -5,10 +5,12 @@
   "main": "src/main.js",
   "type": "module",
   "scripts": {
-    "start": "electron .",
-    "build": "electron-builder",
-    "build:win": "electron-builder --win portable",
-    "build:linux": "electron-builder --linux deb tar.gz",
+    "sync:web": "node scripts/sync-frontend.mjs",
+    "start": "npm run sync:web && electron .",
+    "start:remote": "electron .",
+    "build": "npm --prefix ../frontend run build && npm run sync:web && electron-builder",
+    "build:win": "npm --prefix ../frontend run build && npm run sync:web && electron-builder --win portable",
+    "build:linux": "npm --prefix ../frontend run build && npm run sync:web && electron-builder --linux deb tar.gz",
     "build:stage:linux": "node scripts/build-and-stage.mjs linux",
     "build:stage:win": "node scripts/build-and-stage.mjs win",
     "build:stage:all": "npm run build:stage:linux && npm run build:stage:win"
@@ -28,7 +30,9 @@
       "output": "dist"
     },
     "files": [
-      "src/**/*",
+      "src/main.js",
+      "src/preload.js",
+      "src/web/**/*",
       "package.json"
     ],
     "win": {

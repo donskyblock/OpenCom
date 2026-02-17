@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-contextBridge.exposeInMainWorld("opencomDesktop", {
-  getLatestOfficialBuild: (options) => ipcRenderer.invoke("build:get-latest", options)
+contextBridge.exposeInMainWorld("opencomDesktopBridge", {
+  setPresenceAuth: (payload) => ipcRenderer.send("rpc:auth", payload || {}),
+  rpcInfo: () => ipcRenderer.invoke("rpc:info")
 });

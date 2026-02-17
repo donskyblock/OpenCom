@@ -86,6 +86,11 @@ export function createOpenComApiClient(input: {
     settings(): Promise<any>;
     updateSettings(payload: Record<string, unknown>): Promise<any>;
   };
+  presence: {
+    getMany(userIds?: string[]): Promise<any>;
+    setRichActivity(activity: Record<string, unknown> | null): Promise<any>;
+    clearRichActivity(): Promise<any>;
+  };
   dms: {
     list(): Promise<any>;
     open(payload: Record<string, unknown>): Promise<any>;

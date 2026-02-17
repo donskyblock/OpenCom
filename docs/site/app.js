@@ -1,13 +1,18 @@
 const SEARCH_INDEX = [
   { title: "Welcome", url: "./index.html", section: "Get Started", keywords: "overview quickstart docs" },
   { title: "Quickstart", url: "./quickstart.html", section: "Get Started", keywords: "install run scripts setup" },
+  { title: "Platform Guide", url: "./platform-guide.html", section: "Guides", keywords: "web desktop client backend core server node gateway architecture features" },
   { title: "Core API", url: "./api-core.html", section: "API", keywords: "auth servers invites social billing" },
   { title: "Server Node API", url: "./api-server-node.html", section: "API", keywords: "guilds channels messages voice attachments emotes" },
+  { title: "Method Index", url: "./api-methods.html", section: "API", keywords: "all endpoints methods routes core server node api v9" },
   { title: "Extension SDK", url: "./extensions-sdk.html", section: "Extensions", keywords: "commands config runtime manifest" },
+  { title: "Extension + RPC Apps", url: "./integrations-rpc.html", section: "Extensions", keywords: "rpc bridge local api payloads activity images buttons extensions auth" },
   { title: "Extension API helpers", url: "./extensions-sdk.html#helpers", section: "Extensions", keywords: "apis.servers apis.invites apis.nodeGuilds" },
   { title: "Attachments and Embeds", url: "./guides.html#attachments", section: "Guides", keywords: "uploads files link embed message embed" },
   { title: "Invites and Join Flow", url: "./guides.html#invites", section: "Guides", keywords: "join link accept flow permanent invite" },
   { title: "Badges and Boost perks", url: "./guides.html#badges", section: "Guides", keywords: "admin owner boost badge" },
+  { title: "Rich Presence model", url: "./platform-guide.html#rich-presence-model-no-app-id", section: "Guides", keywords: "rpc presence image url buttons no app id" },
+  { title: "Desktop RPC bridge", url: "./platform-guide.html#desktop-client-capabilities", section: "Guides", keywords: "desktop rpc bridge 127.0.0.1 6463 rpc activity health" },
   { title: "Auth and Token Refresh", url: "./operations.html#auth", section: "Operations", keywords: "access token refresh token sessions" },
   { title: "Logging and Diagnostics", url: "./operations.html#logging", section: "Operations", keywords: "logs warn error debug_http debug_voice" },
   { title: "Environment variables", url: "./operations.html#env", section: "Operations", keywords: "env config deployment" }

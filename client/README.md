@@ -1,16 +1,18 @@
 # OpenCom Desktop Client Wrapper
 
-Electron wrapper around the hosted OpenCom frontend.
+Vesktop-style thin Electron shell that runs the OpenCom web client directly.
+
+Canonical full-platform docs:
+
+- `../docs/PLATFORM_GUIDE.md`
 
 ## Features
 
-- Launches the frontend in a desktop window.
-- Always appends `?desktop=1` so the frontend skips the landing page.
-- Exposes `window.opencomDesktop.getLatestOfficialBuild()` in the renderer process.
-- Includes a CLI helper to resolve the latest official build asset from:
-  - `frontend/OpenCom.exe`
-  - `frontend/OpenCom.deb`
-  - `frontend/OpenCom.tar.gz`
+- Runs local built frontend (`frontend/dist`) inside the desktop shell.
+- Appends `?desktop=1` so the frontend skips the landing page.
+- Falls back to `OPENCOM_APP_URL` (default `https://opencom.online`) only if local build assets are missing.
+- Local RPC bridge for rich presence (no token handling needed by local apps).
+- Shares web-session auth context with the local RPC bridge after login.
 
 ## Development
 
@@ -20,15 +22,52 @@ npm install
 npm start
 ```
 
-Override app URL if needed:
+Run remote-only mode (skip local synced build):
 
 ```bash
-OPENCOM_APP_URL="https://opencom.online" npm start
+OPENCOM_APP_URL="https://opencom.online" npm run start:remote
 ```
+
+## Local RPC bridge
+
+When the desktop app is running, it exposes a local HTTP bridge:
+
+- Host: `127.0.0.1`
+- Port: `6463` (override with `OPENCOM_RPC_PORT`)
+
+Endpoints:
+
+- `GET /rpc/health`
+- `POST /rpc/activity`
+- `DELETE /rpc/activity`
+
+Example set activity:
+
+```bash
+curl -X POST http://127.0.0.1:6463/rpc/activity \
+  -H "Content-Type: application/json" \
+  -d '{
+    "activity": {
+      "name": "Playing OpenCom",
+      "details": "In a call",
+      "state": "With friends",
+      "largeImageUrl": "https://example.com/cover.png",
+      "buttons": [{"label":"Join","url":"https://opencom.online"}]
+    }
+  }'
+```
+
+Clear activity:
+
+```bash
+curl -X DELETE http://127.0.0.1:6463/rpc/activity
+```
+
+Note: bridge becomes `ready: true` after you log in to OpenCom desktop (the frontend shares auth context with the shell).
 
 ## Build (local, without GitHub Actions)
 
-When Actions are restricted, use the local scripts in `client/scripts/`.
+Build commands now compile frontend first, then sync assets into `client/src/web`, then package.
 
 ```bash
 cd client
@@ -49,17 +88,4 @@ Direct script entrypoints are also available:
 ./scripts/build-linux.sh
 ./scripts/build-win.sh
 ./scripts/build-all.sh
-```
-
-## Resolve latest official build
-
-```bash
-node get-latest-build.mjs [platform] [baseUrl]
-```
-
-Examples:
-
-```bash
-node get-latest-build.mjs win32
-node get-latest-build.mjs linux https://raw.githubusercontent.com/donskyblock/OpenCom/main
 ```

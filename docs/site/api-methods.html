@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenCom Docs - API Methods</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
+      <div class="nav-group"><div class="nav-title">Get Started</div><a class="nav-link" href="./index.html">Welcome</a><a class="nav-link" href="./quickstart.html">Quickstart</a></div>
+      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a><a class="nav-link" href="./api-methods.html">Method Index</a></div>
+      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a><a class="nav-link" href="./integrations-rpc.html">Extension + RPC Apps</a></div>
+      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./platform-guide.html">Platform Guide</a><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
+    </aside>
+
+    <div class="content-wrap">
+      <header class="topbar">
+        <button class="mobile-toggle" id="mobile-toggle">Menu</button>
+        <div class="search"><input id="doc-search" placeholder="Search docs..." /><div class="search-results" id="search-results"></div></div>
+        <div class="search-hint">Press <kbd>/</kbd> to search</div>
+      </header>
+
+      <main class="content">
+        <section class="hero">
+          <div class="eyebrow">API</div>
+          <h1>Complete Method Index</h1>
+          <p class="lead">Endpoint inventory for Core API, Server Node API, and Discord-compat routes. Use this as the definitive route map when implementing clients, tools, extensions, or bots.</p>
+        </section>
+
+        <h2>Conventions</h2>
+        <ul>
+          <li>Unless noted, endpoints require <code>Authorization: Bearer &lt;accessToken&gt;</code>.</li>
+          <li>Core routes are hosted on Core API. Guild-scoped runtime routes are hosted on Server Node API.</li>
+          <li>Route behavior and payload validation come from files in <code>backend/packages/core/src/routes</code> and <code>backend/packages/server-node/src/routes</code>.</li>
+        </ul>
+
+        <h2>Core API methods</h2>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Group</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>POST</td><td><code>/v1/auth/register</code></td><td>auth</td><td>May return mail setup/send errors when verification is enabled.</td></tr>
+            <tr><td>POST</td><td><code>/v1/auth/login</code></td><td>auth</td><td>Returns 403 <code>EMAIL_NOT_VERIFIED</code> when verification required.</td></tr>
+            <tr><td>POST</td><td><code>/v1/auth/verify-email</code></td><td>auth</td><td>Consumes one-time verification token.</td></tr>
+            <tr><td>POST</td><td><code>/v1/auth/resend-verification</code></td><td>auth</td><td>Idempotent success for unknown/verified emails.</td></tr>
+            <tr><td>POST</td><td><code>/v1/auth/refresh</code></td><td>auth</td><td>Rotates refresh token on each call.</td></tr>
+            <tr><td>GET</td><td><code>/v1/me</code></td><td>auth</td><td>Returns authenticated user object.</td></tr>
+            <tr><td>GET</td><td><code>/v1/auth/sessions</code></td><td>auth</td><td>Lists non-revoked, non-expired refresh sessions.</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/auth/sessions/:sessionId</code></td><td>auth</td><td>Revokes session by refresh token id.</td></tr>
+            <tr><td>PATCH</td><td><code>/v1/auth/password</code></td><td>auth</td><td>Requires current password.</td></tr>
+
+            <tr><td>GET</td><td><code>/v1/jwks</code></td><td>jwks</td><td>Public JWKS for token verification.</td></tr>
+
+            <tr><td>POST</td><td><code>/v1/devices/register</code></td><td>devices</td><td>Device registration for E2EE/prekey flows.</td></tr>
+            <tr><td>GET</td><td><code>/v1/users/:userId/prekeys</code></td><td>devices</td><td>Fetch user prekeys.</td></tr>
+
+            <tr><td>GET</td><td><code>/v1/presence</code></td><td>presence</td><td>Query param: <code>userIds</code> csv.</td></tr>
+            <tr><td>POST</td><td><code>/v1/presence/rpc</code></td><td>presence</td><td>Set rich presence payload.</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/presence/rpc</code></td><td>presence</td><td>Clear rich presence payload.</td></tr>
+
+            <tr><td>POST</td><td><code>/v1/servers/official</code></td><td>servers</td><td>Create official/platform-managed server.</td></tr>
+            <tr><td>POST</td><td><code>/v1/servers</code></td><td>servers</td><td>Create user server registration.</td></tr>
+            <tr><td>GET</td><td><code>/v1/servers</code></td><td>servers</td><td>List server memberships.</td></tr>
+            <tr><td>POST</td><td><code>/v1/servers/:serverId/leave</code></td><td>servers</td><td>Leave server.</td></tr>
+            <tr><td>PATCH</td><td><code>/v1/servers/:serverId/profile</code></td><td>servers</td><td>Update branding/profile fields.</td></tr>
+            <tr><td>POST</td><td><code>/v1/servers/reorder</code></td><td>servers</td><td>Persist sidebar order.</td></tr>
+            <tr><td>POST</td><td><code>/v1/servers/:serverId/membership-token</code></td><td>servers</td><td>Issue/refresh node membership token.</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/servers/:serverId</code></td><td>servers</td><td>Delete server registration.</td></tr>
+
+            <tr><td>POST</td><td><code>/v1/invites</code></td><td>invites</td><td>Create invite code.</td></tr>
+            <tr><td>GET</td><td><code>/v1/invites/:code</code></td><td>invites</td><td>Inspect invite metadata.</td></tr>
+            <tr><td>POST</td><td><code>/v1/invites/join</code></td><td>invites</td><td>Join by URL or code.</td></tr>
+            <tr><td>POST</td><td><code>/v1/invites/:code/join</code></td><td>invites</td><td>Join by explicit code.</td></tr>
+
+            <tr><td>GET</td><td><code>/v1/profile-images/users/:userId/:filename</code></td><td>profile</td><td>Public profile image fetch.</td></tr>
+            <tr><td>POST</td><td><code>/v1/me/profile/pfp</code></td><td>profile</td><td>Upload avatar.</td></tr>
+            <tr><td>POST</td><td><code>/v1/me/profile/banner</code></td><td>profile</td><td>Upload banner.</td></tr>
+            <tr><td>GET</td><td><code>/v1/users/:id/profile</code></td><td>profile</td><td>Public user profile.</td></tr>
+            <tr><td>PATCH</td><td><code>/v1/me/profile</code></td><td>profile</td><td>Patch own profile fields.</td></tr>
+
+            <tr><td>GET</td><td><code>/v1/social/friends</code></td><td>social</td><td>Friend list.</td></tr>
+            <tr><td>POST</td><td><code>/v1/social/friends</code></td><td>social</td><td>Send friend request / add friend.</td></tr>
+            <tr><td>GET</td><td><code>/v1/social/requests</code></td><td>social</td><td>Pending requests.</td></tr>
+            <tr><td>POST</td><td><code>/v1/social/requests/:requestId/accept</code></td><td>social</td><td>Accept request.</td></tr>
+            <tr><td>POST</td><td><code>/v1/social/requests/:requestId/decline</code></td><td>social</td><td>Decline request.</td></tr>
+            <tr><td>GET</td><td><code>/v1/social/settings</code></td><td>social</td><td>Privacy/settings.</td></tr>
+            <tr><td>PATCH</td><td><code>/v1/social/settings</code></td><td>social</td><td>Update settings.</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/social/friends/:friendId</code></td><td>social</td><td>Remove friend.</td></tr>
+            <tr><td>POST</td><td><code>/v1/social/dms/open</code></td><td>social</td><td>Open/create DM thread.</td></tr>
+            <tr><td>GET</td><td><code>/v1/social/dms</code></td><td>social</td><td>List DM threads.</td></tr>
+            <tr><td>GET</td><td><code>/v1/social/dms/:threadId/messages</code></td><td>social</td><td>Fetch DM history.</td></tr>
+            <tr><td>POST</td><td><code>/v1/social/dms/:threadId/messages</code></td><td>social</td><td>Send DM message.</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/social/dms/:threadId/messages/:messageId</code></td><td>social</td><td>Delete DM message.</td></tr>
+            <tr><td>POST</td><td><code>/v1/social/dms/:threadId/call-signals</code></td><td>social</td><td>Post WebRTC signaling payload.</td></tr>
+            <tr><td>GET</td><td><code>/v1/social/dms/:threadId/call-signals</code></td><td>social</td><td>Poll call signal events.</td></tr>
+
+            <tr><td>POST</td><td><code>/v1/dms/create</code></td><td>dms</td><td>Legacy DM create path.</td></tr>
+            <tr><td>POST</td><td><code>/v1/dms/send</code></td><td>dms</td><td>Legacy DM send path.</td></tr>
+
+            <tr><td>GET</td><td><code>/v1/extensions/catalog</code></td><td>extensions</td><td>Global extension registry.</td></tr>
+            <tr><td>GET</td><td><code>/v1/extensions/client/:extensionId/source</code></td><td>extensions</td><td>Client extension source.</td></tr>
+            <tr><td>GET</td><td><code>/v1/servers/:serverId/extensions</code></td><td>extensions</td><td>Server extension states.</td></tr>
+            <tr><td>GET</td><td><code>/v1/servers/:serverId/extensions/:extensionId/config</code></td><td>extensions</td><td>Read extension config.</td></tr>
+            <tr><td>PUT</td><td><code>/v1/servers/:serverId/extensions/:extensionId/config</code></td><td>extensions</td><td>Write extension config.</td></tr>
+            <tr><td>POST</td><td><code>/v1/servers/:serverId/extensions/:extensionId</code></td><td>extensions</td><td>Toggle extension enablement.</td></tr>
+
+            <tr><td>GET</td><td><code>/v1/billing/boost</code></td><td>billing</td><td>Boost subscription state.</td></tr>
+            <tr><td>POST</td><td><code>/v1/billing/boost/checkout</code></td><td>billing</td><td>Create checkout.</td></tr>
+            <tr><td>POST</td><td><code>/v1/billing/boost/portal</code></td><td>billing</td><td>Create billing portal session.</td></tr>
+            <tr><td>POST</td><td><code>/v1/billing/boost/sync</code></td><td>billing</td><td>Force sync billing state.</td></tr>
+            <tr><td>POST</td><td><code>/v1/billing/boost/cancel</code></td><td>billing</td><td>Cancel boost subscription.</td></tr>
+
+            <tr><td>GET</td><td><code>/v1/admin/overview</code></td><td>admin</td><td>Admin analytics summary.</td></tr>
+            <tr><td>GET</td><td><code>/v1/admin/users</code></td><td>admin</td><td>User search/listing.</td></tr>
+            <tr><td>POST</td><td><code>/v1/admin/users/:userId/platform-admin</code></td><td>admin</td><td>Grant/revoke platform admin.</td></tr>
+            <tr><td>POST</td><td><code>/v1/admin/founder</code></td><td>admin</td><td>Transfer/set founder role.</td></tr>
+            <tr><td>POST</td><td><code>/v1/admin/users/:userId/badges</code></td><td>admin</td><td>Manage user badges.</td></tr>
+            <tr><td>GET</td><td><code>/v1/me/admin-status</code></td><td>admin</td><td>Current admin privileges.</td></tr>
+
+            <tr><td>POST</td><td><code>/v1/internal/node-sync</code></td><td>internal</td><td>Node synchronization endpoint.</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Server Node API methods</h2>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Group</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/v1/guilds</code></td><td>guilds</td><td>List tenant guilds where user is member/owner.</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds</code></td><td>guilds</td><td>Create guild and default roles/channels.</td></tr>
+            <tr><td>GET</td><td><code>/v1/guilds/:guildId/state</code></td><td>guild-state</td><td>Full guild bootstrap state.</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/join</code></td><td>guild-join</td><td>Join guild.</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/leave</code></td><td>guild-join</td><td>Leave guild.</td></tr>
+
+            <tr><td>GET</td><td><code>/v1/guilds/:guildId/channels</code></td><td>channels</td><td>Permission-filtered list.</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/channels/reorder</code></td><td>channels</td><td>Reorder + optional parent update.</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/channels</code></td><td>channels</td><td>Create text/voice/category.</td></tr>
+            <tr><td>PATCH</td><td><code>/v1/channels/:channelId</code></td><td>channels</td><td>Rename/reparent/reposition.</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/channels/:channelId</code></td><td>channels</td><td>Delete channel.</td></tr>
+            <tr><td>POST</td><td><code>/v1/channels/:channelId/voice/join</code></td><td>channels</td><td>Join voice state.</td></tr>
+            <tr><td>POST</td><td><code>/v1/channels/:channelId/voice/leave</code></td><td>channels</td><td>Leave voice state.</td></tr>
+            <tr><td>PATCH</td><td><code>/v1/channels/:channelId/voice/state</code></td><td>channels</td><td>Set <code>muted</code>/<code>deafened</code>.</td></tr>
+
+            <tr><td>GET</td><td><code>/v1/channels/:channelId/messages</code></td><td>messages</td><td>Pagination/history fetch.</td></tr>
+            <tr><td>POST</td><td><code>/v1/channels/:channelId/messages</code></td><td>messages</td><td>Create message.</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/channels/:channelId/messages/:messageId</code></td><td>messages</td><td>Delete message.</td></tr>
+
+            <tr><td>PUT</td><td><code>/v1/channels/:channelId/overwrites</code></td><td>overwrites</td><td>Create/update channel overwrite.</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/channels/:channelId/overwrites</code></td><td>overwrites</td><td>Delete overwrite.</td></tr>
+            <tr><td>POST</td><td><code>/v1/channels/:channelId/sync-permissions</code></td><td>overwrites</td><td>Sync from parent category.</td></tr>
+
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/roles</code></td><td>roles</td><td>Create role.</td></tr>
+            <tr><td>PATCH</td><td><code>/v1/roles/:roleId</code></td><td>roles</td><td>Edit role fields/perms.</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/roles/:roleId</code></td><td>roles</td><td>Delete role.</td></tr>
+
+            <tr><td>PUT</td><td><code>/v1/guilds/:guildId/members/:memberId/roles/:roleId</code></td><td>members</td><td>Assign role.</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/guilds/:guildId/members/:memberId/roles/:roleId</code></td><td>members</td><td>Remove role.</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/members/:memberId/kick</code></td><td>members</td><td>Kick member.</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/members/:memberId/ban</code></td><td>members</td><td>Ban member.</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/guilds/:guildId/bans/:memberId</code></td><td>members</td><td>Unban member.</td></tr>
+
+            <tr><td>POST</td><td><code>/v1/attachments/upload</code></td><td>attachments</td><td>Upload binary attachment.</td></tr>
+            <tr><td>GET</td><td><code>/v1/attachments/:id</code></td><td>attachments</td><td>Fetch attachment metadata/content proxy.</td></tr>
+
+            <tr><td>GET</td><td><code>/v1/guilds/:guildId/emotes</code></td><td>emotes</td><td>List emotes.</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/emotes</code></td><td>emotes</td><td>Create emote.</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/guilds/:guildId/emotes/:emoteId</code></td><td>emotes</td><td>Delete emote.</td></tr>
+
+            <tr><td>GET</td><td><code>/v1/me/guilds</code></td><td>me</td><td>List user guilds on node.</td></tr>
+            <tr><td>GET</td><td><code>/v1/me/voice-state</code></td><td>me</td><td>Current voice state.</td></tr>
+            <tr><td>POST</td><td><code>/v1/me/voice-disconnect</code></td><td>me</td><td>Force disconnect own voice state.</td></tr>
+
+            <tr><td>GET</td><td><code>/v1/extensions/catalog</code></td><td>extensions</td><td>Server node extension catalog.</td></tr>
+            <tr><td>GET</td><td><code>/v1/extensions</code></td><td>extensions</td><td>Activated extensions for tenant.</td></tr>
+            <tr><td>GET</td><td><code>/v1/extensions/commands</code></td><td>extensions</td><td>Registered commands.</td></tr>
+            <tr><td>GET</td><td><code>/v1/extensions/:extensionId/config</code></td><td>extensions</td><td>Read extension config.</td></tr>
+            <tr><td>PUT</td><td><code>/v1/extensions/:extensionId/config</code></td><td>extensions</td><td>Write extension config.</td></tr>
+            <tr><td>POST</td><td><code>/v1/extensions/commands/:commandName/execute</code></td><td>extensions</td><td>Execute command handler.</td></tr>
+            <tr><td>POST</td><td><code>/v1/extensions/sync</code></td><td>extensions</td><td>Sync extension manifests.</td></tr>
+            <tr><td>POST</td><td><code>/v1/extensions/activate</code></td><td>extensions</td><td>Activate extension.</td></tr>
+            <tr><td>POST</td><td><code>/v1/extensions/:extensionId/deactivate</code></td><td>extensions</td><td>Deactivate extension.</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Discord-compat methods</h2>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/api/v9/users/@me/guilds</code></td><td>Compat list guilds.</td></tr>
+            <tr><td>GET</td><td><code>/api/v9/guilds/:guildId/channels</code></td><td>Compat list channels.</td></tr>
+            <tr><td>POST</td><td><code>/api/v9/guilds/:guildId/channels</code></td><td>Compat create channel.</td></tr>
+            <tr><td>PATCH</td><td><code>/api/v9/channels/:channelId</code></td><td>Compat update channel.</td></tr>
+            <tr><td>DELETE</td><td><code>/api/v9/channels/:channelId</code></td><td>Compat delete channel.</td></tr>
+            <tr><td>GET</td><td><code>/api/v9/channels/:channelId/messages</code></td><td>Compat list messages.</td></tr>
+            <tr><td>POST</td><td><code>/api/v9/channels/:channelId/messages</code></td><td>Compat send message.</td></tr>
+          </tbody>
+        </table>
+
+        <p class="footer">If a method is not listed here, it is either websocket-only (gateway) or internal process wiring. For payload examples and integration guides, see <a href="./integrations-rpc.html">Extension + RPC Apps</a>.</p>
+      </main>
+    </div>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

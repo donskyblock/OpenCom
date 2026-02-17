@@ -132,6 +132,12 @@ export function createOpenComApiClient({ coreBaseUrl, nodeBaseUrl, authToken }) 
     updateSettings: (payload) => client.core.patch("/v1/social/settings", payload)
   };
 
+  client.presence = {
+    getMany: (userIds = []) => client.core.get(`/v1/presence?userIds=${encodeURIComponent((userIds || []).join(","))}`),
+    setRichActivity: (activity) => client.core.post("/v1/presence/rpc", { activity: activity || null }),
+    clearRichActivity: () => client.core.del("/v1/presence/rpc")
+  };
+
   client.dms = {
     list: () => client.core.get("/v1/social/dms"),
     open: (payload) => client.core.post("/v1/social/dms/open", payload),
