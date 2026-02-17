@@ -232,6 +232,22 @@ function getCoreGatewayWsCandidates() {
   return candidates;
 }
 
+function getDesktopBridge() {
+  if (typeof window === "undefined") return null;
+  return window.opencomDesktopBridge || null;
+}
+
+async function promptText(message, defaultValue = "") {
+  const bridge = getDesktopBridge();
+  if (bridge?.prompt) {
+    try {
+      return await bridge.prompt(message, defaultValue, "OpenCom");
+    } catch {}
+  }
+  if (typeof window === "undefined" || typeof window.prompt !== "function") return null;
+  return window.prompt(message, defaultValue);
+}
+
 
 function getVoiceGatewayWsCandidates(serverBaseUrl, includeDirectNodeWsFallback = false) {
   const explicitVoiceGateway = import.meta.env.VITE_VOICE_GATEWAY_URL;
@@ -758,6 +774,7 @@ export function App() {
   const downloadMenuRef = useRef(null);
   const preferredDownloadTarget = useMemo(() => getPreferredDownloadTarget(DOWNLOAD_TARGETS), []);
   const loadedClientExtensionIdsRef = useRef(new Set());
+  const desktopSessionLoadedRef = useRef(false);
   const extensionPanelsRef = useRef([]);
   const serversRef = useRef([]);
   const storageScope = me?.id || "anonymous";
@@ -1331,6 +1348,30 @@ export function App() {
   }, [accessToken]);
 
   useEffect(() => {
+    let cancelled = false;
+    const bridge = getDesktopBridge();
+    if (!bridge?.getSession) {
+      desktopSessionLoadedRef.current = true;
+      return;
+    }
+    bridge.getSession()
+      .then((data) => {
+        if (cancelled || !data) return;
+        const nextAccess = typeof data.accessToken === "string" ? data.accessToken : "";
+        const nextRefresh = typeof data.refreshToken === "string" ? data.refreshToken : "";
+        if (nextAccess && !accessToken) setAccessToken(nextAccess);
+        if (nextRefresh && !refreshToken) setRefreshToken(nextRefresh);
+      })
+      .catch(() => {})
+      .finally(() => {
+        desktopSessionLoadedRef.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     try {
       window.opencomDesktopBridge?.setPresenceAuth?.({
         accessToken: accessToken || "",
@@ -1366,6 +1407,16 @@ export function App() {
     if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
     else localStorage.removeItem(REFRESH_TOKEN_KEY);
   }, [refreshToken]);
+
+  useEffect(() => {
+    const bridge = getDesktopBridge();
+    if (!bridge?.setSession) return;
+    if (!desktopSessionLoadedRef.current) return;
+    bridge.setSession({
+      accessToken: accessToken || "",
+      refreshToken: refreshToken || ""
+    }).catch(() => {});
+  }, [accessToken, refreshToken]);
 
   useEffect(() => {
     const onAccessRefresh = (event) => {
@@ -3275,19 +3326,19 @@ export function App() {
       return;
     }
 
-    const type = fixedType || (window.prompt("Channel type: text, voice, or category", "text") || "").trim().toLowerCase();
+    const type = fixedType || ((await promptText("Channel type: text, voice, or category", "text")) || "").trim().toLowerCase();
     if (!["text", "voice", "category"].includes(type)) {
       setStatus("Invalid channel type.");
       return;
     }
 
     const suggestedName = type === "category" ? "New Category" : `new-${type}`;
-    const name = (window.prompt(`Name for the new ${type}:`, suggestedName) || "").trim();
+    const name = ((await promptText(`Name for the new ${type}:`, suggestedName)) || "").trim();
     if (!name) return;
 
     let parentId = fixedParentId || "";
     if (type !== "category" && !fixedParentId) {
-      const parentName = (window.prompt("Optional category name/ID (leave blank for none):", "") || "").trim();
+      const parentName = ((await promptText("Optional category name/ID (leave blank for none):", "")) || "").trim();
       if (parentName) {
         const parent = (categoryChannels || []).find((cat) => cat.id === parentName || String(cat.name || "").toLowerCase() === parentName.toLowerCase());
         if (!parent) {
@@ -3303,7 +3354,7 @@ export function App() {
       const makePrivate = window.confirm("Make this category private?");
       if (makePrivate) {
         const roleList = (guildState?.roles || []).filter((role) => !role.is_everyone).map((role) => role.name).join(", ");
-        const rawRoles = window.prompt(`Allowed roles (comma-separated names or IDs).\nAvailable: ${roleList}`, "") || "";
+        const rawRoles = (await promptText(`Allowed roles (comma-separated names or IDs).\nAvailable: ${roleList}`, "")) || "";
         privateRoleIds = parseRoleInputToIds(rawRoles);
       }
     }
@@ -3625,7 +3676,7 @@ export function App() {
 
   async function saveChannelName(channelId, currentName) {
     if (!activeServer || !workingGuildId) return;
-    const nextName = (window.prompt("Channel name:", currentName || "") || "").trim();
+    const nextName = ((await promptText("Channel name:", currentName || "")) || "").trim();
     if (!nextName || nextName === currentName) return;
     await nodeApi(activeServer.baseUrl, `/v1/channels/${channelId}`, activeServer.membershipToken, {
       method: "PATCH",
@@ -3636,7 +3687,7 @@ export function App() {
   async function setChannelVisibilityByRoles(channelId) {
     if (!activeServer || !workingGuildId || !channelId) return;
     const roleList = (guildState?.roles || []).filter((role) => !role.is_everyone).map((role) => role.name).join(", ");
-    const rawRoles = window.prompt(`Visible to roles (comma-separated names or IDs). Leave blank to keep private for admins only.\nAvailable: ${roleList}`, "");
+    const rawRoles = await promptText(`Visible to roles (comma-separated names or IDs). Leave blank to keep private for admins only.\nAvailable: ${roleList}`, "");
     if (rawRoles == null) return;
     const allowedRoleIds = parseRoleInputToIds(rawRoles);
     await applyPrivateVisibilityToChannel(channelId, allowedRoleIds, activeServer, workingGuildId);

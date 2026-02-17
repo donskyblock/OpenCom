@@ -2,6 +2,7 @@ import { app, BrowserWindow, shell, ipcMain } from "electron";
 import { createServer } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import log from "electron-log";
 
@@ -19,6 +20,135 @@ const rpcAuthState = {
   accessToken: "",
   coreApi: ""
 };
+
+const SESSION_FILE_NAME = "data.json";
+
+function getSessionFilePath() {
+  const userDataDir = app.getPath("userData");
+  return path.join(userDataDir, SESSION_FILE_NAME);
+}
+
+function getSessionKey() {
+  return crypto
+    .createHash("sha256")
+    .update(`${app.getName()}::${app.getPath("userData")}::opencom-session`)
+    .digest();
+}
+
+function obfuscateSession(payload) {
+  const json = JSON.stringify(payload || {});
+  const input = Buffer.from(json, "utf8");
+  const key = getSessionKey();
+  const out = Buffer.allocUnsafe(input.length);
+  for (let i = 0; i < input.length; i += 1) out[i] = input[i] ^ key[i % key.length];
+  return out.toString("base64");
+}
+
+function deobfuscateSession(raw) {
+  const input = Buffer.from(String(raw || ""), "base64");
+  if (!input.length) return {};
+  const key = getSessionKey();
+  const out = Buffer.allocUnsafe(input.length);
+  for (let i = 0; i < input.length; i += 1) out[i] = input[i] ^ key[i % key.length];
+  return JSON.parse(out.toString("utf8"));
+}
+
+function readDesktopSession() {
+  try {
+    const filePath = getSessionFilePath();
+    if (!fs.existsSync(filePath)) return {};
+    const encoded = fs.readFileSync(filePath, "utf8").trim();
+    if (!encoded) return {};
+    return deobfuscateSession(encoded);
+  } catch (error) {
+    log.warn("Failed reading desktop session", error);
+    return {};
+  }
+}
+
+function writeDesktopSession(session) {
+  try {
+    const filePath = getSessionFilePath();
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const encoded = obfuscateSession(session || {});
+    fs.writeFileSync(filePath, encoded, "utf8");
+    return true;
+  } catch (error) {
+    log.error("Failed writing desktop session", error);
+    return false;
+  }
+}
+
+function showPromptWindow(promptText = "", defaultValue = "", title = "OpenCom") {
+  return new Promise((resolve) => {
+    const parentWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0] || null;
+    const promptWindow = new BrowserWindow({
+      width: 420,
+      height: 180,
+      parent: parentWindow || undefined,
+      modal: Boolean(parentWindow),
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      show: false,
+      title,
+      autoHideMenuBar: true,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+        sandbox: false
+      }
+    });
+
+    let settled = false;
+    const onSubmit = (_event, value) => finish(value);
+    const onCancel = () => finish(null);
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      ipcMain.removeListener("desktop:prompt:submit", onSubmit);
+      ipcMain.removeListener("desktop:prompt:cancel", onCancel);
+      resolve(typeof value === "string" ? value : null);
+      if (!promptWindow.isDestroyed()) promptWindow.close();
+    };
+
+    promptWindow.on("closed", () => finish(null));
+    promptWindow.webContents.on("did-finish-load", () => promptWindow.show());
+    promptWindow.webContents.on("will-navigate", (event) => event.preventDefault());
+    promptWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    ipcMain.on("desktop:prompt:submit", onSubmit);
+    ipcMain.on("desktop:prompt:cancel", onCancel);
+
+    const safeText = String(promptText || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const safeDefault = String(defaultValue || "").replace(/\\/g, "\\\\").replace(/`/g, "\\`");
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#121a2f;color:#e9efff;margin:0;padding:16px}
+      p{margin:0 0 12px 0;font-size:14px;line-height:1.35}
+      input{width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid #3a4d72;background:#0d1426;color:#e9efff}
+      .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+      button{padding:8px 12px;border-radius:8px;border:1px solid #4f6ca1;background:#2d6cdf;color:white;cursor:pointer}
+      button.ghost{background:transparent;color:#c5d4ff}
+    </style></head><body>
+      <p>${safeText}</p>
+      <input id="v" />
+      <div class="actions"><button class="ghost" id="cancel">Cancel</button><button id="ok">OK</button></div>
+      <script>
+        const { ipcRenderer } = require("electron");
+        const input = document.getElementById("v");
+        input.value = \`${safeDefault}\`;
+        input.focus();
+        input.select();
+        document.getElementById("ok").addEventListener("click", () => ipcRenderer.send("desktop:prompt:submit", input.value));
+        document.getElementById("cancel").addEventListener("click", () => ipcRenderer.send("desktop:prompt:cancel"));
+        window.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") ipcRenderer.send("desktop:prompt:submit", input.value);
+          if (event.key === "Escape") ipcRenderer.send("desktop:prompt:cancel");
+        });
+      </script>
+    </body></html>`;
+    promptWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  });
+}
 
 log.initialize();
 log.transports.file.level = "info";
@@ -197,6 +327,30 @@ ipcMain.handle("rpc:info", () => ({
   port: RPC_PORT,
   ready: Boolean(rpcAuthState.accessToken && rpcAuthState.coreApi)
 }));
+
+ipcMain.handle("desktop:session:get", () => {
+  const current = readDesktopSession();
+  return {
+    accessToken: typeof current.accessToken === "string" ? current.accessToken : "",
+    refreshToken: typeof current.refreshToken === "string" ? current.refreshToken : ""
+  };
+});
+
+ipcMain.handle("desktop:session:set", (_event, payload = {}) => {
+  const next = {
+    accessToken: typeof payload.accessToken === "string" ? payload.accessToken : "",
+    refreshToken: typeof payload.refreshToken === "string" ? payload.refreshToken : ""
+  };
+  return { ok: writeDesktopSession(next) };
+});
+
+ipcMain.handle("desktop:prompt", async (_event, payload = {}) => {
+  const text = typeof payload.text === "string" ? payload.text : "";
+  const defaultValue = typeof payload.defaultValue === "string" ? payload.defaultValue : "";
+  const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "OpenCom";
+  const value = await showPromptWindow(text, defaultValue, title);
+  return { value };
+});
 
 app.whenReady().then(() => {
   startLocalRpcBridge();
