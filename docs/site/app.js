@@ -12,7 +12,7 @@ const SEARCH_INDEX = [
   { title: "Invites and Join Flow", url: "./guides.html#invites", section: "Guides", keywords: "join link accept flow permanent invite" },
   { title: "Badges and Boost perks", url: "./guides.html#badges", section: "Guides", keywords: "admin owner boost badge" },
   { title: "Rich Presence model", url: "./platform-guide.html#rich-presence-model-no-app-id", section: "Guides", keywords: "rpc presence image url buttons no app id" },
-  { title: "Desktop RPC bridge", url: "./platform-guide.html#desktop-client-capabilities", section: "Guides", keywords: "desktop rpc bridge 127.0.0.1 6463 rpc activity health" },
+  { title: "Desktop RPC bridge", url: "./platform-guide.html#desktop-client-capabilities", section: "Guides", keywords: "desktop rpc bridge 127.0.0.1 6483 rpc activity health" },
   { title: "Auth and Token Refresh", url: "./operations.html#auth", section: "Operations", keywords: "access token refresh token sessions" },
   { title: "Logging and Diagnostics", url: "./operations.html#logging", section: "Operations", keywords: "logs warn error debug_http debug_voice" },
   { title: "Environment variables", url: "./operations.html#env", section: "Operations", keywords: "env config deployment" }

@@ -76,7 +76,7 @@ It is intended to be inclusive of current platform behavior in this repository.
   - Node integration disabled in renderer
   - External link handling via OS browser
 - Local rich presence bridge:
-  - HTTP listener on `127.0.0.1:6463` by default
+  - HTTP listener on `127.0.0.1:6483` by default
   - Bridge endpoints:
     - `GET /rpc/health`
     - `POST /rpc/activity`
