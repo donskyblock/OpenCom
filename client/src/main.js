@@ -12,6 +12,7 @@ const __dirname = path.dirname(__filename);
 const REMOTE_FALLBACK_URL = process.env.OPENCOM_APP_URL || "https://opencom.online";
 const CORE_API_URL = process.env.OPENCOM_CORE_API_URL || "https://api.opencom.online";
 const LOCAL_INDEX = path.join(__dirname, "web", "index.html");
+const LOCAL_ICON = path.join(__dirname, "web", "logo.png");
 const RPC_HOST = process.env.OPENCOM_RPC_HOST || "127.0.0.1";
 const RPC_PORT = Number(process.env.OPENCOM_RPC_PORT || 6483);
 
@@ -163,6 +164,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 640,
     backgroundColor: "#141621",
+    ...(fs.existsSync(LOCAL_ICON) ? { icon: LOCAL_ICON } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
