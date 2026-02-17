@@ -3119,7 +3119,12 @@ export function App() {
       setServers(next);
       setStatus("Server profile updated.");
     } catch (error) {
-      setStatus(`Server profile update failed: ${error.message}`);
+      const msg = error?.message || "";
+      if (msg.includes("LOGO_REQUIRED")) setStatus("Server logo is required.");
+      else if (msg.includes("INVALID_LOGO_URL")) setStatus("Invalid server logo URL. Use an uploaded image or an image URL ending in .png/.jpg/.jpeg/.gif/.webp/.svg/.bmp.");
+      else if (msg.includes("INVALID_BANNER_URL")) setStatus("Invalid server banner URL. Use an uploaded image or an image URL ending in .png/.jpg/.jpeg/.gif/.webp/.svg/.bmp.");
+      else if (msg.includes("VALIDATION_ERROR")) setStatus("Server profile data is invalid. Check name, logo URL, and banner URL.");
+      else setStatus(`Server profile update failed: ${msg}`);
     }
   }
 
@@ -5595,26 +5600,6 @@ export function App() {
           <div className="popout-drag-handle" onMouseDown={startDraggingProfileCard}>Drag</div>
           <div className="popout-banner" style={{ backgroundImage: memberProfileCard.bannerUrl ? `url(${profileImageUrl(memberProfileCard.bannerUrl)})` : undefined }} />
           <div className="popout-content">
-            {(() => {
-              const rich = getRichPresence(memberProfileCard.id);
-              return rich ? (
-                <div className="message-embed-card" style={{ marginBottom: "8px" }}>
-                  {rich.largeImageUrl && <img src={rich.largeImageUrl} alt={rich.largeImageText || "Activity"} style={{ width: "100%", borderRadius: "8px", marginBottom: "6px" }} />}
-                  <strong>{rich.name || "Activity"}</strong>
-                  {rich.details && <p>{rich.details}</p>}
-                  {rich.state && <p>{rich.state}</p>}
-                  {Array.isArray(rich.buttons) && rich.buttons.length > 0 && (
-                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
-                      {rich.buttons.map((button, index) => (
-                        <a key={`${button.url}-${index}`} href={button.url} target="_blank" rel="noreferrer" className="ghost" style={{ padding: "4px 8px", borderRadius: "8px", border: "1px solid var(--border-subtle)", textDecoration: "none", color: "var(--text-soft)" }}>
-                          {button.label}
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : null;
-            })()}
             <div className="avatar popout-avatar">{memberProfileCard.pfpUrl ? <img src={profileImageUrl(memberProfileCard.pfpUrl)} alt="Profile avatar" className="avatar-image" /> : getInitials(memberProfileCard.displayName || memberProfileCard.username || "User")}</div>
             <h4>{memberProfileCard.displayName || memberProfileCard.username}</h4>
             <p className="hint">@{memberProfileCard.username} · {presenceLabel(getPresence(memberProfileCard?.id) || memberProfileCard?.status || "offline")}</p>
@@ -5649,6 +5634,26 @@ export function App() {
               </div>
             )}
             <p>{memberProfileCard.bio || "No bio set."}</p>
+            {(() => {
+              const rich = getRichPresence(memberProfileCard.id);
+              return rich ? (
+                <div className="message-embed-card" style={{ marginTop: "8px", marginBottom: "8px" }}>
+                  {rich.largeImageUrl && <img src={rich.largeImageUrl} alt={rich.largeImageText || "Activity"} style={{ width: "100%", borderRadius: "8px", marginBottom: "6px" }} />}
+                  <strong>{rich.name || "Activity"}</strong>
+                  {rich.details && <p>{rich.details}</p>}
+                  {rich.state && <p>{rich.state}</p>}
+                  {Array.isArray(rich.buttons) && rich.buttons.length > 0 && (
+                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
+                      {rich.buttons.map((button, index) => (
+                        <a key={`${button.url}-${index}`} href={button.url} target="_blank" rel="noreferrer" className="ghost" style={{ padding: "4px 8px", borderRadius: "8px", border: "1px solid var(--border-subtle)", textDecoration: "none", color: "var(--text-soft)" }}>
+                          {button.label}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null;
+            })()}
             <div className="popout-actions">
               <button className="ghost" onClick={() => openDmFromFriend({ id: memberProfileCard.id, username: memberProfileCard.username })}>Message</button>
               {canKickMembers && memberProfileCard.id !== me?.id && (

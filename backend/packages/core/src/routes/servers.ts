@@ -12,20 +12,20 @@ const OFFICIAL_NODE_SERVER_ID = env.OFFICIAL_NODE_SERVER_ID;
 const CreateServer = z.object({
   name: z.string().min(2).max(64),
   baseUrl: z.string().url(),
-  logoUrl: z.string().url().nullable().optional(),
-  bannerUrl: z.string().url().nullable().optional()
+  logoUrl: z.string().min(1).nullable().optional(),
+  bannerUrl: z.string().min(1).nullable().optional()
 });
 
 const CreateOfficialServer = z.object({
   name: z.string().min(2).max(64),
-  logoUrl: z.string().url().nullable().optional(),
-  bannerUrl: z.string().url().nullable().optional()
+  logoUrl: z.string().min(1).nullable().optional(),
+  bannerUrl: z.string().min(1).nullable().optional()
 });
 
 const UpdateServerProfile = z.object({
   name: z.string().min(2).max(64).optional(),
-  logoUrl: z.string().url().nullable().optional(),
-  bannerUrl: z.string().url().nullable().optional()
+  logoUrl: z.string().min(1).nullable().optional(),
+  bannerUrl: z.string().min(1).nullable().optional()
 });
 
 const ReorderServersBody = z.object({
@@ -36,8 +36,11 @@ function isValidImageUrl(value: string | null | undefined) {
   if (value == null) return true;
   const trimmed = String(value).trim();
   if (!trimmed) return false;
-  if (!/^https?:\/\//i.test(trimmed)) return false;
-  return /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(trimmed);
+  const hasImageExtension = /\.(png|jpe?g|gif|webp|svg|bmp)(\?.*)?$/i.test(trimmed);
+  if (!hasImageExtension) return false;
+  if (/^https?:\/\//i.test(trimmed)) return true;
+  if (trimmed.startsWith("/")) return true;
+  return false;
 }
 
 async function getPlatformRole(userId: string): Promise<"user" | "admin" | "owner"> {
