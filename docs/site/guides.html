@@ -11,9 +11,9 @@
     <aside class="sidebar" id="sidebar">
       <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
       <div class="nav-group"><div class="nav-title">Get Started</div><a class="nav-link" href="./index.html">Welcome</a><a class="nav-link" href="./quickstart.html">Quickstart</a></div>
-      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a></div>
-      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a></div>
-      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
+      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a><a class="nav-link" href="./api-methods.html">Method Index</a></div>
+      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a><a class="nav-link" href="./integrations-rpc.html">Extension + RPC Apps</a></div>
+      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./platform-guide.html">Platform Guide</a><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
     </aside>
 
     <div class="content-wrap">
@@ -59,6 +59,25 @@
           <li>Server logo and banner fields are editable via profile routes.</li>
           <li>Image validation should reject invalid formats/sizes and return actionable errors.</li>
         </ul>
+
+        <h2 id="channel-management">Channel and category management UX</h2>
+        <ul>
+          <li>Sidebar supports right-click context menus for servers, channels, and categories.</li>
+          <li>Inline action buttons (<code>+</code>, <code>⚙</code>) are permission-gated.</li>
+          <li>Create-category flow supports private visibility bootstrapping by allowed roles.</li>
+          <li>Channel settings include rename, visibility updates, and delete actions.</li>
+        </ul>
+
+        <h2 id="rich-presence">Rich presence and desktop RPC bridge</h2>
+        <ul>
+          <li>Core supports RPC-style activity payloads with image URLs and buttons (no app ID model).</li>
+          <li>Web profile settings include a rich presence editor.</li>
+          <li>Desktop client exposes local bridge endpoints for local integrations:
+            <code>GET /rpc/health</code>, <code>POST /rpc/activity</code>, <code>DELETE /rpc/activity</code>.
+          </li>
+        </ul>
+
+        <p class="footer">For complete platform coverage, see <a href="./platform-guide.html">Platform Guide</a>.</p>
       </main>
     </div>
   </div>

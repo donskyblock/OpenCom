@@ -11,9 +11,9 @@
     <aside class="sidebar" id="sidebar">
       <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
       <div class="nav-group"><div class="nav-title">Get Started</div><a class="nav-link" href="./index.html">Welcome</a><a class="nav-link" href="./quickstart.html">Quickstart</a></div>
-      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a></div>
-      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a></div>
-      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
+      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a><a class="nav-link" href="./api-methods.html">Method Index</a></div>
+      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a><a class="nav-link" href="./integrations-rpc.html">Extension + RPC Apps</a></div>
+      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./platform-guide.html">Platform Guide</a><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
     </aside>
 
     <div class="content-wrap">
@@ -72,6 +72,8 @@ export const commands = [
           <li><code>apis.attachments.upload(file, options)</code></li>
           <li><code>apis.extensions.serverConfig(serverId, extensionId)</code></li>
           <li><code>apis.extensions.setServerConfig(serverId, extensionId, config)</code></li>
+          <li><code>apis.presence.getMany(userIds)</code></li>
+          <li><code>apis.presence.setRichActivity(activity)</code> / <code>apis.presence.clearRichActivity()</code></li>
         </ul>
 
         <h2>Config endpoints</h2>
@@ -80,7 +82,10 @@ export const commands = [
           <li><code>PUT /v1/servers/:serverId/extensions/:extensionId/config</code></li>
         </ul>
 
-        <p class="footer">Package location: <code>Extensions/lib</code>. More examples in <code>docs/extensions-sdk.md</code>.</p>
+        <h2>Integration details</h2>
+        <p>For RPC app payload formats, desktop bridge methods, and extension runtime auth/permission details, see <a href="./integrations-rpc.html">Extension + RPC Apps</a>.</p>
+
+        <p class="footer">Package location: <code>Extensions/lib</code>. More examples in <code>docs/extensions-sdk.md</code>. Platform-wide context: <a href="./platform-guide.html">Platform Guide</a>.</p>
       </main>
     </div>
   </div>

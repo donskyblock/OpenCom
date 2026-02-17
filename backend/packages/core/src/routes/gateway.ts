@@ -245,7 +245,7 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
       if (conn?.userId) {
         const still = byUser.get(conn.userId);
         if (!still || still.size === 0) {
-          const presence: PresenceUpdate = { status: "offline", customStatus: null };
+          const presence: PresenceUpdate = { status: "offline", customStatus: null, richPresence: null };
           await app.pgPresenceUpsert(conn.userId, presence);
           if (redis) await redis.pub.publish(PRES_CH, JSON.stringify({ userId: conn.userId, presence }));
         }

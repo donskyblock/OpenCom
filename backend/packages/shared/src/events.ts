@@ -20,7 +20,29 @@ export type NodeIdentify = { membershipToken: string };
 
 // Presence
 export type PresenceStatus = "online" | "idle" | "dnd" | "offline";
-export type PresenceUpdate = { status: PresenceStatus; customStatus?: string | null };
+export type RichPresenceButton = {
+  label: string;
+  url: string;
+};
+
+export type RichPresenceActivity = {
+  name?: string | null;
+  details?: string | null;
+  state?: string | null;
+  largeImageUrl?: string | null;
+  largeImageText?: string | null;
+  smallImageUrl?: string | null;
+  smallImageText?: string | null;
+  buttons?: RichPresenceButton[];
+  startTimestamp?: number | null;
+  endTimestamp?: number | null;
+};
+
+export type PresenceUpdate = {
+  status: PresenceStatus;
+  customStatus?: string | null;
+  richPresence?: RichPresenceActivity | null;
+};
 
 // Profiles
 export type UserProfile = {

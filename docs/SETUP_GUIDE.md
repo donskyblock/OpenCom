@@ -6,6 +6,7 @@ This guide gives a one-command path to install and run OpenCom locally on Linux/
 - **Core API** (`backend/packages/core`) — accounts, auth, server registry, invites.
 - **Server Node** (`backend/packages/server-node`) — guild/channels/messages/attachments/voice.
 - **Frontend** (`frontend`) — React client UI.
+- **Desktop Client** (`client`) — thin Electron shell around web client + local rich presence RPC bridge.
 
 ## URLs
 - Planned frontend URL: `https://opencom.donskyblock.xyz`

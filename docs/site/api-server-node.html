@@ -11,9 +11,9 @@
     <aside class="sidebar" id="sidebar">
       <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
       <div class="nav-group"><div class="nav-title">Get Started</div><a class="nav-link" href="./index.html">Welcome</a><a class="nav-link" href="./quickstart.html">Quickstart</a></div>
-      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a></div>
-      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a></div>
-      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
+      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a><a class="nav-link" href="./api-methods.html">Method Index</a></div>
+      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a><a class="nav-link" href="./integrations-rpc.html">Extension + RPC Apps</a></div>
+      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./platform-guide.html">Platform Guide</a><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
     </aside>
 
     <div class="content-wrap">
@@ -37,9 +37,26 @@
             <tr><td>GET</td><td><code>/v1/guilds</code></td><td>List memberships</td></tr>
             <tr><td>POST</td><td><code>/v1/guilds</code></td><td>Create guild</td></tr>
             <tr><td>GET</td><td><code>/v1/guilds/:guildId/channels</code></td><td>List channels (hidden-channel aware)</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/channels</code></td><td>Create text/voice/category channel</td></tr>
             <tr><td>POST</td><td><code>/v1/guilds/:guildId/channels/reorder</code></td><td>Reorder channels/categories</td></tr>
+            <tr><td>PATCH</td><td><code>/v1/channels/:channelId</code></td><td>Edit channel name/position/parent</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/channels/:channelId</code></td><td>Delete channel</td></tr>
             <tr><td>POST</td><td><code>/v1/channels/:channelId/messages</code></td><td>Send message</td></tr>
+            <tr><td>GET</td><td><code>/v1/channels/:channelId/messages</code></td><td>List message history</td></tr>
             <tr><td>DELETE</td><td><code>/v1/channels/:channelId/messages/:messageId</code></td><td>Delete message</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Permissions and moderation controls</h2>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>PUT</td><td><code>/v1/channels/:channelId/overwrites</code></td><td>Upsert channel overwrite for role/member</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/channels/:channelId/overwrites</code></td><td>Delete channel overwrite</td></tr>
+            <tr><td>POST</td><td><code>/v1/channels/:channelId/sync-permissions</code></td><td>Copy category overwrites to child channel</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/members/:memberId/kick</code></td><td>Kick member</td></tr>
+            <tr><td>POST</td><td><code>/v1/guilds/:guildId/members/:memberId/ban</code></td><td>Ban member</td></tr>
+            <tr><td>DELETE</td><td><code>/v1/guilds/:guildId/bans/:memberId</code></td><td>Unban member</td></tr>
           </tbody>
         </table>
 
@@ -55,15 +72,15 @@
           </tbody>
         </table>
 
-        <h2>Voice and moderation</h2>
+        <h2>Voice and realtime state</h2>
         <table>
           <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
           <tbody>
             <tr><td>POST</td><td><code>/v1/channels/:channelId/voice/join</code></td><td>Join voice channel</td></tr>
             <tr><td>POST</td><td><code>/v1/channels/:channelId/voice/leave</code></td><td>Leave voice channel</td></tr>
-            <tr><td>POST</td><td><code>/v1/guilds/:guildId/members/:memberId/kick</code></td><td>Kick member</td></tr>
-            <tr><td>POST</td><td><code>/v1/guilds/:guildId/members/:memberId/ban</code></td><td>Ban member</td></tr>
-            <tr><td>DELETE</td><td><code>/v1/guilds/:guildId/bans/:memberId</code></td><td>Unban member</td></tr>
+            <tr><td>PATCH</td><td><code>/v1/channels/:channelId/voice/state</code></td><td>Update muted/deafened flags</td></tr>
+            <tr><td>GET</td><td><code>/v1/me/voice-state</code></td><td>Inspect current voice connection state</td></tr>
+            <tr><td>POST</td><td><code>/v1/me/voice-disconnect</code></td><td>Force disconnect user from voice</td></tr>
           </tbody>
         </table>
 
@@ -75,7 +92,10 @@
           <li><code>POST /v1/extensions/commands/:commandName/execute</code></li>
         </ul>
 
-        <p class="footer">Source routes live in <code>backend/packages/server-node/src/routes</code>.</p>
+        <h2>Need every method?</h2>
+        <p>Use the complete matrix in <a href="./api-methods.html">Method Index</a>. It includes all Server Node and Discord-compat routes.</p>
+
+        <p class="footer">Source routes live in <code>backend/packages/server-node/src/routes</code>. See <a href="./platform-guide.html">Platform Guide</a> for full cross-component coverage.</p>
       </main>
     </div>
   </div>

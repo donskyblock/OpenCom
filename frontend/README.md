@@ -2,24 +2,33 @@
 
 Discord-like web client for OpenCom.
 
+Canonical full-platform docs:
+
+- `../docs/PLATFORM_GUIDE.md`
+
 ## Planned production URLs
 - Frontend: `https://opencom.donskyblock.xyz`
 - Core API: `https://openapi.donskyblock.xyz`
 
 ## Features implemented
 - Discord-like multi-surface layout (servers + DMs + friends + profile + controls).
-- Owner actions card for creating text/voice channels in the active guild.
+- Channel/category management with context menus, inline action buttons, and permission-aware settings.
 - Email/password register + login flow (Core API).
+- Email verification flow with verify-link handling and resend flow.
 - Server list and switching (Core `/v1/servers`).
 - Add server by provider node URL/IP (Core `/v1/servers` with `baseUrl`).
 - Invite generation and invite join (Core `/v1/invites`) with metadata preview before joining.
 - Guild state + channels + messages from server node APIs.
 - Message send in text channels.
+- Date separators between message days.
 - Local DM inbox experience (designed for app-handled DM transport) with per-user persistence in localStorage.
 - Friends list UI and quick add workflow for social graph bootstrapping in-app.
 - Profile viewing + editing wired to Core profile APIs (`/v1/users/:id/profile`, `/v1/me/profile`).
+- Rich Presence (RPC-style fields with image URLs/buttons; no app ID required).
 - Custom CSS theme upload (`.css` file) and live application.
 - Theme persistence in `localStorage` and reset button.
+- Voice session management and realtime gateway presence updates.
+- Extension catalog + command execution UX.
 
 ## Environment variables
 Create `.env` in `frontend/` (optional):
@@ -58,4 +67,4 @@ npm run preview
 4. Pick a text channel and chat.
 5. Create invite code and share with others.
 6. Recipients join with invite code.
-7. Apply optional custom CSS theme for personalized UI.
+7. Configure profile/rich presence and optional custom CSS theme.

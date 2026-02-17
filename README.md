@@ -2,6 +2,19 @@
 
 Open-source Discord-like platform.
 
+## Documentation
+
+- Comprehensive platform functionality and API surface:
+  - `docs/PLATFORM_GUIDE.md`
+- Setup and operations:
+  - `docs/SETUP_GUIDE.md`
+  - `docs/VOICE_DEBUGGING.md`
+  - `scripts/README.md`
+- Component-specific docs:
+  - `frontend/README.md`
+  - `backend/README.md`
+  - `client/README.md`
+
 ## Monorepo layout
 - `backend/`: Core + Server Node services.
 - `frontend/`: React web client.

@@ -11,9 +11,9 @@
     <aside class="sidebar" id="sidebar">
       <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
       <div class="nav-group"><div class="nav-title">Get Started</div><a class="nav-link" href="./index.html">Welcome</a><a class="nav-link" href="./quickstart.html">Quickstart</a></div>
-      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a></div>
-      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a></div>
-      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
+      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a><a class="nav-link" href="./api-methods.html">Method Index</a></div>
+      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a><a class="nav-link" href="./integrations-rpc.html">Extension + RPC Apps</a></div>
+      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./platform-guide.html">Platform Guide</a><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
     </aside>
 
     <div class="content-wrap">
@@ -34,6 +34,7 @@
         <ul>
           <li>Frontend should refresh membership tokens before expiry using the membership-token route.</li>
           <li>Access token refresh is handled via <code>POST /v1/auth/refresh</code>.</li>
+          <li>Email verification routes are part of auth lifecycle: <code>/v1/auth/verify-email</code> and <code>/v1/auth/resend-verification</code>.</li>
           <li>Longer refresh lifetime reduces forced logouts, but requires strong revocation + session security controls.</li>
           <li>Use session listing/revoke routes for incident response and account safety.</li>
         </ul>
@@ -52,13 +53,16 @@
           <tbody>
             <tr><td><code>CORE_JWT_ACCESS_SECRET</code></td><td>Core</td><td>Access token signing secret</td></tr>
             <tr><td><code>CORE_JWT_REFRESH_SECRET</code></td><td>Core</td><td>Refresh token signing secret</td></tr>
+            <tr><td><code>AUTH_REQUIRE_EMAIL_VERIFICATION</code></td><td>Core</td><td>Gate login behind verified email state</td></tr>
+            <tr><td><code>SMTP_HOST</code>/<code>SMTP_PORT</code>/<code>SMTP_USER</code>/<code>SMTP_PASS</code></td><td>Core</td><td>Email verification delivery (Zoho-compatible)</td></tr>
             <tr><td><code>LOG_LEVEL</code></td><td>Core/Node</td><td>Logger threshold</td></tr>
             <tr><td><code>DEBUG_HTTP</code></td><td>Node</td><td>Enable HTTP request debug logs</td></tr>
             <tr><td><code>DEBUG_VOICE</code></td><td>Node</td><td>Enable voice diagnostics route</td></tr>
+            <tr><td><code>OPENCOM_RPC_PORT</code></td><td>Desktop</td><td>Local desktop rich presence bridge port (default 6463)</td></tr>
           </tbody>
         </table>
 
-        <p class="footer">Voice debugging checklist lives in <code>docs/VOICE_DEBUGGING.md</code>.</p>
+        <p class="footer">Voice debugging checklist lives in <code>docs/VOICE_DEBUGGING.md</code>. Full component matrix: <a href="./platform-guide.html">Platform Guide</a>.</p>
       </main>
     </div>
   </div>

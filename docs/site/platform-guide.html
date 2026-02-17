@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenCom Docs - Platform Guide</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="brand-badge">OC</span> OpenCom Docs</div>
+      <div class="nav-group"><div class="nav-title">Get Started</div><a class="nav-link" href="./index.html">Welcome</a><a class="nav-link" href="./quickstart.html">Quickstart</a></div>
+      <div class="nav-group"><div class="nav-title">API</div><a class="nav-link" href="./api-core.html">Core API</a><a class="nav-link" href="./api-server-node.html">Server Node API</a><a class="nav-link" href="./api-methods.html">Method Index</a></div>
+      <div class="nav-group"><div class="nav-title">Extensions</div><a class="nav-link" href="./extensions-sdk.html">SDK + Runtime</a><a class="nav-link" href="./integrations-rpc.html">Extension + RPC Apps</a></div>
+      <div class="nav-group"><div class="nav-title">Guides</div><a class="nav-link" href="./platform-guide.html">Platform Guide</a><a class="nav-link" href="./guides.html">Feature Guides</a><a class="nav-link" href="./operations.html">Operations</a></div>
+    </aside>
+
+    <div class="content-wrap">
+      <header class="topbar">
+        <button class="mobile-toggle" id="mobile-toggle">Menu</button>
+        <div class="search"><input id="doc-search" placeholder="Search docs..." /><div class="search-results" id="search-results"></div></div>
+        <div class="search-hint">Press <kbd>/</kbd> to search</div>
+      </header>
+
+      <main class="content">
+        <section class="hero">
+          <div class="eyebrow">Platform</div>
+          <h1>Complete OpenCom Platform Guide</h1>
+          <p class="lead">Inclusive overview of web client, desktop client, Core API, Server Node API, realtime gateway, rich presence, and extension runtime.</p>
+        </section>
+
+        <h2 id="system-architecture">System architecture</h2>
+        <ul>
+          <li><strong>Frontend web app</strong> (`frontend`): main end-user client for servers/DMs/friends/profile/settings/voice.</li>
+          <li><strong>Desktop app</strong> (`client`): Vesktop-style thin Electron shell that hosts the web app.</li>
+          <li><strong>Core API</strong> (`backend/packages/core`): identity/auth, social graph, invites, server registry, presence, memberships, billing/admin.</li>
+          <li><strong>Server Node API</strong> (`backend/packages/server-node`): guild/channels/messages/attachments/emotes/roles/members/voice.</li>
+          <li><strong>Core Gateway</strong> (`/gateway`): realtime presence + social dispatch and voice compatibility proxy mode.</li>
+        </ul>
+
+        <h2 id="web-client-capabilities">Web client capabilities</h2>
+        <ul>
+          <li>Register/login/refresh/session handling and email verification UX.</li>
+          <li>Server rail with switching, ordering, invite flows, and server profile branding.</li>
+          <li>Guild channels with context menus, create/edit/delete actions, category management, and channel permissions.</li>
+          <li>Text messaging with embeds, attachments, pinning, replies, and date separators between days.</li>
+          <li>Social features: friends, requests, DMs, member profile popouts.</li>
+          <li>Voice controls: join/leave/mute/deafen/device selection and realtime state updates.</li>
+          <li>Profile editing and rich presence (RPC-style fields without app ID).</li>
+          <li>Extension catalog loading and server extension command execution.</li>
+          <li>Custom CSS themes with persistence.</li>
+        </ul>
+
+        <h2 id="desktop-client-capabilities">Desktop client capabilities</h2>
+        <ul>
+          <li>Loads local built frontend assets (`client/src/web`) and appends <code>?desktop=1</code>.</li>
+          <li>Falls back to hosted URL when local assets are missing.</li>
+          <li>Sandboxed renderer with external-link guardrails.</li>
+          <li>Local Rich Presence bridge on <code>127.0.0.1:6463</code> (default):</li>
+        </ul>
+        <pre><code>GET    /rpc/health
+POST   /rpc/activity
+DELETE /rpc/activity</code></pre>
+        <p>This bridge forwards to Core presence RPC routes using the logged-in desktop session context.</p>
+
+        <h2 id="core-api-route-groups">Core API route groups</h2>
+        <ul>
+          <li><strong>Auth:</strong> register/login/verify-email/resend-verification/refresh/sessions/password.</li>
+          <li><strong>User/profile:</strong> me/profile/image upload/device registration/prekeys.</li>
+          <li><strong>Presence:</strong> <code>/v1/presence</code>, <code>/v1/presence/rpc</code>, gateway presence dispatch.</li>
+          <li><strong>Servers:</strong> create/list/reorder/profile/leave/delete/membership-token.</li>
+          <li><strong>Invites:</strong> create/preview/join (code or full link).</li>
+          <li><strong>Social+DM:</strong> friends/requests/settings/DM threads/messages/call signals.</li>
+          <li><strong>Extensions:</strong> catalog + per-server config/proxy endpoints.</li>
+          <li><strong>Admin/Billing:</strong> admin status/tools and boost billing lifecycle endpoints.</li>
+        </ul>
+        <p>Endpoint-level tables: <a href="./api-core.html">Core API reference</a>.</p>
+
+        <h2 id="server-node-route-groups">Server Node route groups</h2>
+        <ul>
+          <li><strong>Guild state:</strong> guild create/list/join/leave/state.</li>
+          <li><strong>Channels/messages:</strong> create/reorder/update/delete, message CRUD.</li>
+          <li><strong>Permissions:</strong> channel overwrites + sync from parent category.</li>
+          <li><strong>Roles/members:</strong> role CRUD, role assignment, kick/ban/unban.</li>
+          <li><strong>Voice:</strong> join/leave/voice state patch plus self voice-state helpers.</li>
+          <li><strong>Media:</strong> attachment upload/download, custom emote CRUD.</li>
+          <li><strong>Extensions:</strong> node extension catalog/config/activation/command execution.</li>
+          <li><strong>Compatibility:</strong> Discord-like subset on <code>/api/v9/*</code>.</li>
+        </ul>
+        <p>Endpoint-level tables: <a href="./api-server-node.html">Server Node API reference</a>.</p>
+
+        <h2 id="rich-presence-model-no-app-id">Rich Presence model (no app ID)</h2>
+        <p>OpenCom intentionally supports RPC-style activity payloads without an application registration step. Supported fields include:</p>
+        <ul>
+          <li><code>name</code>, <code>details</code>, <code>state</code></li>
+          <li><code>largeImageUrl</code>, <code>largeImageText</code></li>
+          <li><code>smallImageUrl</code>, <code>smallImageText</code></li>
+          <li><code>buttons</code> (up to 2; each <code>label</code> + <code>url</code>)</li>
+        </ul>
+
+        <h2>Source docs</h2>
+        <ul>
+          <li><code>docs/PLATFORM_GUIDE.md</code> (canonical markdown guide)</li>
+          <li><code>docs/SETUP_GUIDE.md</code> (setup and run)</li>
+          <li><code>docs/VOICE_DEBUGGING.md</code> (voice diagnostics)</li>
+          <li><code>docs/extensions-sdk.md</code> (SDK details)</li>
+        </ul>
+      </main>
+    </div>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

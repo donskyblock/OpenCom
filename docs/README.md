@@ -7,6 +7,10 @@ This directory now contains a static docs portal at `docs/site` with:
 - General usage and feature guides
 - Operations and reliability notes
 
+Canonical markdown guide for current platform features/endpoints:
+
+- `docs/PLATFORM_GUIDE.md`
+
 ## Local preview
 
 From repo root:

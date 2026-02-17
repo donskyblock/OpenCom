@@ -1,29 +1,52 @@
-# Open Discord Backend (Core + Server Node)
+# OpenCom Backend (Core + Server Node)
 
-## Quick start
-1) `cp .env.example .env` and fill secrets/JWKs (see note below)
-2) `docker compose up -d`
-3) `npm install`
-4) `npm run migrate:core && npm run migrate:node`
-5) Start:
+This workspace contains two services:
+
+- Core API (`packages/core`) for auth, social, presence, invites, server registry, extension catalog, and billing hooks
+- Server Node (`packages/server-node`) for guild/channels/messages/roles/attachments/voice/extension command runtime
+
+For a complete endpoint inventory and feature matrix, see:
+
+- `../docs/PLATFORM_GUIDE.md`
+
+## Quick Start
+
+1. `cp .env.example .env`
+2. Fill required secrets (`CORE_JWT_*`, membership JWKs, DB URLs, admin password)
+3. `docker compose up -d`
+4. `npm install`
+5. `npm run migrate:core && npm run migrate:node`
+6. Start services:
    - Core: `npm run dev:core`
-   - Server node: `npm run dev:node`
+   - Node: `npm run dev:node`
 
-## Generate RSA JWKs (one-time)
-Use node to generate JWK pair:
+## Key Backend Features
+
+- Email/password auth with refresh token rotation and session management
+- Email verification support (SMTP/Zoho-compatible configuration)
+- Presence + rich presence (`/v1/presence/rpc`) without app-id requirement
+- Core gateway for realtime dispatch and voice proxy compatibility
+- Server registration and membership token issuance for node access
+- Invites and social graph (friends/DMs/call signals)
+- Extension catalog/config passthrough and command lifecycle
+- Discord compatibility subset on node under `/api/v9/*`
+
+## JWK Generation (One-Time)
+
+Use node to generate an RS256 JWK pair:
+
 - `node -e "const {generateKeyPair} = require('jose'); (async()=>{ const {publicKey, privateKey}=await generateKeyPair('RS256'); console.log(JSON.stringify(await require('jose').exportJWK(privateKey))); console.log(JSON.stringify(await require('jose').exportJWK(publicKey))); })()"`
 
-Put them into CORE_MEMBERSHIP_PRIVATE_JWK and CORE_MEMBERSHIP_PUBLIC_JWK, and set kid in both.
+Set:
 
-## Discord-style REST compatibility (server node)
-The server-node now exposes a compatibility layer for Discord-like route shapes under `/api/v9` (auth still uses OpenCom bearer membership tokens):
+- `CORE_MEMBERSHIP_PRIVATE_JWK`
+- `CORE_MEMBERSHIP_PUBLIC_JWK`
 
-- `GET /api/v9/users/@me/guilds`
-- `GET /api/v9/guilds/:guildId/channels`
-- `POST /api/v9/guilds/:guildId/channels`
-- `PATCH /api/v9/channels/:channelId`
-- `DELETE /api/v9/channels/:channelId`
-- `GET /api/v9/channels/:channelId/messages`
-- `POST /api/v9/channels/:channelId/messages`
+Use the same `kid` in both.
 
-These endpoints proxy to OpenCom `v1` routes and transform payloads into Discord-like field names/types where practical.
+## Useful Commands
+
+- Build all backend packages: `npm run build`
+- Run voice-debug node mode: `npm run dev:voice-debug`
+- Core migrations only: `npm run migrate:core`
+- Node migrations only: `npm run migrate:node`
