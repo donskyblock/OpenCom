@@ -2,6 +2,11 @@
   "name": "opencom-client",
   "version": "0.1.0",
   "description": "Desktop wrapper for OpenCom frontend",
+  "homepage": "https://opencom.online",
+  "author": {
+    "name": "donskyblock",
+    "email": "don@opencom.online"
+  },
   "main": "src/main.js",
   "type": "module",
   "scripts": {
@@ -45,7 +50,8 @@
         "deb",
         "tar.gz"
       ],
-      "category": "Network"
+      "category": "Network",
+      "maintainer": "donskyblock <don@opencom.online>"
     }
   }
 }
