@@ -31,6 +31,7 @@
     "appId": "online.opencom.client",
     "productName": "OpenCom",
     "artifactName": "OpenCom.${ext}",
+    "icon": "src/web/logo.png",
     "directories": {
       "output": "dist"
     },
@@ -51,6 +52,7 @@
         "tar.gz"
       ],
       "category": "Network",
+      "icon": "src/web/logo.png",
       "maintainer": "donskyblock <don@opencom.online>"
     }
   }
