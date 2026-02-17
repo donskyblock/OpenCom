@@ -15,9 +15,21 @@ async function copyDir(src, dest) {
   await fs.cp(src, dest, { recursive: true });
 }
 
+async function rewriteIndexForFileProtocol(webDir) {
+  const indexPath = path.resolve(webDir, "index.html");
+  const raw = await fs.readFile(indexPath, "utf8");
+  const rewritten = raw
+    .replace(/src="\/assets\//g, 'src="./assets/')
+    .replace(/href="\/assets\//g, 'href="./assets/');
+  if (rewritten !== raw) {
+    await fs.writeFile(indexPath, rewritten, "utf8");
+  }
+}
+
 async function main() {
   await fs.access(frontendDistDir);
   await copyDir(frontendDistDir, clientWebDir);
+  await rewriteIndexForFileProtocol(clientWebDir);
   console.log("Synced frontend/dist -> client/src/web");
 }
 
