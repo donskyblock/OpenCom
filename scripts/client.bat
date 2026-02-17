@@ -43,10 +43,6 @@ if "%BUILD%"=="1" (
   echo [client] Building Windows artifacts...
   call npm --prefix client run build:win
   if errorlevel 1 goto fail
-) else (
-  echo [client] Building frontend for desktop shell...
-  call npm --prefix frontend run build
-  if errorlevel 1 goto fail
 )
 
 echo [client] Starting desktop client...

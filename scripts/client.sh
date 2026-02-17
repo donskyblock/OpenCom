@@ -51,9 +51,6 @@ fi
 if [[ "$BUILD" -eq 1 ]]; then
   echo "[client] Building Linux artifacts..."
   npm --prefix client run build:linux
-else
-  echo "[client] Building frontend for desktop shell..."
-  npm --prefix frontend run build
 fi
 
 echo "[client] Starting desktop client..."

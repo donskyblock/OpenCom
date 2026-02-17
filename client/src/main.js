@@ -9,6 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const REMOTE_FALLBACK_URL = process.env.OPENCOM_APP_URL || "https://opencom.online";
+const CORE_API_URL = process.env.OPENCOM_CORE_API_URL || "https://api.opencom.online";
 const LOCAL_INDEX = path.join(__dirname, "web", "index.html");
 const RPC_HOST = process.env.OPENCOM_RPC_HOST || "127.0.0.1";
 const RPC_PORT = Number(process.env.OPENCOM_RPC_PORT || 6483);
@@ -33,7 +34,7 @@ function createWindow() {
     minHeight: 640,
     backgroundColor: "#141621",
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -41,14 +42,39 @@ function createWindow() {
     }
   });
 
+  const desktopSearch = new URLSearchParams({
+    desktop: "1",
+    route: "/app",
+    coreApi: CORE_API_URL
+  }).toString();
+
   if (fs.existsSync(LOCAL_INDEX)) {
-    mainWindow.loadFile(LOCAL_INDEX, { search: "desktop=1&route=%2Fapp" });
+    mainWindow.loadFile(LOCAL_INDEX, { search: desktopSearch });
   } else {
     const url = new URL(REMOTE_FALLBACK_URL);
     url.pathname = "/app";
     url.searchParams.set("desktop", "1");
+    url.searchParams.set("coreApi", CORE_API_URL);
     mainWindow.loadURL(url.toString());
   }
+
+  mainWindow.webContents.on("did-finish-load", () => {
+    log.info("Renderer finished load", { url: mainWindow.webContents.getURL() });
+  });
+
+  mainWindow.webContents.on("did-fail-load", (_event, code, description, validatedUrl, isMainFrame) => {
+    log.error("Renderer failed to load", { code, description, validatedUrl, isMainFrame });
+  });
+
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    log.error("Renderer process gone", details);
+  });
+
+  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    if (level >= 2) {
+      log.warn("Renderer console", { level, message, line, sourceId });
+    }
+  });
 
   mainWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
     shell.openExternal(targetUrl);
