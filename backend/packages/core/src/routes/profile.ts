@@ -30,8 +30,16 @@ function relPathFromStoredUrl(stored: string | null): string | null {
 }
 
 const ALLOWED_IMAGE_MIMES = new Set([
-  "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/svg+xml", "image/bmp"
+  "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml", "image/bmp"
 ]);
+
+const MIME_ALIASES: Record<string, string> = {
+  "image/jpg": "image/jpeg",
+  "image/pjpeg": "image/jpeg",
+  "image/jfif": "image/jpeg",
+  "image/x-png": "image/png",
+  "image/x-ms-bmp": "image/bmp"
+};
 
 export async function profileRoutes(app: FastifyInstance) {
   // Serve stored profile images: raw file stream
@@ -81,6 +89,16 @@ export async function profileRoutes(app: FastifyInstance) {
     return map[ext] ?? null;
   }
 
+  function normalizeImageMime(mimeType: string | undefined, filename: string | undefined): string | null {
+    const rawMime = (mimeType || "").toLowerCase().trim();
+    const canonicalMime = MIME_ALIASES[rawMime] ?? rawMime;
+    if (canonicalMime && ALLOWED_IMAGE_MIMES.has(canonicalMime)) return canonicalMime;
+
+    const filenameMime = mimeFromFilename(filename || "");
+    if (filenameMime && ALLOWED_IMAGE_MIMES.has(filenameMime)) return filenameMime;
+    return null;
+  }
+
   async function handleProfileImageUpload(
     req: any,
     rep: any,
@@ -89,8 +107,8 @@ export async function profileRoutes(app: FastifyInstance) {
   ) {
     const data = await req.file();
     if (!data) return rep.code(400).send({ error: "MISSING_FILE" });
-    let mime = (data.mimetype || "").toLowerCase().trim() || mimeFromFilename(data.filename || "");
-    if (!mime || !ALLOWED_IMAGE_MIMES.has(mime)) {
+    const mime = normalizeImageMime(data.mimetype, data.filename);
+    if (!mime) {
       return rep.code(400).send({ error: "INVALID_IMAGE_TYPE", allowed: [...ALLOWED_IMAGE_MIMES] });
     }
     const buffer = await data.toBuffer();
@@ -125,8 +143,8 @@ export async function profileRoutes(app: FastifyInstance) {
     const userId = req.user.sub as string;
     const data = await req.file();
     if (!data) return rep.code(400).send({ error: "MISSING_FILE" });
-    const mime = (data.mimetype || "").toLowerCase().trim() || mimeFromFilename(data.filename || "");
-    if (!mime || !ALLOWED_IMAGE_MIMES.has(mime)) {
+    const mime = normalizeImageMime(data.mimetype, data.filename);
+    if (!mime) {
       return rep.code(400).send({ error: "INVALID_IMAGE_TYPE", allowed: [...ALLOWED_IMAGE_MIMES] });
     }
     const buffer = await data.toBuffer();
