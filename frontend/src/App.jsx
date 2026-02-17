@@ -5972,7 +5972,7 @@ export function App() {
 
                   <section className="card">
                     <h4>Create Invite</h4>
-                    <p className="hint">Boost perk: custom code + permanent invite links (example: <code>?joinOpen</code>).</p>
+                    <p className="hint">Boost perk: custom code + permanent invite links (example: <code>/join/Open</code>).</p>
                     <select value={inviteServerId} onChange={(event) => setInviteServerId(event.target.value)}>
                       <option value="">Select server</option>
                       {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
