@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://openapi.donskyblock.xyz";
+const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://api.opencom.online";
 
 async function api(path, token, options = {}) {
   const response = await fetch(`${CORE_API}${path}`, {

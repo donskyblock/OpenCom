@@ -8,8 +8,9 @@ Canonical full-platform docs:
 
 ## Features
 
-- Runs local built frontend (`frontend/dist`) inside the desktop shell.
+- Builds frontend directly into embedded desktop assets (`client/src/web`) for deterministic startup.
 - Appends `?desktop=1` so the frontend skips the landing page.
+- Appends desktop query params (`desktop`, `route`, `coreApi`) so desktop starts directly in app auth/client flow.
 - Falls back to `OPENCOM_APP_URL` (default `https://opencom.online`) only if local build assets are missing.
 - Local RPC bridge for rich presence (no token handling needed by local apps).
 - Shares web-session auth context with the local RPC bridge after login.
@@ -22,10 +23,19 @@ npm install
 npm start
 ```
 
+`npm start` runs `sync:web` first, but rebuild is incremental and skipped when embedded assets are already up to date.
+Set `OPENCOM_FORCE_SYNC_WEB=1` to force rebuild.
+
 Run remote-only mode (skip local synced build):
 
 ```bash
 OPENCOM_APP_URL="https://opencom.online" npm run start:remote
+```
+
+Override Core API base used by desktop-injected frontend URL:
+
+```bash
+OPENCOM_CORE_API_URL="https://api.opencom.online" npm start
 ```
 
 ## Local RPC bridge
@@ -67,7 +77,7 @@ Note: bridge becomes `ready: true` after you log in to OpenCom desktop (the fron
 
 ## Build (local, without GitHub Actions)
 
-Build commands now compile frontend first, then sync assets into `client/src/web`, then package.
+Build commands compile frontend directly into `client/src/web`, then package.
 
 ```bash
 cd client

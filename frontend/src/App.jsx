@@ -16,7 +16,24 @@ import {
   writeAppRoute
 } from "./lib/routing";
 
-const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://openapi.donskyblock.xyz";
+function resolveCoreApiBase() {
+  const fromEnv = String(import.meta.env.VITE_CORE_API_URL || "").trim();
+  let fromQuery = "";
+  if (typeof window !== "undefined") {
+    const qp = new URLSearchParams(window.location.search || "");
+    fromQuery = String(qp.get("coreApi") || "").trim();
+  }
+  const candidate = fromQuery || fromEnv || "https://api.opencom.online";
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "https://api.opencom.online";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return "https://api.opencom.online";
+  }
+}
+
+const CORE_API = resolveCoreApiBase();
 
 /** Resolve profile image URL so it loads from the API when relative (e.g. /v1/profile-images/...) */
 function profileImageUrl(url) {
@@ -166,6 +183,13 @@ function normalizeGatewayWsUrl(value) {
   const trimmed = value.trim();
   if (!trimmed) return "";
 
+  // In desktop file:// mode, never allow relative/implicit URLs to resolve against file origin.
+  if (typeof window !== "undefined" && window.location.protocol === "file:") {
+    if (trimmed.startsWith("/") || !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
+      return FALLBACK_CORE_GATEWAY_WS_URL;
+    }
+  }
+
   try {
     const url = new URL(trimmed, window.location.origin);
     if (url.protocol !== "ws:" && url.protocol !== "wss:") {
@@ -183,6 +207,7 @@ function normalizeGatewayWsUrl(value) {
 
 function getDefaultCoreGatewayWsUrl() {
   if (typeof window === "undefined") return FALLBACK_CORE_GATEWAY_WS_URL;
+  if (window.location.protocol === "file:") return FALLBACK_CORE_GATEWAY_WS_URL;
   const hostname = window.location.hostname || "";
   if (hostname === "opencom.online" || hostname.endsWith(".opencom.online")) {
     return FALLBACK_CORE_GATEWAY_WS_URL;
@@ -4174,6 +4199,7 @@ export function App() {
   }
 
   async function uploadProfileImage(file, endpoint) {
+    if (!accessToken) throw new Error("AUTH_REQUIRED");
     const formData = new FormData();
     formData.append("image", file);
     const res = await fetch(`${CORE_API}${endpoint}`, {
@@ -4186,6 +4212,29 @@ export function App() {
       throw new Error(err.error || `Upload failed: ${res.status}`);
     }
     return res.json();
+  }
+
+  async function onImageFieldUpload(event, label, onUploaded) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!isAcceptedImage(file)) {
+      setStatus("Please choose an image (PNG, JPG, GIF, WebP, etc.).");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setStatus(`Image too large. Max ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB.`);
+      return;
+    }
+    try {
+      setStatus(`Uploading ${label}...`);
+      const data = await uploadProfileImage(file, "/v1/images/upload");
+      if (!data?.imageUrl) throw new Error("UPLOAD_FAILED");
+      onUploaded(data.imageUrl);
+      setStatus(`${label} uploaded.`);
+    } catch (error) {
+      setStatus(error?.message || "Upload failed.");
+    }
   }
 
   async function onAvatarUpload(event) {
@@ -4759,6 +4808,10 @@ export function App() {
               placeholder="Logo URL (.png/.jpg/.webp/.svg)"
               style={{ width: "100%", marginBottom: "0.75rem", padding: "0.5rem" }}
             />
+            <label style={{ display: "block", marginBottom: "0.75rem" }}>
+              Upload Logo
+              <input type="file" accept="image/*" onChange={(event) => onImageFieldUpload(event, "server logo", setNewOfficialServerLogoUrl)} style={{ width: "100%", marginTop: "0.35rem" }} />
+            </label>
             <input
               type="text"
               value={newOfficialServerBannerUrl}
@@ -4766,6 +4819,10 @@ export function App() {
               placeholder="Banner URL (optional)"
               style={{ width: "100%", marginBottom: "0.75rem", padding: "0.5rem" }}
             />
+            <label style={{ display: "block", marginBottom: "0.75rem" }}>
+              Upload Banner
+              <input type="file" accept="image/*" onChange={(event) => onImageFieldUpload(event, "server banner", setNewOfficialServerBannerUrl)} style={{ width: "100%", marginTop: "0.35rem" }} />
+            </label>
             <button onClick={createOfficialServer} disabled={!newOfficialServerName.trim() || !newOfficialServerLogoUrl.trim()}>Create your server</button>
           </div>
         )}
@@ -5445,7 +5502,15 @@ export function App() {
                   <input placeholder="Server name" value={newServerName ?? ""} onChange={(e) => setNewServerName(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
                   <input placeholder="https://node.example.com" value={newServerBaseUrl ?? "https://"} onChange={(e) => setNewServerBaseUrl(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
                   <input placeholder="Logo URL (.png/.jpg/.webp/.svg)" value={newServerLogoUrl ?? ""} onChange={(e) => setNewServerLogoUrl(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+                  <label style={{ display: "block", marginBottom: "0.5rem" }}>
+                    Upload Logo
+                    <input type="file" accept="image/*" onChange={(event) => onImageFieldUpload(event, "server logo", setNewServerLogoUrl)} style={{ width: "100%", marginTop: "0.35rem" }} />
+                  </label>
                   <input placeholder="Banner URL (optional)" value={newServerBannerUrl ?? ""} onChange={(e) => setNewServerBannerUrl(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+                  <label style={{ display: "block", marginBottom: "0.5rem" }}>
+                    Upload Banner
+                    <input type="file" accept="image/*" onChange={(event) => onImageFieldUpload(event, "server banner", setNewServerBannerUrl)} style={{ width: "100%", marginTop: "0.35rem" }} />
+                  </label>
                   <button onClick={createServer} disabled={!newServerName.trim() || !newServerBaseUrl.trim() || !newServerLogoUrl.trim()}>Add Server</button>
                 </section>
               )}
@@ -5455,7 +5520,15 @@ export function App() {
                   <p className="hint" style={{ marginBottom: "0.5rem" }}>One server hosted by us—name it and customize channels and roles.</p>
                   <input placeholder="Server name" value={newOfficialServerName ?? ""} onChange={(e) => setNewOfficialServerName(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
                   <input placeholder="Logo URL (.png/.jpg/.webp/.svg)" value={newOfficialServerLogoUrl ?? ""} onChange={(e) => setNewOfficialServerLogoUrl(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+                  <label style={{ display: "block", marginBottom: "0.5rem" }}>
+                    Upload Logo
+                    <input type="file" accept="image/*" onChange={(event) => onImageFieldUpload(event, "server logo", setNewOfficialServerLogoUrl)} style={{ width: "100%", marginTop: "0.35rem" }} />
+                  </label>
                   <input placeholder="Banner URL (optional)" value={newOfficialServerBannerUrl ?? ""} onChange={(e) => setNewOfficialServerBannerUrl(e.target.value)} style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }} />
+                  <label style={{ display: "block", marginBottom: "0.5rem" }}>
+                    Upload Banner
+                    <input type="file" accept="image/*" onChange={(event) => onImageFieldUpload(event, "server banner", setNewOfficialServerBannerUrl)} style={{ width: "100%", marginTop: "0.35rem" }} />
+                  </label>
                   <button onClick={createOfficialServer} disabled={!newOfficialServerName?.trim() || !newOfficialServerLogoUrl?.trim()}>Create your server</button>
                 </section>
               )}
@@ -5581,8 +5654,10 @@ export function App() {
                   <label>Details<input value={rpcForm.details} onChange={(event) => setRpcForm((current) => ({ ...current, details: event.target.value }))} placeholder="In a voice channel" /></label>
                   <label>State<input value={rpcForm.state} onChange={(event) => setRpcForm((current) => ({ ...current, state: event.target.value }))} placeholder="With friends" /></label>
                   <label>Large Image URL<input value={rpcForm.largeImageUrl} onChange={(event) => setRpcForm((current) => ({ ...current, largeImageUrl: event.target.value }))} placeholder="https://..." /></label>
+                  <label>Upload Large Image<input type="file" accept="image/*" onChange={(event) => onImageFieldUpload(event, "large image", (imageUrl) => setRpcForm((current) => ({ ...current, largeImageUrl: imageUrl })))} /></label>
                   <label>Large Image Text<input value={rpcForm.largeImageText} onChange={(event) => setRpcForm((current) => ({ ...current, largeImageText: event.target.value }))} placeholder="Tooltip text" /></label>
                   <label>Small Image URL<input value={rpcForm.smallImageUrl} onChange={(event) => setRpcForm((current) => ({ ...current, smallImageUrl: event.target.value }))} placeholder="https://..." /></label>
+                  <label>Upload Small Image<input type="file" accept="image/*" onChange={(event) => onImageFieldUpload(event, "small image", (imageUrl) => setRpcForm((current) => ({ ...current, smallImageUrl: imageUrl })))} /></label>
                   <label>Small Image Text<input value={rpcForm.smallImageText} onChange={(event) => setRpcForm((current) => ({ ...current, smallImageText: event.target.value }))} placeholder="Tooltip text" /></label>
                   <label>Button 1 Label<input value={rpcForm.button1Label} onChange={(event) => setRpcForm((current) => ({ ...current, button1Label: event.target.value }))} placeholder="Watch" /></label>
                   <label>Button 1 URL<input value={rpcForm.button1Url} onChange={(event) => setRpcForm((current) => ({ ...current, button1Url: event.target.value }))} placeholder="https://..." /></label>
@@ -5610,11 +5685,13 @@ export function App() {
                         value={serverProfileForm.logoUrl ?? ""}
                         onChange={(e) => setServerProfileForm((current) => ({ ...current, logoUrl: e.target.value }))}
                       />
+                      <label>Upload Logo<input type="file" accept="image/*" onChange={(event) => onImageFieldUpload(event, "server logo", (imageUrl) => setServerProfileForm((current) => ({ ...current, logoUrl: imageUrl })))} /></label>
                       <input
                         placeholder="Banner URL"
                         value={serverProfileForm.bannerUrl ?? ""}
                         onChange={(e) => setServerProfileForm((current) => ({ ...current, bannerUrl: e.target.value }))}
                       />
+                      <label>Upload Banner<input type="file" accept="image/*" onChange={(event) => onImageFieldUpload(event, "server banner", (imageUrl) => setServerProfileForm((current) => ({ ...current, bannerUrl: imageUrl })))} /></label>
                       <button onClick={saveActiveServerProfile}>Save Server Profile</button>
                     </section>
                   )}
@@ -5624,7 +5701,9 @@ export function App() {
                     <input placeholder="Server name" value={newServerName ?? ""} onChange={(e) => setNewServerName(e.target.value)} />
                     <input placeholder="https://node.provider.tld" value={newServerBaseUrl ?? "https://"} onChange={(e) => setNewServerBaseUrl(e.target.value)} />
                     <input placeholder="Logo URL (.png/.jpg/.webp/.svg)" value={newServerLogoUrl ?? ""} onChange={(e) => setNewServerLogoUrl(e.target.value)} />
+                    <label>Upload Logo<input type="file" accept="image/*" onChange={(event) => onImageFieldUpload(event, "server logo", setNewServerLogoUrl)} /></label>
                     <input placeholder="Banner URL (optional)" value={newServerBannerUrl ?? ""} onChange={(e) => setNewServerBannerUrl(e.target.value)} />
+                    <label>Upload Banner<input type="file" accept="image/*" onChange={(event) => onImageFieldUpload(event, "server banner", setNewServerBannerUrl)} /></label>
                     <button onClick={createServer} disabled={!newServerName.trim() || !newServerBaseUrl.trim() || !newServerLogoUrl.trim()}>Add Server</button>
                   </section>
 
@@ -5695,6 +5774,7 @@ export function App() {
                         value={newServerEmoteUrl}
                         onChange={(event) => setNewServerEmoteUrl(event.target.value)}
                       />
+                      <label>Upload Emote Image<input type="file" accept="image/*" onChange={(event) => onImageFieldUpload(event, "emote image", setNewServerEmoteUrl)} /></label>
                       <button onClick={createServerEmote}>Create Emote</button>
                       <ul className="channel-perms-role-list" style={{ marginTop: "10px" }}>
                         {(guildState?.emotes || []).map((emote) => (

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://openapi.donskyblock.xyz";
+const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://api.opencom.online";
 
 const KNOWN_BADGES = ["PLATFORM_ADMIN", "PLATFORM_FOUNDER"];
 

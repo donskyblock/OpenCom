@@ -53,7 +53,7 @@ const MIME_TO_EXT: Record<string, string> = {
 export function saveProfileImageFromBuffer(
   storageDir: string,
   userId: string,
-  imageType: "pfp" | "banner",
+  imageType: "pfp" | "banner" | "asset",
   buffer: Buffer,
   mimeType: string
 ): string | null {
@@ -82,7 +82,7 @@ export function saveProfileImageFromBuffer(
 export function saveProfileImage(
   storageDir: string,
   userId: string,
-  imageType: "pfp" | "banner",
+  imageType: "pfp" | "banner" | "asset",
   base64Data: string
 ): string | null {
   const parsed = parseBase64Image(base64Data);

@@ -121,6 +121,20 @@ export async function profileRoutes(app: FastifyInstance) {
     return handleProfileImageUpload(req, rep, userId, "banner");
   });
 
+  app.post("/v1/images/upload", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const data = await req.file();
+    if (!data) return rep.code(400).send({ error: "MISSING_FILE" });
+    const mime = (data.mimetype || "").toLowerCase().trim() || mimeFromFilename(data.filename || "");
+    if (!mime || !ALLOWED_IMAGE_MIMES.has(mime)) {
+      return rep.code(400).send({ error: "INVALID_IMAGE_TYPE", allowed: [...ALLOWED_IMAGE_MIMES] });
+    }
+    const buffer = await data.toBuffer();
+    const saved = saveProfileImageFromBuffer(env.PROFILE_IMAGE_STORAGE_DIR, userId, "asset", buffer, mime);
+    if (!saved) return rep.code(500).send({ error: "SAVE_FAILED" });
+    return rep.send({ imageUrl: `${env.PROFILE_IMAGE_BASE_URL}/${saved}` });
+  });
+
   app.get("/v1/users/:id/profile", async (req, rep) => {
     const { id } = z.object({ id: z.string().min(3) }).parse(req.params);
 
