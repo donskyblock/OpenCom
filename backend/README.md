@@ -12,7 +12,7 @@ For a complete endpoint inventory and feature matrix, see:
 ## Quick Start
 
 1. `cp .env.example .env`
-2. Fill required secrets (`CORE_JWT_*`, membership JWKs, DB URLs, admin password)
+2. Fill required secrets/config (`CORE_JWT_*`, membership JWKs, DB URLs, `REDIS_URL`, admin password)
 3. `docker compose up -d`
 4. `npm install`
 5. `npm run migrate:core && npm run migrate:node`
