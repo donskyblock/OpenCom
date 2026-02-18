@@ -399,7 +399,7 @@ function useThemeCss() {
 
   useEffect(() => {
     const onThemeUpdated = (event) => {
-      const nextCss = String(event?.detail?.css ?? localStorage.getItem(THEME_STORAGE_KEY) || "");
+      const nextCss = String((event?.detail?.css ?? localStorage.getItem(THEME_STORAGE_KEY)) || "");
       const nextEnabled = event?.detail?.enabled !== undefined
         ? !!event.detail.enabled
         : localStorage.getItem(THEME_ENABLED_STORAGE_KEY) !== "0";
