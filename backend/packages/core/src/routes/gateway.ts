@@ -16,6 +16,10 @@ type Conn = {
   mode?: "core" | "voice_proxy";
   upstream?: WebSocket;
   upstreamReady?: boolean;
+  lastHeartbeatAt?: number;
+  lastPresenceSyncAt?: number;
+  lastPresenceProbeAt?: number;
+  awaitingPresenceSync?: boolean;
 };
 
 function nodeGatewayUrl(baseUrl: string): string {
@@ -29,6 +33,10 @@ function nodeGatewayUrl(baseUrl: string): string {
 
 export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub: any }) {
   const wss = new WebSocketServer({ noServer: true });
+  const HEARTBEAT_TIMEOUT_MS = 90_000;
+  const PRESENCE_PROBE_INTERVAL_MS = 60_000;
+  const PRESENCE_PROBE_TIMEOUT_MS = 20_000;
+  const STALE_DB_OFFLINE_SECONDS = 150;
 
   // local maps (single instance)
   const byDevice = new Map<string, Conn>();
@@ -36,6 +44,12 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
 
   function send(ws: any, msg: GatewayEnvelope) {
     ws.send(JSON.stringify(msg));
+  }
+
+  async function touchPresenceUpdatedAt(userId: string) {
+    try {
+      await q(`UPDATE presence SET updated_at=NOW() WHERE user_id=:userId`, { userId });
+    } catch {}
   }
 
   // Redis channels for cross-instance fanout
@@ -73,6 +87,70 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
       }
     });
   }
+
+  const livenessSweep = setInterval(async () => {
+    const now = Date.now();
+
+    for (const conns of byUser.values()) {
+      for (const c of conns) {
+        if (c.mode !== "core") continue;
+        if (!c.ws || c.ws.readyState !== WebSocket.OPEN) continue;
+
+        if ((c.lastHeartbeatAt ?? 0) > 0 && now - (c.lastHeartbeatAt ?? 0) > HEARTBEAT_TIMEOUT_MS) {
+          try { c.ws.close(4001, "HEARTBEAT_TIMEOUT"); } catch {}
+          continue;
+        }
+
+        if (c.awaitingPresenceSync && now - (c.lastPresenceProbeAt ?? 0) > PRESENCE_PROBE_TIMEOUT_MS) {
+          try { c.ws.close(4002, "PRESENCE_SYNC_TIMEOUT"); } catch {}
+          continue;
+        }
+
+        if (!c.awaitingPresenceSync && now - (c.lastPresenceSyncAt ?? 0) > PRESENCE_PROBE_INTERVAL_MS) {
+          c.awaitingPresenceSync = true;
+          c.lastPresenceProbeAt = now;
+          c.seq += 1;
+          send(c.ws, { op: "DISPATCH", t: "PRESENCE_SYNC_REQUEST", s: c.seq, d: { ts: now } });
+        }
+      }
+    }
+  }, 10_000);
+
+  const stalePresenceSweep = setInterval(async () => {
+    try {
+      const staleUsers = await q<{ user_id: string }>(
+        `SELECT user_id
+           FROM presence
+          WHERE status <> 'offline'
+            AND TIMESTAMPDIFF(SECOND, updated_at, NOW()) > :ageSeconds`,
+        { ageSeconds: STALE_DB_OFFLINE_SECONDS }
+      );
+      if (!staleUsers.length) return;
+
+      await q(
+        `UPDATE presence
+            SET status='offline', custom_status=NULL, rich_presence_json=NULL, updated_at=NOW()
+          WHERE status <> 'offline'
+            AND TIMESTAMPDIFF(SECOND, updated_at, NOW()) > :ageSeconds`,
+        { ageSeconds: STALE_DB_OFFLINE_SECONDS }
+      );
+
+      const offline: PresenceUpdate = { status: "offline", customStatus: null, richPresence: null };
+      for (const row of staleUsers) {
+        if (!row.user_id) continue;
+        if (redis) {
+          await redis.pub.publish(PRES_CH, JSON.stringify({ userId: row.user_id, presence: offline }));
+          continue;
+        }
+        for (const conns of byUser.values()) {
+          for (const c of conns) {
+            c.seq += 1;
+            send(c.ws, { op: "DISPATCH", t: "PRESENCE_UPDATE", s: c.seq, d: { userId: row.user_id, ...offline } });
+          }
+        }
+      }
+    } catch {}
+  }, 30_000);
 
   function handleUpgrade(allowRoot: boolean) {
     return (req: any, socket: any, head: Buffer) => {
@@ -129,8 +207,19 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
             const decoded: any = await (app as any).jwt.verify(d.accessToken);
             const userId = decoded.sub as string;
             const deviceId = d.deviceId;
+            const now = Date.now();
 
-            conn = { ws, userId, deviceId, seq: 0, mode: "core" };
+            conn = {
+              ws,
+              userId,
+              deviceId,
+              seq: 0,
+              mode: "core",
+              lastHeartbeatAt: now,
+              lastPresenceSyncAt: now,
+              lastPresenceProbeAt: 0,
+              awaitingPresenceSync: false
+            };
 
             if (deviceId) byDevice.set(deviceId, conn);
 
@@ -142,6 +231,7 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
             // Update presence online
             const presence: PresenceUpdate = { status: "online", customStatus: null };
             await app.pgPresenceUpsert(userId, presence);
+            await touchPresenceUpdatedAt(userId);
             if (redis) await redis.pub.publish(PRES_CH, JSON.stringify({ userId, presence }));
           } catch {
             send(ws, { op: "ERROR", d: { error: "INVALID_TOKEN" } });
@@ -221,12 +311,21 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
         return;
       }
 
-      if (msg.op === "HEARTBEAT") send(ws, { op: "HEARTBEAT_ACK" });
+      if (msg.op === "HEARTBEAT") {
+        if (!conn || conn.mode !== "core") return;
+        conn.lastHeartbeatAt = Date.now();
+        await touchPresenceUpdatedAt(conn.userId);
+        send(ws, { op: "HEARTBEAT_ACK" });
+        return;
+      }
 
       if (msg.op === "DISPATCH" && msg.t === "SET_PRESENCE") {
         if (!conn) return;
         const presence = msg.d as PresenceUpdate;
+        conn.awaitingPresenceSync = false;
+        conn.lastPresenceSyncAt = Date.now();
         await app.pgPresenceUpsert(conn.userId, presence);
+        await touchPresenceUpdatedAt(conn.userId);
         if (redis) await redis.pub.publish(PRES_CH, JSON.stringify({ userId: conn.userId, presence }));
       }
     });
@@ -251,6 +350,11 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
         }
       }
     });
+  });
+
+  wss.on("close", () => {
+    clearInterval(livenessSweep);
+    clearInterval(stalePresenceSweep);
   });
 
 

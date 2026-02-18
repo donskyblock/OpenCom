@@ -5,6 +5,7 @@ import { q } from "../db.js";
 import { env } from "../env.js";
 import { signMembershipToken } from "../membershipToken.js";
 import { parseBody } from "../validation.js";
+import { reconcileBoostBadge } from "../boost.js";
 
 function inviteCode(): string {
   return crypto.randomBytes(6).toString("base64url");
@@ -62,11 +63,8 @@ async function getPlatformRole(userId: string): Promise<"user" | "admin" | "owne
 }
 
 async function hasBoostBadge(userId: string): Promise<boolean> {
-  const rows = await q<{ badge: string }>(
-    `SELECT badge FROM user_badges WHERE user_id=:userId AND badge='boost' LIMIT 1`,
-    { userId }
-  );
-  return rows.length > 0;
+  const entitlement = await reconcileBoostBadge(userId);
+  return entitlement.active;
 }
 
 export async function inviteRoutes(app: FastifyInstance) {

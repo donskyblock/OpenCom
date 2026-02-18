@@ -1,0 +1,184 @@
+import { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { q } from "../db.js";
+import { env } from "../env.js";
+
+const URL_RE = /^https?:\/\//i;
+
+function isPrivateHostname(hostname: string) {
+  const host = hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (host === "0.0.0.0" || host === "::1") return true;
+
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const a = Number(ipv4[1]);
+    const b = Number(ipv4[2]);
+    if (a === 10) return true;
+    if (a === 127) return true;
+    if (a === 0) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+  }
+
+  if (host.startsWith("fc") || host.startsWith("fd")) return true;
+  if (host.startsWith("fe80")) return true;
+  return false;
+}
+
+function decodeHtmlEntities(input = "") {
+  return input
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function extractMeta(html: string, key: string, attr: "property" | "name" = "property") {
+  const re = new RegExp(`<meta[^>]*${attr}=["']${key}["'][^>]*content=["']([^"']+)["'][^>]*>`, "i");
+  const reverseRe = new RegExp(`<meta[^>]*content=["']([^"']+)["'][^>]*${attr}=["']${key}["'][^>]*>`, "i");
+  const match = html.match(re) || html.match(reverseRe);
+  return match?.[1] ? decodeHtmlEntities(match[1].trim()) : "";
+}
+
+function extractTitle(html: string) {
+  const match = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  return match?.[1] ? decodeHtmlEntities(match[1].trim()) : "";
+}
+
+function normalizeUrl(raw: string) {
+  const parsed = new URL(raw);
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+function inviteCodeFromUrl(url: URL) {
+  const match = (url.pathname || "").match(/^\/join\/([a-zA-Z0-9_-]{3,32})\/?$/);
+  return match?.[1] || "";
+}
+
+function giftCodeFromUrl(url: URL) {
+  const match = (url.pathname || "").match(/^\/gift\/([a-zA-Z0-9_-]{8,96})\/?$/);
+  return match?.[1] || "";
+}
+
+export async function linkPreviewRoutes(app: FastifyInstance) {
+  app.get("/v1/link-preview", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { url } = z.object({ url: z.string().min(8).max(2048) }).parse(req.query || {});
+    if (!URL_RE.test(url)) return rep.code(400).send({ error: "INVALID_URL" });
+
+    let target: URL;
+    try {
+      target = new URL(url);
+    } catch {
+      return rep.code(400).send({ error: "INVALID_URL" });
+    }
+    if (target.protocol !== "http:" && target.protocol !== "https:") return rep.code(400).send({ error: "INVALID_URL" });
+    const appBaseHost = (() => {
+      try {
+        return new URL(env.APP_BASE_URL).hostname.toLowerCase();
+      } catch {
+        return "";
+      }
+    })();
+    const targetHost = target.hostname.toLowerCase();
+    if (isPrivateHostname(targetHost) && targetHost !== appBaseHost) return rep.code(403).send({ error: "URL_NOT_ALLOWED" });
+
+    const inviteCode = inviteCodeFromUrl(target);
+    if (inviteCode) {
+      const rows = await q<{ code: string; server_id: string; uses: number; max_uses: number | null; expires_at: string | null; server_name: string }>(
+        `SELECT i.code,i.server_id,i.uses,i.max_uses,i.expires_at,s.name AS server_name
+         FROM invites i
+         JOIN servers s ON s.id=i.server_id
+         WHERE i.code=:code
+         LIMIT 1`,
+        { code: inviteCode }
+      );
+      if (!rows.length) return rep.code(404).send({ error: "NOT_FOUND" });
+      const inv = rows[0];
+      return rep.send({
+        url: normalizeUrl(url),
+        title: `Join ${inv.server_name} on OpenCom`,
+        description: `Invite code ${inv.code}${inv.max_uses ? ` · ${inv.uses}/${inv.max_uses} uses` : ""}`,
+        siteName: "OpenCom",
+        imageUrl: "",
+        action: { label: "Join Server", url: normalizeUrl(url) },
+        hasMeta: true
+      });
+    }
+
+    const giftCode = giftCodeFromUrl(target);
+    if (giftCode) {
+      const rows = await q<{ status: string; expires_at: string; grant_days: number }>(
+        `SELECT status,expires_at,grant_days FROM boost_gifts WHERE code=:code LIMIT 1`,
+        { code: giftCode }
+      );
+      if (!rows.length) return rep.code(404).send({ error: "NOT_FOUND" });
+      const gift = rows[0];
+      const active = gift.status === "active" && new Date(gift.expires_at).getTime() > Date.now();
+      return rep.send({
+        url: normalizeUrl(url),
+        title: "OpenCom Boost Gift",
+        description: active ? `${gift.grant_days} day Boost gift ready to redeem.` : "This gift is unavailable.",
+        siteName: "OpenCom",
+        imageUrl: "",
+        action: active ? { label: "Redeem Gift", url: normalizeUrl(url) } : null,
+        hasMeta: true
+      });
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4500);
+    try {
+      const response = await fetch(target.toString(), {
+        method: "GET",
+        redirect: "follow",
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "OpenComLinkPreview/1.0 (+https://opencom.online)",
+          Accept: "text/html,application/xhtml+xml"
+        }
+      });
+      if (!response.ok) return rep.code(404).send({ error: "FETCH_FAILED" });
+
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("text/html")) {
+        return rep.send({
+          url: normalizeUrl(url),
+          title: "",
+          description: "",
+          siteName: target.hostname,
+          imageUrl: "",
+          action: null,
+          hasMeta: false
+        });
+      }
+
+      const html = (await response.text()).slice(0, 200_000);
+      const ogTitle = extractMeta(html, "og:title");
+      const ogDescription = extractMeta(html, "og:description");
+      const ogImage = extractMeta(html, "og:image");
+      const ogSiteName = extractMeta(html, "og:site_name");
+      const twTitle = extractMeta(html, "twitter:title", "name");
+      const twDescription = extractMeta(html, "twitter:description", "name");
+      const title = ogTitle || twTitle || extractTitle(html);
+      const description = ogDescription || twDescription;
+
+      return rep.send({
+        url: normalizeUrl(url),
+        title,
+        description,
+        siteName: ogSiteName || target.hostname,
+        imageUrl: ogImage || "",
+        action: null,
+        hasMeta: Boolean(title || description || ogImage)
+      });
+    } catch {
+      return rep.code(404).send({ error: "FETCH_FAILED" });
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+}

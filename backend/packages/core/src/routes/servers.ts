@@ -5,6 +5,7 @@ import { q } from "../db.js";
 import { env } from "../env.js";
 import { signMembershipToken } from "../membershipToken.js";
 import { parseBody } from "../validation.js";
+import { reconcileBoostBadge } from "../boost.js";
 
 const OFFICIAL_NODE_BASE_URL = env.OFFICIAL_NODE_BASE_URL;
 const OFFICIAL_NODE_SERVER_ID = env.OFFICIAL_NODE_SERVER_ID;
@@ -74,12 +75,8 @@ async function canOwnMoreServers(userId: string): Promise<boolean> {
   const owned = await q<{ count: number }>(`SELECT COUNT(*) as count FROM servers WHERE owner_user_id=:userId`, { userId });
   const totalOwned = Number(owned[0]?.count || 0);
   if (totalOwned < 1) return true;
-
-  const boostBadge = await q<{ badge: string }>(
-    `SELECT badge FROM user_badges WHERE user_id=:userId AND badge='boost' LIMIT 1`,
-    { userId }
-  );
-  return boostBadge.length > 0;
+  const entitlement = await reconcileBoostBadge(userId);
+  return entitlement.active;
 }
 
 async function ensureDefaultGuildOnServerNode(serverId: string, serverName: string, baseUrl: string, ownerUserId: string, tokenServerId?: string): Promise<string> {
@@ -221,10 +218,7 @@ export async function serverRoutes(app: FastifyInstance) {
   app.get("/v1/servers", { preHandler: [app.authenticate] } as any, async (req: any) => {
     const userId = req.user.sub as string;
     const platformRole = await getPlatformRole(userId);
-    const hasBoost = await q<{ badge: string }>(
-      `SELECT badge FROM user_badges WHERE user_id=:userId AND badge='boost' LIMIT 1`,
-      { userId }
-    );
+    const boostEntitlement = await reconcileBoostBadge(userId);
 
     const rows = await q<{ id: string; name: string; base_url: string; logo_url: string | null; banner_url: string | null; default_guild_id: string | null; owner_user_id: string; roles: string; display_order: number | null }>(
       `SELECT s.id, s.name, s.base_url, s.logo_url, s.banner_url, s.default_guild_id, s.owner_user_id, m.roles, m.display_order
@@ -267,7 +261,7 @@ export async function serverRoutes(app: FastifyInstance) {
         if (!membershipRoles.includes("platform_admin")) membershipRoles.push("platform_admin");
         if (!membershipRoles.includes("platform_owner")) membershipRoles.push("platform_owner");
       }
-      if (hasBoost.length > 0 && !membershipRoles.includes("boost")) membershipRoles.push("boost");
+      if (boostEntitlement.active && !membershipRoles.includes("boost")) membershipRoles.push("boost");
 
       // For official node, token must use OFFICIAL_NODE_SERVER_ID so the node accepts it
       const idForToken = (OFFICIAL_NODE_BASE_URL && OFFICIAL_NODE_SERVER_ID && r.base_url === OFFICIAL_NODE_BASE_URL)
@@ -391,10 +385,7 @@ export async function serverRoutes(app: FastifyInstance) {
     if (!server.length) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
 
     let roles: string[] = JSON.parse(membership[0].roles || "[]");
-    const hasBoost = await q<{ badge: string }>(
-      `SELECT badge FROM user_badges WHERE user_id=:userId AND badge='boost' LIMIT 1`,
-      { userId }
-    );
+    const boostEntitlement = await reconcileBoostBadge(userId);
     const platformRole = await getPlatformRole(userId);
     const isPlatformStaff = platformRole === "admin" || platformRole === "owner";
     const isServerOwner = server[0].owner_user_id === userId;
@@ -406,7 +397,7 @@ export async function serverRoutes(app: FastifyInstance) {
       if (!roles.includes("platform_admin")) roles.push("platform_admin");
       if (!roles.includes("platform_owner")) roles.push("platform_owner");
     }
-    if (hasBoost.length > 0 && !roles.includes("boost")) roles.push("boost");
+    if (boostEntitlement.active && !roles.includes("boost")) roles.push("boost");
 
     const idForToken = (OFFICIAL_NODE_BASE_URL && OFFICIAL_NODE_SERVER_ID && server[0].base_url === OFFICIAL_NODE_BASE_URL)
       ? OFFICIAL_NODE_SERVER_ID

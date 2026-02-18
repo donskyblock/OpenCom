@@ -28,13 +28,21 @@ export function AdminApp() {
   const [panelPassword, setPanelPassword] = useState(sessionStorage.getItem("opencom_admin_panel_password") || "");
   const [status, setStatus] = useState("");
   const [statusType, setStatusType] = useState("info"); // info | success | error
-  const [adminOverview, setAdminOverview] = useState({ founder: null, admins: [] });
+  const [adminOverview, setAdminOverview] = useState({ founder: null, admins: [], activeBoostGrants: 0 });
   const [tab, setTab] = useState("overview");
   const [query, setQuery] = useState("");
   const [users, setUsers] = useState([]);
   const [searching, setSearching] = useState(false);
   const [badgeUserId, setBadgeUserId] = useState("");
   const [badgeName, setBadgeName] = useState("");
+  const [inspectedUser, setInspectedUser] = useState(null);
+  const [inspectedBadges, setInspectedBadges] = useState([]);
+  const [boostUserId, setBoostUserId] = useState("");
+  const [boostGrantType, setBoostGrantType] = useState("temporary");
+  const [boostDurationDays, setBoostDurationDays] = useState("30");
+  const [boostReason, setBoostReason] = useState("");
+  const [boostState, setBoostState] = useState(null);
+  const [boostLoading, setBoostLoading] = useState(false);
   const [adminStatus, setAdminStatus] = useState(null); // { platformRole, isPlatformAdmin, isPlatformOwner }
   const [unlockInput, setUnlockInput] = useState("");
 
@@ -128,9 +136,101 @@ export function AdminApp() {
         method: "POST",
         body: JSON.stringify({ badge: badgeName.trim(), enabled })
       });
+      await inspectUser(badgeUserId.trim());
       showStatus(`Badge ${enabled ? "added" : "removed"}.`, "success");
     } catch (e) {
       showStatus(e.message || "Badge action failed.", "error");
+    }
+  }
+
+  async function setBadgeForUser(userId, badge, enabled) {
+    if (!userId || !badge) return;
+    try {
+      await api(`/v1/admin/users/${userId}/badges`, token, panelPassword, {
+        method: "POST",
+        body: JSON.stringify({ badge, enabled })
+      });
+      await inspectUser(userId);
+      showStatus(`Badge ${enabled ? "added" : "removed"}.`, "success");
+    } catch (e) {
+      showStatus(e.message || "Badge action failed.", "error");
+    }
+  }
+
+  async function inspectUser(userId) {
+    if (!userId?.trim()) return;
+    try {
+      const data = await api(`/v1/admin/users/${userId.trim()}/detail`, token, panelPassword);
+      setInspectedUser(data.user || null);
+      setInspectedBadges(data.badges || []);
+      setBadgeUserId(userId.trim());
+      setBoostUserId(userId.trim());
+      showStatus("Loaded user details.", "success");
+    } catch (e) {
+      setInspectedUser(null);
+      setInspectedBadges([]);
+      showStatus(e.message || "Failed to load user details.", "error");
+    }
+  }
+
+  async function loadBoostState(targetUserId = boostUserId) {
+    const userId = targetUserId?.trim();
+    if (!userId) {
+      showStatus("Enter a user ID to inspect boost.", "info");
+      return;
+    }
+    setBoostLoading(true);
+    try {
+      const data = await api(`/v1/admin/users/${userId}/boost`, token, panelPassword);
+      setBoostState(data);
+      setBoostUserId(userId);
+      showStatus("Boost state loaded.", "success");
+    } catch (e) {
+      setBoostState(null);
+      showStatus(e.message || "Failed to load boost state.", "error");
+    } finally {
+      setBoostLoading(false);
+    }
+  }
+
+  async function grantBoost() {
+    const userId = boostUserId.trim();
+    if (!userId) {
+      showStatus("Enter a user ID first.", "info");
+      return;
+    }
+    if (boostGrantType === "temporary" && (!boostDurationDays || Number(boostDurationDays) < 1)) {
+      showStatus("Temporary grants require a valid duration in days.", "info");
+      return;
+    }
+    try {
+      await api(`/v1/admin/users/${userId}/boost/grant`, token, panelPassword, {
+        method: "POST",
+        body: JSON.stringify({
+          grantType: boostGrantType,
+          durationDays: boostGrantType === "temporary" ? Number(boostDurationDays) : undefined,
+          reason: boostReason.trim() || undefined
+        })
+      });
+      await Promise.all([loadBoostState(userId), loadOverview()]);
+      showStatus("Boost grant updated.", "success");
+    } catch (e) {
+      showStatus(e.message || "Failed to grant boost.", "error");
+    }
+  }
+
+  async function revokeBoost() {
+    const userId = boostUserId.trim();
+    if (!userId) {
+      showStatus("Enter a user ID first.", "info");
+      return;
+    }
+    try {
+      await api(`/v1/admin/users/${userId}/boost/revoke`, token, panelPassword, { method: "POST" });
+      await Promise.all([loadBoostState(userId), loadOverview()]);
+      showStatus("Manual boost grant revoked.", "success");
+    } catch (e) {
+      showStatus(e.message || "Failed to revoke boost.", "error");
     }
   }
 
@@ -158,7 +258,8 @@ export function AdminApp() {
   const tabs = [
     { id: "overview", label: "Overview" },
     { id: "users", label: "Users & admins" },
-    { id: "badges", label: "Badges" }
+    { id: "badges", label: "Badges" },
+    { id: "boost", label: "Boost Grants" }
   ];
 
   return (
@@ -211,6 +312,11 @@ export function AdminApp() {
                   </ul>
                 )}
               </div>
+              <div className="admin-card">
+                <h3>Active manual boost grants</h3>
+                <p><strong>{adminOverview.activeBoostGrants ?? 0}</strong> active grant(s)</p>
+                <p className="text-dim">Use Boost Grants tab for temporary/permanent access controls.</p>
+              </div>
             </div>
             <button type="button" onClick={loadOverview}>Refresh overview</button>
           </section>
@@ -245,7 +351,8 @@ export function AdminApp() {
                           {isOwner && <button type="button" className="btn-sm" onClick={() => setFounder(u.id)}>Set founder</button>}
                           {isOwner && <button type="button" className="btn-sm" onClick={() => setAdmin(u.id, true)}>Make admin</button>}
                           {isOwner && <button type="button" className="btn-sm danger" onClick={() => setAdmin(u.id, false)}>Remove admin</button>}
-                          <button type="button" className="btn-sm" onClick={() => { setBadgeUserId(u.id); setTab("badges"); }}>Badges</button>
+                          <button type="button" className="btn-sm" onClick={() => { inspectUser(u.id); setTab("badges"); }}>Badges</button>
+                          <button type="button" className="btn-sm" onClick={() => { setBoostUserId(u.id); loadBoostState(u.id); setTab("boost"); }}>Boost</button>
                         </td>
                       </tr>
                     ))}
@@ -261,9 +368,39 @@ export function AdminApp() {
         {tab === "badges" && (
           <section className="admin-section">
             <h2>Badge management</h2>
-            <p className="admin-hint">Add or remove badges for a user. Founder/Owner can set PLATFORM_FOUNDER; any platform admin can set others.</p>
-            <div className="admin-badge-form">
+            <p className="admin-hint">Search or enter a user ID, review current badges, then add/remove cleanly.</p>
+            <div className="admin-user-pick-row">
               <input placeholder="User ID" value={badgeUserId} onChange={(e) => setBadgeUserId(e.target.value)} />
+              <button type="button" onClick={() => inspectUser(badgeUserId)}>Load user</button>
+            </div>
+
+            {inspectedUser && (
+              <div className="admin-user-card">
+                <p><strong>{inspectedUser.username || "—"}</strong> <span className="text-dim">{inspectedUser.email || "No email"}</span></p>
+                <code>{inspectedUser.id}</code>
+                <div className="admin-badge-pills">
+                  {inspectedBadges.length === 0 ? (
+                    <span className="text-dim">No badges assigned.</span>
+                  ) : (
+                    inspectedBadges.map((badge) => (
+                      <button
+                        key={`${badge.badge}-${badge.created_at}`}
+                        type="button"
+                        className="admin-badge-pill"
+                        onClick={() => {
+                          setBadgeForUser(inspectedUser.id, badge.badge, false);
+                        }}
+                        title="Click to remove this badge"
+                      >
+                        {badge.badge} ×
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="admin-badge-form">
               <input placeholder="Badge name (e.g. PLATFORM_ADMIN)" value={badgeName} onChange={(e) => setBadgeName(e.target.value)} list="known-badges" />
               <datalist id="known-badges">
                 {KNOWN_BADGES.map((b) => <option key={b} value={b} />)}
@@ -272,6 +409,116 @@ export function AdminApp() {
                 <button type="button" onClick={() => setBadge(true)}>Add badge</button>
                 <button type="button" className="danger" onClick={() => setBadge(false)}>Remove badge</button>
               </div>
+            </div>
+            <div className="admin-quick-badges">
+              {KNOWN_BADGES.map((b) => (
+                <button key={b} type="button" className="btn-sm" onClick={() => setBadgeName(b)}>
+                  Use {b}
+                </button>
+              ))}
+              <button type="button" className="btn-sm" onClick={() => setBadgeName("boost")}>Use boost</button>
+            </div>
+          </section>
+        )}
+
+        {tab === "boost" && (
+          <section className="admin-section">
+            <h2>Boost grants</h2>
+            <p className="admin-hint">Grant permanent or temporary boost without fighting Stripe sync. Manual grants are audited and revocable.</p>
+            <div className="admin-boost-grid">
+              <div className="admin-card">
+                <h3>Target user</h3>
+                <div className="admin-user-pick-row">
+                  <input placeholder="User ID" value={boostUserId} onChange={(e) => setBoostUserId(e.target.value)} />
+                  <button type="button" onClick={() => loadBoostState()}>Inspect</button>
+                </div>
+
+                <div className="admin-boost-mode">
+                  <label>
+                    <input type="radio" name="boost-grant-type" checked={boostGrantType === "temporary"} onChange={() => setBoostGrantType("temporary")} />
+                    <span>Temporary</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="boost-grant-type" checked={boostGrantType === "permanent"} onChange={() => setBoostGrantType("permanent")} />
+                    <span>Permanent</span>
+                  </label>
+                </div>
+
+                {boostGrantType === "temporary" && (
+                  <input
+                    type="number"
+                    min="1"
+                    max="3650"
+                    placeholder="Duration (days)"
+                    value={boostDurationDays}
+                    onChange={(e) => setBoostDurationDays(e.target.value)}
+                  />
+                )}
+
+                <input
+                  placeholder="Reason (optional but recommended)"
+                  value={boostReason}
+                  onChange={(e) => setBoostReason(e.target.value)}
+                />
+
+                <div className="admin-badge-actions">
+                  <button type="button" onClick={grantBoost}>Grant / Replace grant</button>
+                  <button type="button" className="danger" onClick={revokeBoost}>Revoke manual grant</button>
+                </div>
+              </div>
+
+              <div className="admin-card">
+                <h3>Current entitlement</h3>
+                {boostLoading ? (
+                  <p className="text-dim">Loading boost state…</p>
+                ) : boostState ? (
+                  <div className="admin-boost-state">
+                    <p><strong>Status:</strong> {boostState.boostActive ? "Active" : "Inactive"}</p>
+                    <p><strong>Source:</strong> {boostState.boostSource || "none"}</p>
+                    {boostState.activeGrant && (
+                      <>
+                        <p><strong>Grant type:</strong> {boostState.activeGrant.grant_type}</p>
+                        <p><strong>Expires:</strong> {boostState.activeGrant.expires_at || "Never"}</p>
+                        {boostState.activeGrant.reason && <p><strong>Reason:</strong> {boostState.activeGrant.reason}</p>}
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-dim">Inspect a user to see boost details.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="admin-card">
+              <h3>Recent grant history</h3>
+              {!boostState?.recentGrants?.length ? (
+                <p className="text-dim">No grant records for this user.</p>
+              ) : (
+                <div className="admin-users-table-wrap">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th>Type</th>
+                        <th>Created</th>
+                        <th>Expires</th>
+                        <th>Revoked</th>
+                        <th>Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {boostState.recentGrants.map((grant) => (
+                        <tr key={grant.id}>
+                          <td>{grant.grant_type}</td>
+                          <td>{grant.created_at || "—"}</td>
+                          <td>{grant.expires_at || "Never"}</td>
+                          <td>{grant.revoked_at || "Active"}</td>
+                          <td>{grant.reason || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </section>
         )}

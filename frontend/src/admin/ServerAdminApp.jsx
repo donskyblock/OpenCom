@@ -73,6 +73,7 @@ export function ServerAdminApp() {
   const [members, setMembers] = useState([]);
   const [selectedMemberId, setSelectedMemberId] = useState("");
   const [memberRoles, setMemberRoles] = useState([]);
+  const [memberQuery, setMemberQuery] = useState("");
   
   // Role management
   const [roles, setRoles] = useState([]);
@@ -80,6 +81,7 @@ export function ServerAdminApp() {
   const [editingRoleId, setEditingRoleId] = useState("");
   const [editRoleName, setEditRoleName] = useState("");
   const [editRolePermissions, setEditRolePermissions] = useState({});
+  const [roleQuery, setRoleQuery] = useState("");
   
   // Admin promotion
   const [searchUsername, setSearchUsername] = useState("");
@@ -304,6 +306,17 @@ export function ServerAdminApp() {
   }
 
   const selectedServer = servers.find(s => s.id === selectedServerId);
+  const selectedGuild = guilds.find((guild) => guild.id === selectedGuildId);
+  const visibleMembers = members.filter((member) => {
+    if (!memberQuery.trim()) return true;
+    const query = memberQuery.trim().toLowerCase();
+    return member.username?.toLowerCase().includes(query) || member.id?.toLowerCase().includes(query);
+  });
+  const visibleRoles = roles.filter((role) => {
+    if (role.is_everyone) return true;
+    if (!roleQuery.trim()) return true;
+    return role.name?.toLowerCase().includes(roleQuery.trim().toLowerCase());
+  });
 
   if (!token) {
     return (
@@ -318,323 +331,332 @@ export function ServerAdminApp() {
   }
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: "var(--bg-primary)" }}>
-      {/* Sidebar - Servers List */}
-      <aside style={{ width: "280px", display: "flex", flexDirection: "column", borderRight: "1px solid var(--border-subtle)", background: "rgba(255,255,255,0.02)" }}>
-        <div style={{ padding: "16px", borderBottom: "1px solid var(--border-subtle)" }}>
-          <h2 style={{ margin: 0, fontSize: "18px" }}>🔧 Server Admin</h2>
+    <div className="server-admin-layout">
+      <aside className="server-admin-sidebar">
+        <div className="server-admin-brand">
+          <h2>Server Admin</h2>
+          <p>Manage your communities with clearer controls.</p>
         </div>
-        
-        <div style={{ flex: 1, overflowY: "auto", padding: "12px" }}>
-          <p style={{ fontSize: "12px", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: "8px" }}>Your Servers</p>
+
+        <div className="server-admin-sidebar-body">
+          <div className="server-admin-sidebar-head">
+            <p>Your Servers</p>
+            <span>{servers.length}</span>
+          </div>
           {servers.length === 0 ? (
-            <p style={{ color: "var(--text-dim)" }}>No servers owned</p>
+            <p className="server-admin-empty-inline">No servers owned yet.</p>
           ) : (
-            servers.map(server => (
+            servers.map((server) => (
               <button
                 key={server.id}
+                className={`server-admin-server-btn ${selectedServerId === server.id ? "active" : ""}`}
                 onClick={() => {
                   setSelectedServerId(server.id);
                   setSelectedGuildId("");
                   setActiveTab("members");
-                }}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  padding: "12px",
-                  marginBottom: "8px",
-                  background: selectedServerId === server.id ? "var(--bg-hover)" : "transparent",
-                  border: "1px solid transparent",
-                  borderRadius: "var(--radius)",
-                  color: "var(--text-main)",
-                  cursor: "pointer",
-                  textAlign: "left"
+                  setMemberQuery("");
+                  setRoleQuery("");
                 }}
               >
                 <strong>{server.name}</strong>
-                <p style={{ margin: "4px 0 0", fontSize: "12px", color: "var(--text-dim)" }}>{server.baseUrl}</p>
+                <span>{server.baseUrl}</span>
               </button>
             ))
           )}
         </div>
 
-        <div style={{ padding: "12px", borderTop: "1px solid var(--border-subtle)" }}>
-          <p style={{ fontSize: "11px", color: "var(--text-dim)", margin: 0 }}>{status}</p>
-        </div>
+        <div className="server-admin-sidebar-status">{status || "Ready."}</div>
       </aside>
 
-      {/* Main Content */}
-      <main style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-        {selectedServer ? (
+      <main className="server-admin-main">
+        {!selectedServer ? (
+          <div className="server-admin-empty">Select a server to manage.</div>
+        ) : (
           <>
-            {/* Header */}
-            <header style={{ padding: "20px", borderBottom: "1px solid var(--border-subtle)", background: "rgba(255,255,255,0.02)" }}>
-              <h1 style={{ margin: "0 0 8px 0" }}>{selectedServer.name}</h1>
-              <p style={{ margin: 0, color: "var(--text-dim)" }}>Manage members, roles, and permissions</p>
-              {guilds.length > 0 && (
-                <select value={selectedGuildId} onChange={e => setSelectedGuildId(e.target.value)} style={{ marginTop: "8px", padding: "6px 8px", borderRadius: "4px", background: "var(--bg-input)", color: "var(--text-main)", border: "1px solid var(--border-subtle)" }}>
-                  {guilds.map(guild => (
-                    <option key={guild.id} value={guild.id}>{guild.name}</option>
+            <header className="server-admin-top">
+              <div className="server-admin-top-meta">
+                <h1>{selectedServer.name}</h1>
+                <p>Member and role administration for your selected guild.</p>
+              </div>
+              <div className="server-admin-guild-pick">
+                <label htmlFor="server-admin-guild-select">Guild</label>
+                <select
+                  id="server-admin-guild-select"
+                  value={selectedGuildId}
+                  onChange={(e) => setSelectedGuildId(e.target.value)}
+                  disabled={guilds.length === 0}
+                >
+                  {guilds.map((guild) => (
+                    <option key={guild.id} value={guild.id}>
+                      {guild.name}
+                    </option>
                   ))}
                 </select>
-              )}
+              </div>
             </header>
 
-            {/* Content */}
             {!selectedGuildId ? (
-              <div style={{ flex: 1, display: "grid", placeItems: "center", color: "var(--text-dim)" }}>
-                <p>Select a guild to manage</p>
-              </div>
-            ) : guildState ? (
+              <div className="server-admin-empty">Select a guild to start managing this server.</div>
+            ) : !guildState ? (
+              <div className="server-admin-empty">Loading guild data...</div>
+            ) : (
               <>
-                <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border-subtle)", display: "flex", gap: "8px" }}>
-                  <button onClick={() => setActiveTab("members")} style={{ flex: 1, padding: "8px 12px", background: activeTab === "members" ? "var(--bg-accent)" : "transparent", border: "1px solid transparent", borderRadius: "var(--radius)", color: "var(--text-main)", cursor: "pointer" }}>
-                    👥 Members ({members.length})
+                <div className="server-admin-stats">
+                  <article className="server-admin-stat">
+                    <p>Guild</p>
+                    <strong>{selectedGuild?.name || "Unknown"}</strong>
+                  </article>
+                  <article className="server-admin-stat">
+                    <p>Members</p>
+                    <strong>{members.length}</strong>
+                  </article>
+                  <article className="server-admin-stat">
+                    <p>Roles</p>
+                    <strong>{roles.filter((role) => !role.is_everyone).length}</strong>
+                  </article>
+                  <article className="server-admin-stat">
+                    <p>Server Extensions</p>
+                    <strong>{extensionCatalog.serverExtensions.length}</strong>
+                  </article>
+                </div>
+
+                <div className="server-admin-tabs">
+                  <button className={activeTab === "members" ? "active" : ""} onClick={() => setActiveTab("members")}>
+                    Members
                   </button>
-                  <button onClick={() => setActiveTab("roles")} style={{ flex: 1, padding: "8px 12px", background: activeTab === "roles" ? "var(--bg-accent)" : "transparent", border: "1px solid transparent", borderRadius: "var(--radius)", color: "var(--text-main)", cursor: "pointer" }}>
-                    📋 Roles ({roles.filter(r => !r.is_everyone).length})
+                  <button className={activeTab === "roles" ? "active" : ""} onClick={() => setActiveTab("roles")}>
+                    Roles
                   </button>
-                  <button onClick={() => setActiveTab("admins")} style={{ flex: 1, padding: "8px 12px", background: activeTab === "admins" ? "var(--bg-accent)" : "transparent", border: "1px solid transparent", borderRadius: "var(--radius)", color: "var(--text-main)", cursor: "pointer" }}>
-                    🔑 Admins
+                  <button className={activeTab === "admins" ? "active" : ""} onClick={() => setActiveTab("admins")}>
+                    Admins
                   </button>
-                  <button onClick={() => setActiveTab("extensions")} style={{ flex: 1, padding: "8px 12px", background: activeTab === "extensions" ? "var(--bg-accent)" : "transparent", border: "1px solid transparent", borderRadius: "var(--radius)", color: "var(--text-main)", cursor: "pointer" }}>
-                    🧩 Extensions
+                  <button className={activeTab === "extensions" ? "active" : ""} onClick={() => setActiveTab("extensions")}>
+                    Extensions
                   </button>
                 </div>
 
-                <div style={{ flex: 1, overflowY: "auto", padding: "20px" }}>
-                  {/* Members Tab */}
+                <section className="server-admin-content">
                   {activeTab === "members" && (
-                    <section style={{ maxWidth: "1200px" }}>
-                      <h2>Members ({members.length})</h2>
-                      {members.length === 0 ? (
-                        <p style={{ color: "var(--text-dim)" }}>No members in this guild</p>
+                    <div className="server-admin-section">
+                      <div className="server-admin-section-head">
+                        <h2>Members</h2>
+                        <input
+                          type="search"
+                          placeholder="Search by username or user id"
+                          value={memberQuery}
+                          onChange={(e) => setMemberQuery(e.target.value)}
+                        />
+                      </div>
+                      {visibleMembers.length === 0 ? (
+                        <p className="server-admin-empty-inline">No matching members found.</p>
                       ) : (
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "12px" }}>
-                          {members.map(member => {
-                            // Find roles for this member from the state
-                            const memberData = guildState?.members?.find(m => m.id === member.id);
+                        <div className="server-admin-member-grid">
+                          {visibleMembers.map((member) => {
+                            const memberData = guildState?.members?.find((entry) => entry.id === member.id);
+                            const assignedRoles = roles.filter((role) => memberData?.roleIds?.includes(role.id));
                             return (
-                              <div key={member.id} style={{ background: "rgba(255,255,255,0.05)", padding: "12px", borderRadius: "var(--radius)", border: "1px solid var(--border-subtle)" }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "12px" }}>
+                              <article key={member.id} className="server-admin-member-card">
+                                <div className="server-admin-member-head">
                                   {member.pfp_url ? (
-                                    <img src={member.pfp_url} alt={member.username} style={{ width: "32px", height: "32px", borderRadius: "50%", objectFit: "cover" }} />
+                                    <img src={member.pfp_url} alt={member.username} />
                                   ) : (
-                                    <div style={{ width: "32px", height: "32px", borderRadius: "50%", background: "var(--bg-hover)", display: "grid", placeItems: "center", fontWeight: "bold" }}>
-                                      {member.username[0]?.toUpperCase()}
-                                    </div>
+                                    <div className="server-admin-member-fallback">{member.username?.[0]?.toUpperCase() || "?"}</div>
                                   )}
-                                  <div style={{ flex: 1 }}>
-                                    <p style={{ margin: 0, fontWeight: 600 }}>{member.username}</p>
-                                    <p style={{ margin: 0, fontSize: "11px", color: "var(--text-dim)" }}>{member.id}</p>
+                                  <div>
+                                    <strong>{member.username}</strong>
+                                    <p>{member.id}</p>
                                   </div>
                                 </div>
 
-                                <div style={{ marginBottom: "12px" }}>
-                                  <p style={{ margin: "0 0 8px 0", fontSize: "12px", fontWeight: 500 }}>Roles:</p>
-                                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                                    {roles
-                                      .filter(r => guildState?.me?.roleIds?.includes(r.id))
-                                      .map(role => (
-                                        <span key={role.id} style={{ background: `rgb(100, 150, 200)`, padding: "4px 8px", borderRadius: "4px", fontSize: "11px", cursor: "pointer", color: "white", userSelect: "none" }} onClick={() => removeRoleFromMember(member.id, role.id)} title="Click to remove">
-                                          {role.name} ×
-                                        </span>
-                                      ))}
-                                    {roles.filter(r => guildState?.me?.roleIds?.includes(r.id)).length === 0 && (
-                                      <span style={{ fontSize: "11px", color: "var(--text-dim)" }}>None</span>
-                                    )}
-                                  </div>
+                                <div className="server-admin-role-pills">
+                                  {assignedRoles.length === 0 ? (
+                                    <span className="server-admin-pill-muted">No roles</span>
+                                  ) : (
+                                    assignedRoles.map((role) => (
+                                      <button
+                                        key={role.id}
+                                        className="server-admin-role-pill"
+                                        onClick={() => removeRoleFromMember(member.id, role.id)}
+                                        title="Remove role"
+                                      >
+                                        {role.name} x
+                                      </button>
+                                    ))
+                                  )}
                                 </div>
 
                                 <button
+                                  className={`server-admin-action-btn ${selectedMemberId === member.id ? "active" : ""}`}
                                   onClick={() => setSelectedMemberId(selectedMemberId === member.id ? "" : member.id)}
-                                  style={{
-                                    width: "100%",
-                                    padding: "6px 12px",
-                                    background: selectedMemberId === member.id ? "var(--green)" : "var(--bg-accent)",
-                                    border: "none",
-                                    borderRadius: "4px",
-                                    color: "white",
-                                    cursor: "pointer",
-                                    fontSize: "12px"
-                                  }}
                                 >
-                                  {selectedMemberId === member.id ? "❌ Close" : "➕ Add Role"}
+                                  {selectedMemberId === member.id ? "Close role picker" : "Assign role"}
                                 </button>
 
                                 {selectedMemberId === member.id && (
-                                  <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: "1px solid var(--border-subtle)" }}>
-                                    <select
-                                      value={memberRoles[0] || ""}
-                                      onChange={e => setMemberRoles([e.target.value])}
-                                      style={{ width: "100%", padding: "6px", marginBottom: "8px", borderRadius: "4px", background: "var(--bg-input)", color: "var(--text-main)", border: "1px solid var(--border-subtle)" }}
-                                    >
+                                  <div className="server-admin-member-edit">
+                                    <select value={memberRoles[0] || ""} onChange={(e) => setMemberRoles([e.target.value])}>
                                       <option value="">Choose a role...</option>
-                                      {roles.filter(r => !r.is_everyone).map(role => (
-                                        <option key={role.id} value={role.id}>{role.name}</option>
+                                      {roles.filter((role) => !role.is_everyone).map((role) => (
+                                        <option key={role.id} value={role.id}>
+                                          {role.name}
+                                        </option>
                                       ))}
                                     </select>
-                                    <button onClick={assignRoleToMember} style={{ width: "100%", padding: "6px 12px", background: "var(--green)", border: "none", borderRadius: "4px", color: "white", cursor: "pointer", fontSize: "12px" }}>
-                                      ✓ Assign Role
+                                    <button className="server-admin-confirm-btn" onClick={assignRoleToMember}>
+                                      Assign
                                     </button>
                                   </div>
                                 )}
-                              </div>
+                              </article>
                             );
                           })}
                         </div>
                       )}
-                    </section>
+                    </div>
                   )}
 
-                  {/* Roles Tab */}
                   {activeTab === "roles" && (
-                    <section style={{ maxWidth: "1200px" }}>
-                      <div style={{ marginBottom: "24px" }}>
-                        <h2>Create New Role</h2>
-                        <div style={{ display: "flex", gap: "8px", maxWidth: "400px" }}>
-                          <input
-                            type="text"
-                            placeholder="Role name"
-                            value={newRoleName}
-                            onChange={e => setNewRoleName(e.target.value)}
-                            style={{ flex: 1, padding: "8px 12px", borderRadius: "4px", background: "var(--bg-input)", color: "var(--text-main)", border: "1px solid var(--border-subtle)" }}
-                          />
-                          <button onClick={createRole} style={{ padding: "8px 16px", background: "var(--bg-accent)", border: "none", borderRadius: "4px", color: "white", cursor: "pointer", fontWeight: "500" }}>
-                            Create
-                          </button>
+                    <div className="server-admin-section">
+                      <div className="server-admin-role-toolbar">
+                        <div className="server-admin-create-role">
+                          <h3>Create Role</h3>
+                          <div>
+                            <input
+                              type="text"
+                              placeholder="Role name"
+                              value={newRoleName}
+                              onChange={(e) => setNewRoleName(e.target.value)}
+                            />
+                            <button onClick={createRole}>Create</button>
+                          </div>
                         </div>
+                        <input
+                          type="search"
+                          placeholder="Filter roles"
+                          value={roleQuery}
+                          onChange={(e) => setRoleQuery(e.target.value)}
+                        />
                       </div>
 
-                      <h2>Manage Roles</h2>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))", gap: "12px" }}>
-                        {roles.map(role => (
-                          <div key={role.id} style={{ background: "rgba(255,255,255,0.05)", padding: "16px", borderRadius: "var(--radius)", border: "1px solid var(--border-subtle)" }}>
+                      <div className="server-admin-role-grid">
+                        {visibleRoles.map((role) => (
+                          <article key={role.id} className="server-admin-role-card">
                             {editingRoleId === role.id ? (
                               <>
                                 <input
                                   type="text"
                                   value={editRoleName}
-                                  onChange={e => setEditRoleName(e.target.value)}
+                                  onChange={(e) => setEditRoleName(e.target.value)}
                                   disabled={role.is_everyone}
-                                  style={{ width: "100%", padding: "8px 12px", marginBottom: "12px", borderRadius: "4px", background: "var(--bg-input)", color: "var(--text-main)", border: "1px solid var(--border-subtle)", opacity: role.is_everyone ? 0.5 : 1, cursor: role.is_everyone ? "not-allowed" : "text" }}
                                 />
-                                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px", marginBottom: "12px", maxHeight: "300px", overflowY: "auto" }}>
+                                <div className="server-admin-perm-grid">
                                   {Object.entries(PERMISSION_FLAGS).map(([flag, { name }]) => (
-                                    <label key={flag} style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "11px" }}>
+                                    <label key={flag}>
                                       <input
                                         type="checkbox"
                                         checked={editRolePermissions[flag] || false}
-                                        onChange={e => setEditRolePermissions({ ...editRolePermissions, [flag]: e.target.checked })}
+                                        onChange={(e) => setEditRolePermissions({ ...editRolePermissions, [flag]: e.target.checked })}
                                         disabled={role.is_everyone}
-                                        style={{ cursor: role.is_everyone ? "not-allowed" : "pointer" }}
                                       />
                                       <span>{name}</span>
                                     </label>
                                   ))}
                                 </div>
-                                <div style={{ display: "flex", gap: "8px" }}>
-                                  <button onClick={updateRolePermissions} style={{ flex: 1, padding: "6px 12px", background: "var(--green)", border: "none", borderRadius: "4px", color: "white", cursor: "pointer", fontSize: "12px" }}>
+                                <div className="server-admin-row-actions">
+                                  <button className="server-admin-confirm-btn" onClick={updateRolePermissions}>
                                     Save
                                   </button>
-                                  <button onClick={() => setEditingRoleId("")} style={{ flex: 1, padding: "6px 12px", background: "transparent", border: "1px solid var(--border-subtle)", borderRadius: "4px", color: "var(--text-main)", cursor: "pointer", fontSize: "12px" }}>
+                                  <button className="server-admin-action-btn" onClick={() => setEditingRoleId("")}>
                                     Cancel
                                   </button>
                                 </div>
                               </>
                             ) : (
                               <>
-                                <h3 style={{ margin: "0 0 8px 0", fontSize: "14px", fontWeight: 600 }}>
-                                  {role.name}
-                                  {role.is_everyone && <span style={{ fontSize: "10px", color: "var(--text-dim)", marginLeft: "6px" }}>(Everyone)</span>}
-                                </h3>
-                                <p style={{ margin: "0 0 12px 0", fontSize: "11px", color: "var(--text-dim)" }}>Position: {role.position}</p>
-                                <button onClick={() => openRoleEditor(role)} disabled={role.is_everyone} style={{ width: "100%", padding: "6px 12px", background: role.is_everyone ? "var(--text-dim)" : "var(--bg-accent)", border: "none", borderRadius: "4px", color: "white", cursor: role.is_everyone ? "not-allowed" : "pointer", fontSize: "12px", opacity: role.is_everyone ? 0.5 : 1 }}>
-                                  Edit Permissions
+                                <div className="server-admin-role-header">
+                                  <h3>{role.name}</h3>
+                                  {role.is_everyone && <span>@everyone</span>}
+                                </div>
+                                <p>Position {role.position}</p>
+                                <p>{Object.keys(PERMISSION_FLAGS).filter((flag) => hasPermission(role.permissions, flag)).length} permissions</p>
+                                <button
+                                  className="server-admin-action-btn"
+                                  onClick={() => openRoleEditor(role)}
+                                  disabled={role.is_everyone}
+                                >
+                                  Edit permissions
                                 </button>
                               </>
                             )}
-                          </div>
+                          </article>
                         ))}
                       </div>
-                    </section>
+                    </div>
                   )}
 
-                  {/* Admins Tab */}
                   {activeTab === "admins" && (
-                    <section style={{ maxWidth: "800px" }}>
-                      <h2>Server Admins</h2>
-                      <div style={{ background: "rgba(125, 164, 255, 0.1)", padding: "16px", borderRadius: "var(--radius)", border: "1px solid rgba(125, 164, 255, 0.2)", marginBottom: "24px" }}>
-                        <p style={{ margin: "0 0 8px 0", fontWeight: 500 }}>💡 About Server Admins</p>
-                        <p style={{ margin: 0, fontSize: "13px", color: "var(--text-dim)" }}>Server admins can manage roles, members, and guild settings. Use the Role Manager to assign admin roles to trusted members.</p>
+                    <div className="server-admin-section">
+                      <h2>Admin Roles</h2>
+                      <p className="server-admin-help">Roles with the Administrator permission are shown below.</p>
+                      <div className="server-admin-admin-list">
+                        {roles.filter((role) => hasPermission(role.permissions, "ADMINISTRATOR")).length === 0 ? (
+                          <p className="server-admin-empty-inline">No administrator roles configured.</p>
+                        ) : (
+                          roles
+                            .filter((role) => hasPermission(role.permissions, "ADMINISTRATOR"))
+                            .map((role) => (
+                              <article key={role.id} className="server-admin-admin-card">
+                                <strong>{role.name}</strong>
+                                <span>Position {role.position}</span>
+                                <button className="server-admin-action-btn" onClick={() => openRoleEditor(role)}>
+                                  Review permissions
+                                </button>
+                              </article>
+                            ))
+                        )}
                       </div>
-                    </section>
+                    </div>
                   )}
 
                   {activeTab === "extensions" && (
-                    <section style={{ maxWidth: "1000px" }}>
+                    <div className="server-admin-section">
                       <h2>Extensions</h2>
-                      <p style={{ color: "var(--text-dim)", marginTop: 0 }}>Enable reviewed server extensions for this server node. Extension commands register/unregister in realtime while toggling.</p>
+                      <p className="server-admin-help">
+                        Enable reviewed extensions for this server node. Changes apply in realtime.
+                      </p>
 
-                      <div style={{ marginBottom: "20px", padding: "14px", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius)", background: "rgba(255,255,255,0.03)" }}>
-                        <h3 style={{ marginTop: 0 }}>Server Extension Catalog ({extensionCatalog.serverExtensions.length})</h3>
+                      <div className="server-admin-extension-list">
                         {extensionsLoading ? (
-                          <p style={{ color: "var(--text-dim)" }}>Loading installed extension state...</p>
+                          <p className="server-admin-empty-inline">Loading installed extension state...</p>
                         ) : extensionCatalog.serverExtensions.length === 0 ? (
-                          <p style={{ color: "var(--text-dim)" }}>No server extensions found in <code>Extensions/Server</code>.</p>
+                          <p className="server-admin-empty-inline">No server extensions found in <code>Extensions/Server</code>.</p>
                         ) : (
-                          <div style={{ display: "grid", gap: "10px" }}>
-                            {extensionCatalog.serverExtensions.map((ext) => {
-                              const enabled = isExtensionEnabled(ext.id);
-                              return (
-                                <div key={ext.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: "1px solid var(--border-subtle)", borderRadius: "8px", padding: "10px 12px" }}>
-                                  <div>
-                                    <strong>{ext.name}</strong> <span style={{ color: "var(--text-dim)", fontSize: "12px" }}>v{ext.version}</span>
-                                    <span style={{ marginLeft: "8px", fontSize: "11px", padding: "2px 6px", borderRadius: "999px", background: enabled ? "rgba(78,201,126,0.25)" : "rgba(240,90,90,0.22)", color: enabled ? "#8af5b1" : "#ffc1c1" }}>
-                                      {enabled ? "Enabled" : "Disabled"}
-                                    </span>
-                                    <p style={{ margin: "4px 0 0", color: "var(--text-dim)", fontSize: "12px" }}>{ext.description || "No description"}</p>
-                                    <code style={{ fontSize: "11px" }}>{ext.id}</code>
-                                    {ext.author && <span style={{ marginLeft: "8px", color: "var(--text-dim)", fontSize: "11px" }}>by {ext.author}</span>}
-                                  </div>
-                                  <button onClick={() => toggleExtension(ext.id, !enabled)} style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--border-subtle)", background: enabled ? "rgba(240,90,90,0.2)" : "rgba(78,201,126,0.2)", color: "var(--text-main)", cursor: "pointer" }}>
-                                    {enabled ? "Disable" : "Enable"}
-                                  </button>
+                          extensionCatalog.serverExtensions.map((ext) => {
+                            const enabled = isExtensionEnabled(ext.id);
+                            return (
+                              <article key={ext.id} className="server-admin-extension-card">
+                                <div>
+                                  <strong>{ext.name}</strong>
+                                  <p>{ext.description || "No description available."}</p>
+                                  <code>{ext.id}</code>
                                 </div>
-                              );
-                            })}
-                          </div>
+                                <button
+                                  className={`server-admin-action-btn ${enabled ? "danger" : "success"}`}
+                                  onClick={() => toggleExtension(ext.id, !enabled)}
+                                >
+                                  {enabled ? "Disable" : "Enable"}
+                                </button>
+                              </article>
+                            );
+                          })
                         )}
                       </div>
-
-                      <div style={{ padding: "14px", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius)", background: "rgba(255,255,255,0.02)" }}>
-                        <h3 style={{ marginTop: 0 }}>Client Extension Catalog ({extensionCatalog.clientExtensions.length})</h3>
-                        {extensionCatalog.clientExtensions.length === 0 ? (
-                          <p style={{ color: "var(--text-dim)" }}>No client extensions found in <code>Extensions/Client</code>.</p>
-                        ) : (
-                          <ul style={{ margin: 0, paddingLeft: "18px" }}>
-                            {extensionCatalog.clientExtensions.map((ext) => (
-                              <li key={ext.id} style={{ marginBottom: "6px" }}>
-                                <strong>{ext.name}</strong> <span style={{ color: "var(--text-dim)", fontSize: "12px" }}>({ext.id})</span>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    </section>
+                    </div>
                   )}
-                </div>
+                </section>
               </>
-            ) : (
-              <div style={{ flex: 1, display: "grid", placeItems: "center", color: "var(--text-dim)" }}>
-                <p>Loading guild data...</p>
-              </div>
             )}
           </>
-        ) : (
-          <div style={{ flex: 1, display: "grid", placeItems: "center", color: "var(--text-dim)" }}>
-            <p>Select a server to manage</p>
-          </div>
         )}
       </main>
     </div>

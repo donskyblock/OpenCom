@@ -7,11 +7,15 @@ import {
   APP_ROUTE_CLIENT,
   APP_ROUTE_HOME,
   APP_ROUTE_LOGIN,
+  buildBoostGiftUrl,
   buildInviteJoinUrl,
   getAppRouteFromLocation,
+  getBoostGiftCodeFromCurrentLocation,
   getInviteCodeFromCurrentLocation,
+  isBoostGiftPath,
   isInviteJoinPath,
   normalizeAppPath,
+  parseBoostGiftCodeFromInput,
   parseInviteCodeFromInput,
   writeAppRoute
 } from "./lib/routing";
@@ -604,6 +608,20 @@ function normalizeImageUrlInput(value = "") {
   return trimmed;
 }
 
+function extractHttpUrls(value = "") {
+  const text = String(value || "");
+  if (!text) return [];
+  const regex = /https?:\/\/[^\s<>"'`)\]]+/gi;
+  const out = new Set();
+  let match = regex.exec(text);
+  while (match) {
+    const raw = String(match[0] || "").trim();
+    if (raw) out.add(raw);
+    match = regex.exec(text);
+  }
+  return [...out];
+}
+
 export function App() {
   const voiceDebugEnabled = isVoiceDebugEnabled();
   const voiceDebug = (message, context = {}) => {
@@ -714,6 +732,15 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState("profile");
   const [boostStatus, setBoostStatus] = useState(null);
   const [boostLoading, setBoostLoading] = useState(false);
+  const [boostUpsell, setBoostUpsell] = useState(null);
+  const [boostGiftCode, setBoostGiftCode] = useState("");
+  const [boostGiftPreview, setBoostGiftPreview] = useState(null);
+  const [boostGiftPrompt, setBoostGiftPrompt] = useState(null);
+  const [boostGiftLoading, setBoostGiftLoading] = useState(false);
+  const [boostGiftRedeeming, setBoostGiftRedeeming] = useState(false);
+  const [boostGiftCheckoutBusy, setBoostGiftCheckoutBusy] = useState(false);
+  const [boostGiftSent, setBoostGiftSent] = useState([]);
+  const [linkPreviewByUrl, setLinkPreviewByUrl] = useState({});
   const [addServerModalOpen, setAddServerModalOpen] = useState(false);
   const [addServerTab, setAddServerTab] = useState("create");
   const [serverContextMenu, setServerContextMenu] = useState(null);
@@ -749,6 +776,7 @@ export function App() {
   const [routePath, setRoutePath] = useState(getAppRouteFromLocation);
   const [downloadsMenuOpen, setDownloadsMenuOpen] = useState(false);
   const [gatewayConnected, setGatewayConnected] = useState(false);
+  const [nodeGatewayConnected, setNodeGatewayConnected] = useState(false);
   const [dmNotification, setDmNotification] = useState(null);
   const [voiceStatesByGuild, setVoiceStatesByGuild] = useState({});
   const [voiceSpeakingByGuild, setVoiceSpeakingByGuild] = useState({});
@@ -853,8 +881,10 @@ export function App() {
   const dmComposerInputRef = useRef(null);
   const isAtBottomRef = useRef(true);
   const lastDmMessageCountRef = useRef(0);
+  const linkPreviewFetchInFlightRef = useRef(new Set());
   const previousDmIdRef = useRef("");
   const activeChannelIdRef = useRef("");
+  const activeGuildIdRef = useRef("");
   const profileCardDragOffsetRef = useRef({ x: 0, y: 0 });
   const downloadMenuRef = useRef(null);
   const preferredDownloadTarget = useMemo(() => getPreferredDownloadTarget(DOWNLOAD_TARGETS), []);
@@ -883,6 +913,7 @@ export function App() {
     if (typeof window === "undefined") return;
     if (window.location.protocol === "file:") return;
     if (isInviteJoinPath(window.location.pathname || "")) return;
+    if (isBoostGiftPath(window.location.pathname || "")) return;
     const canonical = normalizeAppPath(window.location.pathname || "");
     if (canonical !== (window.location.pathname || "")) {
       navigateAppRoute(canonical, { replace: true });
@@ -894,6 +925,12 @@ export function App() {
     if (routePath === APP_ROUTE_CLIENT) return;
     navigateAppRoute(APP_ROUTE_CLIENT, { replace: true });
   }, [accessToken, routePath]);
+
+  useEffect(() => {
+    if (!accessToken || !settingsOpen || settingsTab !== "billing") return;
+    loadBoostStatus().catch(() => {});
+    loadSentBoostGifts().catch(() => {});
+  }, [accessToken, settingsOpen, settingsTab]);
 
   useEffect(() => {
     if (accessToken) return;
@@ -1794,6 +1831,11 @@ export function App() {
             gatewayWsRef.current.send(JSON.stringify({ op: "DISPATCH", t: "SET_PRESENCE", d: { status: selfStatus, customStatus: null } }));
           }
         }
+        if (msg.op === "DISPATCH" && msg.t === "PRESENCE_SYNC_REQUEST") {
+          if (gatewayWsRef.current?.readyState === WebSocket.OPEN) {
+            gatewayWsRef.current.send(JSON.stringify({ op: "DISPATCH", t: "SET_PRESENCE", d: { status: selfStatusRef.current, customStatus: null } }));
+          }
+        }
         if (msg.op === "DISPATCH" && msg.t === "PRESENCE_UPDATE" && msg.d?.userId) {
           setPresenceByUserId((prev) => ({
             ...prev,
@@ -1890,6 +1932,7 @@ export function App() {
     if (!server?.baseUrl || !server?.membershipToken) {
       voiceGatewayCandidatesRef.current = [];
       nodeGatewayReadyRef.current = false;
+      setNodeGatewayConnected(false);
 
       if (nodeGatewayHeartbeatRef.current) {
         clearInterval(nodeGatewayHeartbeatRef.current);
@@ -1907,6 +1950,7 @@ export function App() {
     if (nodeGatewayUnavailableByServer[server.id]) {
       voiceGatewayCandidatesRef.current = [];
       nodeGatewayReadyRef.current = false;
+      setNodeGatewayConnected(false);
 
       if (nodeGatewayHeartbeatRef.current) {
         clearInterval(nodeGatewayHeartbeatRef.current);
@@ -1926,7 +1970,10 @@ export function App() {
       LAST_SERVER_GATEWAY_KEY
     );
     voiceGatewayCandidatesRef.current = wsCandidates;
-    if (!wsCandidates.length) return;
+    if (!wsCandidates.length) {
+      setNodeGatewayConnected(false);
+      return;
+    }
 
     let disposed = false;
     let connected = false;
@@ -1934,6 +1981,34 @@ export function App() {
     let reconnectTimer = null;
     let candidateIndex = 0;
     let reconnectAttempts = 0;
+    let guildRefreshTimer = null;
+
+    const applyGuildState = (state) => {
+      const allChannels = state.channels || [];
+      setGuildState(state);
+
+      const activeExists = allChannels.some((channel) => channel.id === activeChannelIdRef.current && channel.type === "text");
+      if (activeExists) return;
+
+      const firstTextChannel = allChannels.find((channel) => channel.type === "text")?.id || "";
+      setActiveChannelId(firstTextChannel);
+    };
+
+    const refreshActiveGuildStateFromNode = () => {
+      const guildId = activeGuildIdRef.current;
+      if (!guildId) return;
+      nodeApi(server.baseUrl, `/v1/guilds/${guildId}/state`, server.membershipToken)
+        .then((state) => {
+          if (disposed) return;
+          applyGuildState(state);
+        })
+        .catch(() => {});
+    };
+
+    const scheduleGuildRefresh = (delay = 150) => {
+      if (guildRefreshTimer) clearTimeout(guildRefreshTimer);
+      guildRefreshTimer = setTimeout(refreshActiveGuildStateFromNode, delay);
+    };
 
     const scheduleReconnect = () => {
       if (disposed) return;
@@ -1976,6 +2051,7 @@ export function App() {
             hasEverConnected = true;
             reconnectAttempts = 0;
             nodeGatewayReadyRef.current = true;
+            setNodeGatewayConnected(true);
             localStorage.setItem(LAST_SERVER_GATEWAY_KEY, wsUrl);
 
             // Subscribe to whatever context we have right now.
@@ -2002,7 +2078,103 @@ export function App() {
           // Everything else stays the same as your existing handler:
           // MESSAGE_* + VOICE_* dispatches, etc.
           if (msg.op === "DISPATCH" && typeof msg.t === "string") {
-            // keep your existing special-cases above this line if you have them
+            if (msg.t === "MESSAGE_CREATE") {
+              const channelId = msg.d?.channelId || "";
+              const created = msg.d?.message || null;
+              const deleted = msg.d?.messageDelete || null;
+
+              if (channelId && deleted?.id && channelId === activeChannelIdRef.current) {
+                setMessages((current) => current.filter((message) => message.id !== deleted.id));
+              }
+
+              if (channelId && created && channelId === activeChannelIdRef.current) {
+                setMessages((current) => {
+                  if (current.some((message) => message.id === created.id)) return current;
+                  const normalized = {
+                    id: created.id,
+                    author_id: created.authorId,
+                    authorId: created.authorId,
+                    content: created.content || "",
+                    embeds: created.embeds || [],
+                    linkEmbeds: created.linkEmbeds || [],
+                    attachments: created.attachments || [],
+                    mentionEveryone: !!created.mentionEveryone,
+                    mentions: created.mentions || [],
+                    created_at: created.createdAt,
+                    createdAt: created.createdAt
+                  };
+                  return [...current, normalized];
+                });
+              } else if (channelId && created && server?.id) {
+                setServerPingCounts((prev) => ({ ...prev, [server.id]: (prev[server.id] || 0) + 1 }));
+              }
+              return;
+            }
+
+            if (msg.t === "MESSAGE_MENTION" && server?.id) {
+              const channelId = msg.d?.channelId || "";
+              if (!activeChannelIdRef.current || channelId !== activeChannelIdRef.current) {
+                setServerPingCounts((prev) => ({ ...prev, [server.id]: (prev[server.id] || 0) + 1 }));
+              }
+              return;
+            }
+
+            if (msg.t === "VOICE_STATE_UPDATE" && msg.d?.guildId && msg.d?.userId) {
+              const guildId = msg.d.guildId;
+              const userId = msg.d.userId;
+              const channelId = msg.d.channelId || null;
+              setVoiceStatesByGuild((prev) => {
+                const nextGuild = { ...(prev[guildId] || {}) };
+                if (channelId) {
+                  nextGuild[userId] = {
+                    guildId,
+                    channelId,
+                    userId,
+                    muted: !!msg.d.muted,
+                    deafened: !!msg.d.deafened
+                  };
+                } else {
+                  delete nextGuild[userId];
+                }
+                return { ...prev, [guildId]: nextGuild };
+              });
+            } else if (msg.t === "VOICE_STATE_REMOVE" && msg.d?.guildId && msg.d?.userId) {
+              const guildId = msg.d.guildId;
+              const userId = msg.d.userId;
+              setVoiceStatesByGuild((prev) => {
+                if (!prev[guildId]?.[userId]) return prev;
+                const nextGuild = { ...(prev[guildId] || {}) };
+                delete nextGuild[userId];
+                return { ...prev, [guildId]: nextGuild };
+              });
+            } else if (msg.t === "VOICE_SPEAKING" && msg.d?.guildId && msg.d?.userId) {
+              const guildId = msg.d.guildId;
+              const userId = msg.d.userId;
+              const speaking = !!msg.d.speaking;
+              setVoiceSpeakingByGuild((prev) => ({
+                ...prev,
+                [guildId]: { ...(prev[guildId] || {}), [userId]: speaking }
+              }));
+            }
+
+            if (
+              msg.t === "CHANNEL_CREATE"
+              || msg.t === "CHANNEL_UPDATE"
+              || msg.t === "CHANNEL_DELETE"
+              || msg.t === "CHANNEL_REORDER"
+              || msg.t === "ROLE_CREATE"
+              || msg.t === "ROLE_UPDATE"
+              || msg.t === "ROLE_DELETE"
+              || msg.t === "CHANNEL_OVERWRITE_UPDATE"
+              || msg.t === "CHANNEL_OVERWRITE_DELETE"
+              || msg.t === "CHANNEL_SYNC_PERMISSIONS"
+              || msg.t === "GUILD_MEMBER_UPDATE"
+              || msg.t === "GUILD_MEMBER_KICK"
+              || msg.t === "GUILD_MEMBER_BAN"
+            ) {
+              scheduleGuildRefresh();
+            }
+
             voiceSfuRef.current?.handleGatewayDispatch(msg.t, msg.d).catch(() => {});
           }
         } catch (_) {}
@@ -2019,6 +2191,7 @@ export function App() {
         }
 
         nodeGatewayWsRef.current = null;
+        setNodeGatewayConnected(false);
 
         connected = false;
         rejectPendingVoiceEvents("VOICE_GATEWAY_CLOSED");
@@ -2039,8 +2212,10 @@ export function App() {
     return () => {
       disposed = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (guildRefreshTimer) clearTimeout(guildRefreshTimer);
 
       nodeGatewayReadyRef.current = false;
+      setNodeGatewayConnected(false);
 
       if (nodeGatewayHeartbeatRef.current) {
         clearInterval(nodeGatewayHeartbeatRef.current);
@@ -2118,6 +2293,48 @@ export function App() {
     navigateAppRoute(nextRoute, { replace: true });
   }, [accessToken]);
 
+  // Handle boost gift link: /gift/:code — prompt preview and require explicit redeem confirmation.
+  useEffect(() => {
+    const code = getBoostGiftCodeFromCurrentLocation();
+    if (!code) return;
+    setBoostGiftCode(code);
+    if (accessToken) {
+      previewBoostGift(code);
+    }
+    const nextRoute = accessToken ? APP_ROUTE_CLIENT : APP_ROUTE_LOGIN;
+    navigateAppRoute(nextRoute, { replace: true });
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    const visibleMessages = [
+      ...(messages || []),
+      ...((dms.find((item) => item.id === activeDmId)?.messages) || [])
+    ];
+    const candidateUrls = new Set();
+    for (const message of visibleMessages) {
+      for (const url of extractHttpUrls(message?.content || "")) candidateUrls.add(url);
+    }
+
+    for (const url of candidateUrls) {
+      if (linkPreviewByUrl[url] !== undefined) continue;
+      if (linkPreviewFetchInFlightRef.current.has(url)) continue;
+      linkPreviewFetchInFlightRef.current.add(url);
+      api(`/v1/link-preview?url=${encodeURIComponent(url)}`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      })
+        .then((data) => {
+          setLinkPreviewByUrl((current) => ({ ...current, [url]: data || null }));
+        })
+        .catch(() => {
+          setLinkPreviewByUrl((current) => ({ ...current, [url]: null }));
+        })
+        .finally(() => {
+          linkPreviewFetchInFlightRef.current.delete(url);
+        });
+    }
+  }, [accessToken, messages, dms, activeDmId, linkPreviewByUrl]);
+
   useEffect(() => {
     if (navMode !== "servers" || !activeServer) {
       setGuilds([]);
@@ -2177,12 +2394,12 @@ export function App() {
       });
 
     loadGuildState();
-    const timer = window.setInterval(loadGuildState, 3000);
+    const timer = nodeGatewayConnected ? null : window.setInterval(loadGuildState, 3000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer) window.clearInterval(timer);
     };
-  }, [activeServer, activeGuildId, navMode, activeChannelId]);
+  }, [activeServer, activeGuildId, navMode, activeChannelId, nodeGatewayConnected]);
 
   useEffect(() => {
     if (navMode !== "dms" || !activeDmId || !accessToken) return;
@@ -2404,6 +2621,7 @@ export function App() {
   }, [accessToken, navMode]);
 
   activeChannelIdRef.current = activeChannelId;
+  activeGuildIdRef.current = activeGuildId;
 
   useEffect(() => {
     if (navMode !== "servers" || !activeServer || !activeChannelId) {
@@ -2437,13 +2655,13 @@ export function App() {
       });
 
     loadChannelMessages();
-    const timer = window.setInterval(loadChannelMessages, 2000);
+    const timer = nodeGatewayConnected ? null : window.setInterval(loadChannelMessages, 2000);
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer) window.clearInterval(timer);
     };
-  }, [activeServer, activeChannelId, navMode]);
+  }, [activeServer, activeChannelId, navMode, nodeGatewayConnected]);
 
   useEffect(() => {
     setPendingAttachments([]);
@@ -2451,7 +2669,7 @@ export function App() {
   }, [activeServerId, activeChannelId]);
 
   useEffect(() => {
-    if (navMode !== "servers" || !accessToken || !activeGuildId) return;
+    if (navMode !== "servers" || !accessToken || !activeGuildId || gatewayConnected) return;
 
     let cancelled = false;
 
@@ -2475,7 +2693,39 @@ export function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [navMode, accessToken, activeGuildId, guildState?.members]);
+  }, [navMode, accessToken, activeGuildId, guildState?.members, gatewayConnected]);
+
+  // Fallback polling for social presence/RPC only when core gateway websocket is unavailable.
+  useEffect(() => {
+    if (!accessToken || gatewayConnected || (navMode !== "friends" && navMode !== "dms")) return;
+
+    let cancelled = false;
+
+    const loadSocialPresence = () => {
+      const ids = new Set();
+      (friends || []).forEach((friend) => friend?.id && ids.add(friend.id));
+      (dms || []).forEach((dm) => dm?.participantId && ids.add(dm.participantId));
+      const userIds = [...ids];
+      if (!userIds.length) return;
+
+      const params = new URLSearchParams({ userIds: userIds.join(",") });
+      fetch(`${CORE_API}/v1/presence?${params}`, { headers: { Authorization: `Bearer ${accessToken}` } })
+        .then((r) => r.ok ? r.json() : {})
+        .then((data) => {
+          if (cancelled || !data || typeof data !== "object") return;
+          setPresenceByUserId((prev) => ({ ...prev, ...data }));
+        })
+        .catch(() => {});
+    };
+
+    loadSocialPresence();
+    const timer = window.setInterval(loadSocialPresence, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [accessToken, gatewayConnected, navMode, friends, dms]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search || "");
@@ -2504,6 +2754,28 @@ export function App() {
         window.history.replaceState({}, "", nextUrl);
       });
   }, []);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    const params = new URLSearchParams(window.location.search || "");
+    const action = params.get("boostGiftCheckout");
+    const giftId = params.get("giftId");
+    const sessionId = params.get("session_id");
+    if (!action) return;
+
+    if (action === "success" && giftId && sessionId) {
+      completeBoostGiftCheckout(giftId, sessionId).catch(() => {});
+    } else if (action === "cancel") {
+      setStatus("Boost gift checkout canceled.");
+    }
+
+    params.delete("boostGiftCheckout");
+    params.delete("giftId");
+    params.delete("session_id");
+    const next = params.toString();
+    const nextUrl = `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash || ""}`;
+    window.history.replaceState({}, "", nextUrl);
+  }, [accessToken]);
 
   async function handleAuthSubmit(event) {
     event.preventDefault();
@@ -2892,6 +3164,125 @@ export function App() {
     } catch (error) {
       setStatus(`Could not open billing portal: ${error.message}`);
     }
+  }
+
+  async function loadSentBoostGifts() {
+    if (!accessToken) return;
+    try {
+      const data = await api("/v1/billing/boost/gifts", {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      setBoostGiftSent(data.gifts || []);
+    } catch (error) {
+      setStatus(`Could not load boost gifts: ${error.message}`);
+    }
+  }
+
+  async function startBoostGiftCheckout() {
+    if (!accessToken) return;
+    setBoostGiftCheckoutBusy(true);
+    try {
+      const data = await api("/v1/billing/boost/gifts/checkout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      if (data?.checkoutUrl) {
+        window.location.href = data.checkoutUrl;
+        return;
+      }
+      setStatus("Gift checkout URL missing.");
+    } catch (error) {
+      setStatus(`Could not start gift checkout: ${error.message}`);
+    } finally {
+      setBoostGiftCheckoutBusy(false);
+    }
+  }
+
+  async function completeBoostGiftCheckout(giftId, sessionId) {
+    if (!accessToken || !giftId || !sessionId) return;
+    try {
+      const data = await api("/v1/billing/boost/gifts/complete-purchase", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ giftId, sessionId })
+      });
+      if (data?.giftCode) {
+        setBoostGiftCode(data.giftCode);
+      }
+      await loadSentBoostGifts();
+      setSettingsOpen(true);
+      setSettingsTab("billing");
+      setStatus("Boost gift purchased. Copy and send your gift link.");
+    } catch (error) {
+      setStatus(`Could not complete gift purchase: ${error.message}`);
+    }
+  }
+
+  async function previewBoostGift(rawCode) {
+    if (!accessToken) return;
+    const code = parseBoostGiftCodeFromInput(rawCode);
+    if (!code) {
+      setStatus("Invalid boost gift code/link.");
+      return;
+    }
+    setBoostGiftLoading(true);
+    try {
+      const data = await api(`/v1/billing/boost/gifts/${encodeURIComponent(code)}`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      setBoostGiftCode(code);
+      setBoostGiftPreview(data);
+      setBoostGiftPrompt(data);
+      setSettingsOpen(true);
+      setSettingsTab("billing");
+      setStatus(`Boost gift from ${data?.from?.username || "someone"} is ready to redeem.`);
+    } catch (error) {
+      setBoostGiftPreview(null);
+      setBoostGiftPrompt(null);
+      setStatus(`Could not load boost gift: ${error.message}`);
+    } finally {
+      setBoostGiftLoading(false);
+    }
+  }
+
+  async function redeemBoostGift(codeInput = boostGiftCode) {
+    if (!accessToken) return;
+    const code = parseBoostGiftCodeFromInput(codeInput);
+    if (!code) {
+      setStatus("Invalid boost gift code.");
+      return;
+    }
+    setBoostGiftRedeeming(true);
+    try {
+      const data = await api(`/v1/billing/boost/gifts/${encodeURIComponent(code)}/redeem`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      setBoostGiftPrompt(null);
+      setBoostGiftPreview(null);
+      await Promise.all([loadBoostStatus(), loadSentBoostGifts()]);
+      setStatus(`Boost gift redeemed (${data?.grantDays || 30} days).`);
+    } catch (error) {
+      setStatus(`Could not redeem boost gift: ${error.message}`);
+    } finally {
+      setBoostGiftRedeeming(false);
+    }
+  }
+
+  function showBoostUpsell(reason = "This action requires OpenCom Boost.") {
+    setBoostUpsell({
+      title: "Hold up",
+      reason,
+      cta: "Open Boost Settings"
+    });
+  }
+
+  function openBoostSettingsFromUpsell() {
+    setBoostUpsell(null);
+    setSettingsOpen(true);
+    setSettingsTab("billing");
+    loadBoostStatus().catch(() => {});
+    loadSentBoostGifts().catch(() => {});
   }
 
   async function revokeSession(sessionId) {
@@ -3343,6 +3734,11 @@ export function App() {
 
   async function createInvite() {
     if (!inviteServerId) return;
+    const wantsBoostPerk = invitePermanent || inviteCustomCode.trim().length > 0;
+    if (wantsBoostPerk && boostStatus && !boostStatus.active) {
+      showBoostUpsell("Custom invite codes and permanent invite links require OpenCom Boost.");
+      return;
+    }
     try {
       const payload = {
         serverId: inviteServerId,
@@ -3359,6 +3755,10 @@ export function App() {
       setInviteCustomCode("");
       setStatus("Invite code generated.");
     } catch (error) {
+      if (String(error?.message || "").includes("BOOST_REQUIRED")) {
+        showBoostUpsell("Custom invite codes and permanent invite links require OpenCom Boost.");
+        return;
+      }
       setStatus(`Invite failed: ${error.message}`);
     }
   }
@@ -4718,6 +5118,40 @@ export function App() {
     return nodes.length ? nodes : content;
   }
 
+  function normalizedLinkKey(value) {
+    try {
+      const parsed = new URL(String(value || ""));
+      parsed.hash = "";
+      return parsed.toString();
+    } catch {
+      return String(value || "");
+    }
+  }
+
+  function getDerivedLinkEmbeds(message) {
+    const urls = extractHttpUrls(message?.content || "");
+    if (!urls.length) return [];
+
+    const existing = new Set((message?.linkEmbeds || []).map((embed) => normalizedLinkKey(embed?.url)));
+    const out = [];
+    for (const rawUrl of urls) {
+      const key = normalizedLinkKey(rawUrl);
+      if (!key || existing.has(key)) continue;
+      const preview = linkPreviewByUrl[rawUrl];
+      if (!preview) continue;
+      if (!preview.hasMeta && !preview.action) continue;
+      out.push({
+        url: preview.url || rawUrl,
+        title: preview.title || preview.siteName || "Link",
+        description: preview.description || "",
+        imageUrl: preview.imageUrl || "",
+        siteName: preview.siteName || "",
+        action: preview.action || null
+      });
+    }
+    return out;
+  }
+
   function formatAccountCreated(createdAt) {
     if (!createdAt) return null;
     try {
@@ -5149,7 +5583,9 @@ export function App() {
                               {topRole && <span className="msg-role-tag">{topRole.name}</span>}
                               <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span>
                             </strong>
-                            {group.messages.map((message) => (
+                            {group.messages.map((message) => {
+                              const derivedLinkEmbeds = getDerivedLinkEmbeds(message);
+                              return (
                               <div key={message.id} onContextMenu={(event) => openMessageContextMenu(event, {
                                 id: message.id,
                                 kind: "server",
@@ -5177,7 +5613,21 @@ export function App() {
                                     {message.linkEmbeds.map((embed, index) => (
                                       <a key={`${message.id}-link-${index}`} className="message-embed-card" href={embed.url} target="_blank" rel="noreferrer">
                                         <strong>{embed.title || "Link"}</strong>
+                                        {embed.description && <p>{embed.description}</p>}
                                         <p>{embed.url}</p>
+                                        {embed.action?.label && <small>{embed.action.label}</small>}
+                                      </a>
+                                    ))}
+                                  </div>
+                                )}
+                                {derivedLinkEmbeds.length > 0 && (
+                                  <div className="message-embeds">
+                                    {derivedLinkEmbeds.map((embed, index) => (
+                                      <a key={`${message.id}-derived-link-${index}`} className="message-embed-card" href={embed.url} target="_blank" rel="noreferrer">
+                                        <strong>{embed.title || "Link"}</strong>
+                                        {embed.description && <p>{embed.description}</p>}
+                                        <p>{embed.url}</p>
+                                        {embed.action?.label && <small>{embed.action.label}</small>}
                                       </a>
                                     ))}
                                   </div>
@@ -5201,7 +5651,7 @@ export function App() {
                                   </div>
                                 )}
                               </div>
-                            ))}
+                            )})}
                           </div>
                         </article>
                       </div>
@@ -5510,17 +5960,33 @@ export function App() {
                             </button>
                             <span className="msg-time">{formatMessageTime(group.firstMessageTime)}</span>
                           </strong>
-                          {group.messages.map((message) => (
-                            <p key={message.id} onContextMenu={(event) => openMessageContextMenu(event, {
+                          {group.messages.map((message) => {
+                            const derivedLinkEmbeds = getDerivedLinkEmbeds(message);
+                            return (
+                            <div key={message.id} onContextMenu={(event) => openMessageContextMenu(event, {
                               id: message.id,
                               kind: "dm",
                               author: message.author,
                               content: message.content,
                               mine: message.authorId === me?.id
                             })}>
-                              {activePinnedDmMessages.some((item) => item.id === message.id) ? "📌 " : ""}{renderContentWithMentions(message)}
-                            </p>
-                          ))}
+                              <p>
+                                {activePinnedDmMessages.some((item) => item.id === message.id) ? "📌 " : ""}{renderContentWithMentions(message)}
+                              </p>
+                              {derivedLinkEmbeds.length > 0 && (
+                                <div className="message-embeds">
+                                  {derivedLinkEmbeds.map((embed, index) => (
+                                    <a key={`${message.id}-dm-derived-link-${index}`} className="message-embed-card" href={embed.url} target="_blank" rel="noreferrer">
+                                      <strong>{embed.title || "Link"}</strong>
+                                      {embed.description && <p>{embed.description}</p>}
+                                      <p>{embed.url}</p>
+                                      {embed.action?.label && <small>{embed.action.label}</small>}
+                                    </a>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )})}
                         </div>
                       </article>
                     </div>
@@ -5901,6 +6367,37 @@ export function App() {
         </div>
       )}
 
+      {boostUpsell && (
+        <div className="settings-overlay" onClick={() => setBoostUpsell(null)}>
+          <div className="add-server-modal boost-upsell-modal" onClick={(event) => event.stopPropagation()}>
+            <h3>{boostUpsell.title}</h3>
+            <p className="hint">{boostUpsell.reason}</p>
+            <div className="row-actions boost-actions">
+              <button onClick={openBoostSettingsFromUpsell}>{boostUpsell.cta}</button>
+              <button className="ghost" onClick={() => setBoostUpsell(null)}>Maybe later</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {boostGiftPrompt && (
+        <div className="settings-overlay" onClick={() => setBoostGiftPrompt(null)}>
+          <div className="add-server-modal boost-upsell-modal" onClick={(event) => event.stopPropagation()}>
+            <h3>Redeem Boost Gift?</h3>
+            <p className="hint">
+              <strong>{boostGiftPrompt.from?.username || "Someone"}</strong> sent you {boostGiftPrompt.grantDays || 30} days of Boost.
+            </p>
+            <p className="hint">This gift expires on {boostGiftPrompt.expiresAt ? new Date(boostGiftPrompt.expiresAt).toLocaleDateString() : "soon"}.</p>
+            <div className="row-actions boost-actions">
+              <button onClick={() => redeemBoostGift(boostGiftPrompt.code)} disabled={boostGiftRedeeming}>
+                {boostGiftRedeeming ? "Redeeming…" : "Accept Gift"}
+              </button>
+              <button className="ghost" onClick={() => setBoostGiftPrompt(null)}>Not now</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {settingsOpen && (
         <div className="settings-overlay" onClick={() => setSettingsOpen(false)}>
           <div className="settings-panel" onClick={(event) => event.stopPropagation()}>
@@ -5908,7 +6405,7 @@ export function App() {
               <h3>Settings</h3>
               <button className={settingsTab === "profile" ? "active" : "ghost"} onClick={() => setSettingsTab("profile")}>Profile</button>
               <button className={settingsTab === "security" ? "active" : "ghost"} onClick={() => { setSettingsTab("security"); loadSessions(); }}>🔒 Security</button>
-              <button className={settingsTab === "billing" ? "active" : "ghost"} onClick={() => { setSettingsTab("billing"); loadBoostStatus(); }}>💳 Billing</button>
+              <button className={settingsTab === "billing" ? "active" : "ghost"} onClick={() => { setSettingsTab("billing"); loadBoostStatus(); loadSentBoostGifts(); }}>💳 Billing</button>
               <button className={settingsTab === "server" ? "active" : "ghost"} onClick={() => setSettingsTab("server")}>Server</button>
               <button className={settingsTab === "roles" ? "active" : "ghost"} onClick={() => setSettingsTab("roles")}>Roles</button>
               {canModerateMembers && (
@@ -6219,12 +6716,23 @@ export function App() {
                       placeholder="Custom code (Boost perk, optional)"
                       value={inviteCustomCode}
                       onChange={(event) => setInviteCustomCode(event.target.value)}
+                      onFocus={() => {
+                        if (boostStatus && !boostStatus.active) {
+                          showBoostUpsell("Custom invite codes require OpenCom Boost.");
+                        }
+                      }}
                     />
                     <label style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       <input
                         type="checkbox"
                         checked={invitePermanent}
-                        onChange={(event) => setInvitePermanent(event.target.checked)}
+                        onChange={(event) => {
+                          if (event.target.checked && boostStatus && !boostStatus.active) {
+                            showBoostUpsell("Permanent invite links require OpenCom Boost.");
+                            return;
+                          }
+                          setInvitePermanent(event.target.checked);
+                        }}
                       />
                       Permanent invite (Boost perk)
                     </label>
@@ -6361,21 +6869,96 @@ export function App() {
               )}
 
               {settingsTab === "billing" && (
-                <section className="card">
-                  <h4>OpenCom Boost</h4>
-                  <p className="hint">£10/month · 100MB upload limit · Unlimited servers. More Boost features are coming soon.</p>
+                <section className="card boost-card">
+                  <div className="boost-hero">
+                    <span className={`boost-pill ${boostStatus?.active ? "active" : ""}`}>
+                      {boostStatus?.active ? "BOOST ACTIVE" : "BOOST INACTIVE"}
+                    </span>
+                    <h4>OpenCom Boost</h4>
+                    <p className="hint">Unlock custom invite codes, permanent invite links, and higher limits.</p>
+                  </div>
+                  <div className="boost-grid">
+                    <div className="boost-price">
+                      <strong>£10</strong>
+                      <span>/ month</span>
+                    </div>
+                    <ul className="boost-perks">
+                      <li>Custom invite code slugs</li>
+                      <li>Permanent invite links</li>
+                      <li>100MB upload limit</li>
+                      <li>Unlimited servers</li>
+                    </ul>
+                  </div>
                   {boostLoading && <p className="hint">Loading billing status…</p>}
                   {boostStatus && (
-                    <>
-                      <p className="hint">Status: {boostStatus.active ? "Active" : "Inactive"}{boostStatus.currentPeriodEnd ? ` · Renews ${new Date(boostStatus.currentPeriodEnd).toLocaleDateString()}` : ""}</p>
-                      {!boostStatus.stripeConfigured && <p className="hint">Stripe is not configured on this server yet.</p>}
-                    </>
+                    <p className="hint">
+                      Status: {boostStatus.active ? "Active" : "Inactive"}
+                      {boostStatus.currentPeriodEnd ? ` · Renews ${new Date(boostStatus.currentPeriodEnd).toLocaleDateString()}` : ""}
+                    </p>
                   )}
-                  <div className="row-actions">
-                    <button onClick={startBoostCheckout}>Subscribe to OpenCom Boost</button>
-                    <button className="ghost" onClick={openBoostPortal}>Manage Subscription</button>
+                  {boostStatus && !boostStatus.stripeConfigured && (
+                    <p className="hint">Stripe is not configured on this server yet.</p>
+                  )}
+                  <div className="row-actions boost-actions">
+                    <button onClick={startBoostCheckout}>Get Boost</button>
+                    <button className="ghost" onClick={openBoostPortal}>Manage</button>
                     <button className="ghost" onClick={loadBoostStatus}>Refresh</button>
                   </div>
+
+                  <hr className="boost-divider" />
+                  <div className="boost-gift-head">
+                    <h5>Gift Boost (1 month)</h5>
+                    <p className="hint">Buy a one-month gift link and send it to a friend.</p>
+                  </div>
+                  <div className="row-actions boost-actions boost-gift-actions">
+                    <button onClick={startBoostGiftCheckout} disabled={boostGiftCheckoutBusy}>
+                      {boostGiftCheckoutBusy ? "Opening checkout…" : "Buy Gift (£10)"}
+                    </button>
+                    <button className="ghost" onClick={loadSentBoostGifts}>Refresh Gifts</button>
+                  </div>
+
+                  <div className="invite-link-row">
+                    <input
+                      className="invite-link-input"
+                      placeholder="Paste boost gift link or code"
+                      value={boostGiftCode}
+                      onChange={(event) => setBoostGiftCode(event.target.value)}
+                    />
+                    <button type="button" onClick={() => previewBoostGift(boostGiftCode)} disabled={boostGiftLoading}>
+                      {boostGiftLoading ? "Checking…" : "Preview"}
+                    </button>
+                  </div>
+
+                  {boostGiftPreview && (
+                    <div className="boost-gift-preview">
+                      <p className="hint">
+                        Gift from <strong>{boostGiftPreview.from?.username || "someone"}</strong> · {boostGiftPreview.grantDays} day(s)
+                      </p>
+                      <p className="hint">Expires {new Date(boostGiftPreview.expiresAt).toLocaleDateString()}</p>
+                      <button onClick={() => setBoostGiftPrompt(boostGiftPreview)}>Redeem Gift</button>
+                    </div>
+                  )}
+
+                  {boostGiftSent.length > 0 && (
+                    <div className="boost-gift-list">
+                      <p className="hint">Your recent gifts</p>
+                      {boostGiftSent.slice(0, 5).map((gift) => (
+                        <div key={gift.id} className="boost-gift-row">
+                          <span>{gift.status.toUpperCase()}</span>
+                          <input readOnly value={gift.joinUrl || buildBoostGiftUrl(gift.code)} />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const link = gift.joinUrl || buildBoostGiftUrl(gift.code);
+                              navigator.clipboard.writeText(link).then(() => setStatus("Gift link copied.")).catch(() => setStatus("Could not copy gift link."));
+                            }}
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </section>
               )}
 

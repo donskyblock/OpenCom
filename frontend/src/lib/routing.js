@@ -3,9 +3,14 @@ export const APP_ROUTE_LOGIN = "/login";
 export const APP_ROUTE_CLIENT = "/app";
 
 const INVITE_CODE_RE = /^[a-zA-Z0-9_-]{3,32}$/;
+const GIFT_CODE_RE = /^[a-zA-Z0-9_-]{8,96}$/;
 
 export function isInviteJoinPath(pathname = "") {
   return /^\/join\/[a-zA-Z0-9_-]{3,32}\/?$/.test(pathname || "");
+}
+
+export function isBoostGiftPath(pathname = "") {
+  return /^\/gift\/[a-zA-Z0-9_-]{8,96}\/?$/.test(pathname || "");
 }
 
 export function shouldSkipLandingPage() {
@@ -90,7 +95,36 @@ export function getInviteCodeFromCurrentLocation() {
   return parseInviteCodeFromInput(window.location.href || "");
 }
 
+export function parseBoostGiftCodeFromInput(value = "") {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return "";
+  if (GIFT_CODE_RE.test(trimmed)) return trimmed;
+  const directPathMatch = trimmed.match(/^\/gift\/([a-zA-Z0-9_-]{8,96})\/?$/);
+  if (directPathMatch?.[1]) return directPathMatch[1];
+
+  try {
+    const parsed = new URL(trimmed);
+    const pathMatch = (parsed.pathname || "").match(/^\/gift\/([a-zA-Z0-9_-]{8,96})\/?$/);
+    if (pathMatch?.[1]) return pathMatch[1];
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+export function getBoostGiftCodeFromCurrentLocation() {
+  if (typeof window === "undefined") return "";
+  const pathMatch = (window.location.pathname || "").match(/^\/gift\/([a-zA-Z0-9_-]{8,96})\/?$/);
+  if (pathMatch?.[1]) return pathMatch[1];
+  return parseBoostGiftCodeFromInput(window.location.href || "");
+}
+
 export function buildInviteJoinUrl(code) {
   if (typeof window === "undefined") return "";
   return `${window.location.origin}/join/${encodeURIComponent(code)}`;
+}
+
+export function buildBoostGiftUrl(code) {
+  if (typeof window === "undefined") return "";
+  return `${window.location.origin}/gift/${encodeURIComponent(code)}`;
 }
