@@ -3,6 +3,7 @@
     "name": "OpenCom",
     "slug": "opencom-android",
     "version": "0.1.0",
+    "newArchEnabled": false,
     "orientation": "portrait",
     "scheme": "opencom",
     "userInterfaceStyle": "light",

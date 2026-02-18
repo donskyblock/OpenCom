@@ -53,6 +53,12 @@ One command (install deps, prebuild, build release APK):
 npm run apk
 ```
 
+For troubleshooting startup crashes, build debug APK:
+
+```bash
+./scripts/build-android-apk.sh --debug
+```
+
 The script also auto-runs `sdkmanager --licenses` and installs required SDK packages (`platform-tools`, `platforms;android-35`, `build-tools;35.0.0`, `ndk;27.1.12297006`).
 
 Build and immediately serve over local HTTP relay:

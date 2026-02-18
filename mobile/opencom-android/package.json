@@ -10,14 +10,17 @@
     "prebuild": "expo prebuild",
     "ios": "expo run:ios",
     "apk": "./scripts/build-android-apk.sh",
-    "apk:relay": "./scripts/build-android-apk.sh --relay"
+    "apk:relay": "./scripts/build-android-apk.sh --relay",
+    "crashlog": "./scripts/capture-android-crash.sh"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",
+    "expo-asset": "~11.1.7",
     "expo": "^53.0.0",
     "expo-device": "~7.1.4",
     "expo-notifications": "~0.31.4",
     "expo-status-bar": "~2.2.3",
+    "expo-system-ui": "~5.0.8",
     "react": "19.0.0",
     "react-native": "0.79.2"
   },

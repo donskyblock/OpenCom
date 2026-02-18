@@ -17,7 +17,7 @@ import { StatusBar } from "expo-status-bar";
 import { createApiClient } from "./src/api";
 import { resolveCoreApiUrl } from "./src/config";
 import { parseDeepLink } from "./src/deeplinks";
-import { registerForPushNotificationsAsync } from "./src/notifications";
+import { initNotificationsSafe, registerForPushNotificationsAsync } from "./src/notifications";
 import { clearTokens, loadPushToken, loadTokens, savePushToken, saveTokens } from "./src/storage";
 import { colors } from "./src/theme";
 import type { AuthTokens, Channel, ChannelMessage, CoreServer, DeepLinkTarget, Guild } from "./src/types";
@@ -47,6 +47,10 @@ export default function App() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [username, setUsername] = useState("");
+
+  useEffect(() => {
+    initNotificationsSafe();
+  }, []);
 
   const setPersistedTokens = useCallback(async (next: AuthTokens | null) => {
     tokensRef.current = next;
