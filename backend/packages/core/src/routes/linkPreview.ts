@@ -88,8 +88,27 @@ export async function linkPreviewRoutes(app: FastifyInstance) {
 
     const inviteCode = inviteCodeFromUrl(target);
     if (inviteCode) {
-      const rows = await q<{ code: string; server_id: string; uses: number; max_uses: number | null; expires_at: string | null; server_name: string }>(
-        `SELECT i.code,i.server_id,i.uses,i.max_uses,i.expires_at,s.name AS server_name
+      const rows = await q<{
+        code: string;
+        server_id: string;
+        uses: number;
+        max_uses: number | null;
+        expires_at: string | null;
+        server_name: string;
+        server_logo_url: string | null;
+        server_created_at: string;
+        member_count: number;
+        online_count: number;
+      }>(
+        `SELECT i.code,i.server_id,i.uses,i.max_uses,i.expires_at,
+                s.name AS server_name,
+                s.logo_url AS server_logo_url,
+                s.created_at AS server_created_at,
+                (SELECT COUNT(*) FROM memberships m WHERE m.server_id=s.id) AS member_count,
+                (SELECT COUNT(*)
+                 FROM memberships m2
+                 JOIN presence p ON p.user_id=m2.user_id
+                 WHERE m2.server_id=s.id AND COALESCE(p.status,'offline') <> 'offline') AS online_count
          FROM invites i
          JOIN servers s ON s.id=i.server_id
          WHERE i.code=:code
@@ -103,9 +122,19 @@ export async function linkPreviewRoutes(app: FastifyInstance) {
         title: `Join ${inv.server_name} on OpenCom`,
         description: `Invite code ${inv.code}${inv.max_uses ? ` · ${inv.uses}/${inv.max_uses} uses` : ""}`,
         siteName: "OpenCom",
-        imageUrl: "",
+        imageUrl: inv.server_logo_url || "",
         action: { label: "Join Server", url: normalizeUrl(url) },
-        hasMeta: true
+        hasMeta: true,
+        kind: "opencom_invite",
+        invite: {
+          code: inv.code,
+          serverId: inv.server_id,
+          serverName: inv.server_name,
+          serverLogoUrl: inv.server_logo_url || "",
+          memberCount: Number(inv.member_count || 0),
+          onlineCount: Number(inv.online_count || 0),
+          serverCreatedAt: inv.server_created_at ? new Date(inv.server_created_at).toISOString() : null
+        }
       });
     }
 
@@ -125,7 +154,8 @@ export async function linkPreviewRoutes(app: FastifyInstance) {
         siteName: "OpenCom",
         imageUrl: "",
         action: active ? { label: "Redeem Gift", url: normalizeUrl(url) } : null,
-        hasMeta: true
+        hasMeta: true,
+        kind: "opencom_gift"
       });
     }
 

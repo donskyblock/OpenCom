@@ -1293,6 +1293,109 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
   cursor: pointer;
   font: inherit;
 }
+.message-invite-embed {
+  border: 1px solid rgba(125, 164, 255, 0.28);
+  background: linear-gradient(180deg, rgba(29, 31, 40, 0.94), rgba(20, 24, 36, 0.96));
+  border-radius: calc(var(--radius) * 0.65);
+  overflow: hidden;
+}
+.message-invite-hero {
+  height: 72px;
+  background:
+    radial-gradient(circle at 20% 10%, rgba(190, 200, 255, 0.24), transparent 46%),
+    linear-gradient(180deg, rgba(18, 22, 32, 0.7), rgba(18, 22, 32, 0.98));
+  background-size: cover;
+  background-position: center;
+}
+.message-invite-body {
+  padding: 0.62em;
+}
+.message-invite-header {
+  display: flex;
+  gap: 0.58em;
+  align-items: center;
+}
+.message-invite-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  flex: 0 0 48px;
+  background: #0c111f;
+  border: 1px solid rgba(151, 169, 255, 0.35);
+  display: grid;
+  place-items: center;
+  color: #d8e5ff;
+  font-size: 0.84rem;
+  font-weight: 700;
+  overflow: hidden;
+}
+.message-invite-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.message-invite-title-wrap {
+  min-width: 0;
+}
+.message-invite-title-wrap strong {
+  display: block;
+  color: #f1f6ff;
+  font-size: 0.98em;
+  line-height: 1.15;
+}
+.message-invite-stats,
+.message-invite-established {
+  margin: 0.16em 0 0;
+  color: #c3cfec;
+  font-size: 0.82em;
+}
+.message-invite-stats .dot {
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  border-radius: 50%;
+  margin: 0 0.28em 0 0.58em;
+  vertical-align: middle;
+}
+.message-invite-stats .dot:first-child {
+  margin-left: 0;
+}
+.message-invite-stats .dot.online {
+  background: #2ad07f;
+}
+.message-invite-stats .dot.members {
+  background: #8d96aa;
+}
+.message-invite-established {
+  color: #9aa8c7;
+}
+.message-invite-cta {
+  width: 100%;
+  margin-top: 0.62em;
+  border: 1px solid rgba(25, 173, 93, 0.68);
+  background: linear-gradient(180deg, #1fb767, #189a56);
+  color: #effff7;
+  border-radius: 0.5em;
+  font-weight: 700;
+  padding: 0.45em 0.55em;
+  cursor: pointer;
+}
+.message-invite-cta:hover {
+  filter: brightness(1.05);
+}
+.message-invite-link {
+  display: block;
+  margin-top: 0.44em;
+  font-size: 0.76em;
+  color: #9ab8ff;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.message-invite-link:hover {
+  text-decoration: underline;
+}
 
 .empty { text-align: center; color: var(--text-dim); margin-top: 2vw;}
 

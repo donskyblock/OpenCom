@@ -72,6 +72,8 @@ const CLIENT_EXTENSIONS_DEV_MODE_KEY = "opencom_client_extensions_dev_mode";
 const CLIENT_EXTENSIONS_DEV_URLS_KEY = "opencom_client_extensions_dev_urls";
 const ACCESS_TOKEN_KEY = "opencom_access_token";
 const REFRESH_TOKEN_KEY = "opencom_refresh_token";
+const PENDING_INVITE_CODE_KEY = "opencom_pending_invite_code";
+const PENDING_INVITE_AUTO_JOIN_KEY = "opencom_pending_invite_auto_join";
 
 const BUILTIN_EMOTES = {
   smile: "😄",
@@ -653,7 +655,20 @@ export function App() {
   const [newServerEmoteName, setNewServerEmoteName] = useState("");
   const [newServerEmoteUrl, setNewServerEmoteUrl] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState([]);
-  const [invitePendingCode, setInvitePendingCode] = useState("");
+  const [invitePendingCode, setInvitePendingCode] = useState(() => {
+    try {
+      return sessionStorage.getItem(PENDING_INVITE_CODE_KEY) || "";
+    } catch {
+      return "";
+    }
+  });
+  const [invitePendingAutoJoin, setInvitePendingAutoJoin] = useState(() => {
+    try {
+      return sessionStorage.getItem(PENDING_INVITE_AUTO_JOIN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
 
   const [friends, setFriends] = useState([]);
   const [friendQuery, setFriendQuery] = useState("");
@@ -882,6 +897,7 @@ export function App() {
   const isAtBottomRef = useRef(true);
   const lastDmMessageCountRef = useRef(0);
   const linkPreviewFetchInFlightRef = useRef(new Set());
+  const autoJoinInviteAttemptRef = useRef("");
   const previousDmIdRef = useRef("");
   const activeChannelIdRef = useRef("");
   const activeGuildIdRef = useRef("");
@@ -961,6 +977,20 @@ export function App() {
   useEffect(() => {
     localStorage.setItem(CLIENT_EXTENSIONS_ENABLED_KEY, JSON.stringify(enabledClientExtensions));
   }, [enabledClientExtensions]);
+
+  useEffect(() => {
+    try {
+      if (invitePendingCode) sessionStorage.setItem(PENDING_INVITE_CODE_KEY, invitePendingCode);
+      else sessionStorage.removeItem(PENDING_INVITE_CODE_KEY);
+    } catch {}
+  }, [invitePendingCode]);
+
+  useEffect(() => {
+    try {
+      if (invitePendingAutoJoin) sessionStorage.setItem(PENDING_INVITE_AUTO_JOIN_KEY, "1");
+      else sessionStorage.removeItem(PENDING_INVITE_AUTO_JOIN_KEY);
+    } catch {}
+  }, [invitePendingAutoJoin]);
 
   useEffect(() => {
     localStorage.setItem(CLIENT_EXTENSIONS_DEV_MODE_KEY, clientExtensionDevMode ? "1" : "0");
@@ -2280,18 +2310,43 @@ export function App() {
       .catch(() => {});
   }, [accessToken, guildState?.members, friends]);
 
-  // Handle invite link: /join/:code (plus legacy ?join=CODE) — pre-fill join form and require explicit accept.
+  // Handle invite links from /join/:code (plus legacy ?join=CODE).
+  // External links auto-join once after auth; manual invite previews still require explicit accept.
   useEffect(() => {
-    const code = getInviteCodeFromCurrentLocation();
-    if (!code) return;
-    setJoinInviteCode(code);
-    setInvitePendingCode(code);
-    setAddServerModalOpen(true);
-    setAddServerTab("join");
-    previewInvite(code);
-    const nextRoute = accessToken ? APP_ROUTE_CLIENT : APP_ROUTE_LOGIN;
-    navigateAppRoute(nextRoute, { replace: true });
-  }, [accessToken]);
+    const codeFromLocation = getInviteCodeFromCurrentLocation();
+    const pendingCode = parseInviteCodeFromInput(codeFromLocation || invitePendingCode || "");
+    if (!pendingCode) return;
+
+    if (joinInviteCode !== pendingCode) setJoinInviteCode(pendingCode);
+    if (invitePendingCode !== pendingCode) setInvitePendingCode(pendingCode);
+    if (codeFromLocation && !invitePendingAutoJoin) setInvitePendingAutoJoin(true);
+
+    if (!accessToken) {
+      if (codeFromLocation) {
+        setStatus("Log in to join this server invite.");
+        navigateAppRoute(APP_ROUTE_LOGIN, { replace: true });
+      }
+      return;
+    }
+
+    if (!invitePendingAutoJoin) return;
+    if (autoJoinInviteAttemptRef.current === pendingCode) return;
+
+    autoJoinInviteAttemptRef.current = pendingCode;
+    setInvitePendingAutoJoin(false);
+
+    joinInvite(pendingCode)
+      .catch(() => {})
+      .finally(() => {
+        if (autoJoinInviteAttemptRef.current === pendingCode) {
+          autoJoinInviteAttemptRef.current = "";
+        }
+      });
+
+    if (routePath !== APP_ROUTE_CLIENT) {
+      navigateAppRoute(APP_ROUTE_CLIENT, { replace: true });
+    }
+  }, [accessToken, invitePendingCode, invitePendingAutoJoin, joinInviteCode, routePath]);
 
   // Handle boost gift link: /gift/:code — prompt preview and require explicit redeem confirmation.
   useEffect(() => {
@@ -3795,6 +3850,7 @@ export function App() {
       setJoinInviteCode("");
       setInvitePreview(null);
       setInvitePendingCode("");
+      setInvitePendingAutoJoin(false);
       setStatus("Joined server from invite.");
 
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -5146,10 +5202,77 @@ export function App() {
         description: preview.description || "",
         imageUrl: preview.imageUrl || "",
         siteName: preview.siteName || "",
-        action: preview.action || null
+        action: preview.action || null,
+        kind: preview.kind || "",
+        invite: preview.invite || null
       });
     }
     return out;
+  }
+
+  function formatInviteEstablishedDate(value) {
+    if (!value) return "";
+    try {
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return "";
+      return parsed.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+    } catch {
+      return "";
+    }
+  }
+
+  function renderMessageLinkEmbedCard(embed, key) {
+    if (embed?.kind === "opencom_invite" && embed?.invite?.code) {
+      const invite = embed.invite;
+      const joinUrl = embed.url || buildInviteJoinUrl(invite.code);
+      const onlineCount = Number(invite.onlineCount || 0);
+      const memberCount = Number(invite.memberCount || 0);
+      const established = formatInviteEstablishedDate(invite.serverCreatedAt);
+      const serverName = invite.serverName || "Server";
+      const iconSource = profileImageUrl(invite.serverLogoUrl || "");
+
+      return (
+        <div key={key} className="message-invite-embed">
+          <div className="message-invite-hero" style={iconSource ? { backgroundImage: `linear-gradient(180deg, rgba(12, 16, 27, 0.3), rgba(12, 16, 27, 0.95)), url(${iconSource})` } : undefined} />
+          <div className="message-invite-body">
+            <div className="message-invite-header">
+              <div className="message-invite-icon">
+                {iconSource ? <img src={iconSource} alt={serverName} /> : <span>{getInitials(serverName)}</span>}
+              </div>
+              <div className="message-invite-title-wrap">
+                <strong>{serverName}</strong>
+                <p className="message-invite-stats">
+                  <span className="dot online" /> {onlineCount} Online
+                  <span className="dot members" /> {memberCount} Members
+                </p>
+                {established && <p className="message-invite-established">Est. {established}</p>}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="message-invite-cta"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                joinInvite(invite.code);
+              }}
+            >
+              Go to Server
+            </button>
+            <a className="message-invite-link" href={joinUrl} target="_blank" rel="noreferrer">{joinUrl}</a>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <a key={key} className="message-embed-card" href={embed.url} target="_blank" rel="noreferrer">
+        <strong>{embed.title || "Link"}</strong>
+        {embed.description && <p>{embed.description}</p>}
+        <p>{embed.url}</p>
+        {embed.action?.label && <small>{embed.action.label}</small>}
+      </a>
+    );
   }
 
   function formatAccountCreated(createdAt) {
@@ -5610,26 +5733,12 @@ export function App() {
                                 )}
                                 {Array.isArray(message?.linkEmbeds) && message.linkEmbeds.length > 0 && (
                                   <div className="message-embeds">
-                                    {message.linkEmbeds.map((embed, index) => (
-                                      <a key={`${message.id}-link-${index}`} className="message-embed-card" href={embed.url} target="_blank" rel="noreferrer">
-                                        <strong>{embed.title || "Link"}</strong>
-                                        {embed.description && <p>{embed.description}</p>}
-                                        <p>{embed.url}</p>
-                                        {embed.action?.label && <small>{embed.action.label}</small>}
-                                      </a>
-                                    ))}
+                                    {message.linkEmbeds.map((embed, index) => renderMessageLinkEmbedCard(embed, `${message.id}-link-${index}`))}
                                   </div>
                                 )}
                                 {derivedLinkEmbeds.length > 0 && (
                                   <div className="message-embeds">
-                                    {derivedLinkEmbeds.map((embed, index) => (
-                                      <a key={`${message.id}-derived-link-${index}`} className="message-embed-card" href={embed.url} target="_blank" rel="noreferrer">
-                                        <strong>{embed.title || "Link"}</strong>
-                                        {embed.description && <p>{embed.description}</p>}
-                                        <p>{embed.url}</p>
-                                        {embed.action?.label && <small>{embed.action.label}</small>}
-                                      </a>
-                                    ))}
+                                    {derivedLinkEmbeds.map((embed, index) => renderMessageLinkEmbedCard(embed, `${message.id}-derived-link-${index}`))}
                                   </div>
                                 )}
                                 {Array.isArray(message?.attachments) && message.attachments.length > 0 && (
@@ -5975,14 +6084,7 @@ export function App() {
                               </p>
                               {derivedLinkEmbeds.length > 0 && (
                                 <div className="message-embeds">
-                                  {derivedLinkEmbeds.map((embed, index) => (
-                                    <a key={`${message.id}-dm-derived-link-${index}`} className="message-embed-card" href={embed.url} target="_blank" rel="noreferrer">
-                                      <strong>{embed.title || "Link"}</strong>
-                                      {embed.description && <p>{embed.description}</p>}
-                                      <p>{embed.url}</p>
-                                      {embed.action?.label && <small>{embed.action.label}</small>}
-                                    </a>
-                                  ))}
+                                  {derivedLinkEmbeds.map((embed, index) => renderMessageLinkEmbedCard(embed, `${message.id}-dm-derived-link-${index}`))}
                                 </div>
                               )}
                             </div>
