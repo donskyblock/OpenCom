@@ -2369,6 +2369,11 @@ export function App() {
     const candidateUrls = new Set();
     for (const message of visibleMessages) {
       for (const url of extractHttpUrls(message?.content || "")) candidateUrls.add(url);
+      if (Array.isArray(message?.linkEmbeds)) {
+        for (const embed of message.linkEmbeds) {
+          if (embed?.url) candidateUrls.add(embed.url);
+        }
+      }
     }
 
     for (const url of candidateUrls) {
@@ -5184,6 +5189,17 @@ export function App() {
     }
   }
 
+  function getLinkPreviewForUrl(value) {
+    const raw = String(value || "");
+    if (!raw) return null;
+    if (linkPreviewByUrl[raw] !== undefined) return linkPreviewByUrl[raw];
+    const normalized = normalizedLinkKey(raw);
+    for (const [candidate, preview] of Object.entries(linkPreviewByUrl)) {
+      if (normalizedLinkKey(candidate) === normalized) return preview;
+    }
+    return null;
+  }
+
   function getDerivedLinkEmbeds(message) {
     const urls = extractHttpUrls(message?.content || "");
     if (!urls.length) return [];
@@ -5193,7 +5209,7 @@ export function App() {
     for (const rawUrl of urls) {
       const key = normalizedLinkKey(rawUrl);
       if (!key || existing.has(key)) continue;
-      const preview = linkPreviewByUrl[rawUrl];
+      const preview = getLinkPreviewForUrl(rawUrl);
       if (!preview) continue;
       if (!preview.hasMeta && !preview.action) continue;
       out.push({
@@ -5222,9 +5238,19 @@ export function App() {
   }
 
   function renderMessageLinkEmbedCard(embed, key) {
-    if (embed?.kind === "opencom_invite" && embed?.invite?.code) {
-      const invite = embed.invite;
-      const joinUrl = embed.url || buildInviteJoinUrl(invite.code);
+    const preview = getLinkPreviewForUrl(embed?.url);
+    const inviteEmbed = embed?.kind === "opencom_invite" && embed?.invite?.code
+      ? embed
+      : (preview?.kind === "opencom_invite" && preview?.invite?.code
+        ? {
+            url: preview.url || embed?.url || "",
+            invite: preview.invite
+          }
+        : null);
+
+    if (inviteEmbed?.invite?.code) {
+      const invite = inviteEmbed.invite;
+      const joinUrl = inviteEmbed.url || buildInviteJoinUrl(invite.code);
       const onlineCount = Number(invite.onlineCount || 0);
       const memberCount = Number(invite.memberCount || 0);
       const established = formatInviteEstablishedDate(invite.serverCreatedAt);
