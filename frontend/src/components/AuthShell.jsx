@@ -11,7 +11,8 @@ export function AuthShell({
   status,
   onSubmit,
   onResendVerification,
-  onBackHome
+  onBackHome,
+  onOpenTerms
 }) {
   return (
     <div className="auth-shell">
@@ -36,6 +37,9 @@ export function AuthShell({
         {pendingVerificationEmail && authMode === "login" && (
           <p className="sub">Pending verification: {pendingVerificationEmail}</p>
         )}
+        <button type="button" className="link-btn" onClick={onOpenTerms}>
+          Terms of Service
+        </button>
         <p className="status">{status}</p>
       </div>
     </div>

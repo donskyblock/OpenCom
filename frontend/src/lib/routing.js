@@ -1,6 +1,7 @@
 export const APP_ROUTE_HOME = "/";
 export const APP_ROUTE_LOGIN = "/login";
 export const APP_ROUTE_CLIENT = "/app";
+export const APP_ROUTE_TERMS = "/terms";
 
 const INVITE_CODE_RE = /^[a-zA-Z0-9_-]{3,32}$/;
 const GIFT_CODE_RE = /^[a-zA-Z0-9_-]{8,96}$/;
@@ -23,6 +24,7 @@ export function normalizeAppPath(pathname = "") {
   const normalized = pathname.replace(/\/+$/, "") || APP_ROUTE_HOME;
   if (normalized === APP_ROUTE_LOGIN) return APP_ROUTE_LOGIN;
   if (normalized === APP_ROUTE_CLIENT) return APP_ROUTE_CLIENT;
+  if (normalized === APP_ROUTE_TERMS) return APP_ROUTE_TERMS;
   return APP_ROUTE_HOME;
 }
 

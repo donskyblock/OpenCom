@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   /* Colors */
   --bg-app: #0a1120;
   --bg-rail: #0c162a;
@@ -73,6 +74,12 @@ input:focus, select:focus, textarea:focus {
   border-color: color-mix(in srgb, var(--brand) 66%, #fff 34%);
   box-shadow: 0 0 0 calc(var(--space-xs) + 1px) rgba(114, 133, 255, 0.22), inset 0 0 0 1px rgba(114, 133, 255, 0.1);
   background: linear-gradient(135deg, rgba(18, 30, 55, 0.98), rgba(15, 27, 50, 1));
+}
+
+select option,
+select optgroup {
+  color: var(--text-main);
+  background: #0f1b32;
 }
 
 button {
@@ -347,6 +354,71 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
   margin: 0;
   font-size: 0.9rem;
   color: var(--text-dim);
+}
+
+.legal-page {
+  min-height: 100vh;
+  background: radial-gradient(ellipse 120% 80% at 50% -20%, rgba(45, 70, 130, 0.35) 0%, transparent 50%), radial-gradient(circle at 80% 80%, rgba(30, 50, 100, 0.2) 0%, transparent 40%), radial-gradient(circle at 15% 10%, #1d3058, #121d36 46%, #0a1120);
+  color: var(--text-main);
+  display: flex;
+  flex-direction: column;
+}
+
+.legal-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.legal-main {
+  width: min(94vw, 900px);
+  margin: 0 auto;
+  padding: var(--space-lg);
+  display: grid;
+  gap: var(--space-md);
+}
+
+.legal-card {
+  padding: var(--space-lg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border-subtle);
+  background: rgba(17, 30, 53, 0.88);
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.legal-card h1,
+.legal-card h2 {
+  margin: 0;
+}
+
+.legal-card h2 {
+  font-size: 1.1rem;
+  margin-top: var(--space-sm);
+}
+
+.legal-card p,
+.legal-card li {
+  color: var(--text-soft);
+  line-height: 1.55;
+}
+
+.legal-meta {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.9em;
+}
+
+.legal-card ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.legal-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .opencom-shell {
@@ -779,6 +851,7 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
   border: 1px solid var(--border-subtle);
   background: #060b15;
   object-fit: cover;
+  cursor: pointer;
 }
 .voice-screen-tile span {
   font-size: 0.78em;
@@ -1856,6 +1929,28 @@ textarea { resize: vertical; min-height: clamp(80px, 13vw, 120px); font-size: 1e
 
 .add-server-content {
   min-height: 120px;
+}
+
+.opencom-dialog-modal {
+  width: min(92vw, 520px);
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.opencom-dialog-modal h3 {
+  margin: 0;
+}
+
+.opencom-dialog-message {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.opencom-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-xs);
 }
 
 .settings-panel {
