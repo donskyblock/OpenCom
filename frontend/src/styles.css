@@ -751,6 +751,30 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 .voice-top span { color: var(--green); font-size: 0.85em; }
 .voice-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-xs);}
 .voice-actions button { width: 100%; min-width: 0; }
+.voice-screen-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-xs);
+}
+.voice-screen-tile {
+  display: grid;
+  gap: 4px;
+}
+.voice-screen-tile video {
+  width: 100%;
+  max-height: 160px;
+  border-radius: calc(var(--radius) * 0.6);
+  border: 1px solid var(--border-subtle);
+  background: #060b15;
+  object-fit: cover;
+}
+.voice-screen-tile span {
+  font-size: 0.78em;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .user-row { 
   display: grid; 
   grid-template-columns: auto 1fr; 
@@ -1196,6 +1220,12 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 }
 .message-embed-card small {
   color: var(--text-dim);
+}
+.message-embed-card-btn {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
 }
 
 .empty { text-align: center; color: var(--text-dim); margin-top: 2vw;}

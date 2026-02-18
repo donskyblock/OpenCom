@@ -119,24 +119,20 @@ function makeEntryFile(manifest: ServerExtensionManifest): string {
 }
 
 function withJsonHeaders(init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   return {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init.headers || {})
-    }
+    headers
   };
 }
 
 function buildClient(baseUrl: string, authToken?: string): OpenComRequestClient {
   async function req(pathValue: string, init: RequestInit = {}) {
-    const response = await fetch(`${baseUrl.replace(/\/$/, "")}${pathValue}`, {
-      ...withJsonHeaders(init),
-      headers: {
-        Authorization: authToken ? `Bearer ${authToken}` : undefined,
-        ...(withJsonHeaders(init).headers || {})
-      }
-    });
+    const requestInit = withJsonHeaders(init);
+    const headers = new Headers(requestInit.headers);
+    if (authToken) headers.set("Authorization", `Bearer ${authToken}`);
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}${pathValue}`, { ...requestInit, headers });
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");

@@ -40,6 +40,8 @@ function profileImageUrl(url) {
   if (!url || typeof url !== "string") return null;
   if (url.startsWith("data:")) return url;
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  if (url.startsWith("users/")) return `${CORE_API.replace(/\/$/, "")}/v1/profile-images/${url}`;
+  if (url.startsWith("/users/")) return `${CORE_API.replace(/\/$/, "")}/v1/profile-images${url}`;
   if (url.startsWith("/")) return `${CORE_API.replace(/\/$/, "")}${url}`;
   return url;
 }
@@ -566,6 +568,42 @@ function playNotificationBeep(mute = false) {
   } catch (_) {}
 }
 
+function extensionForMimeType(mimeType = "") {
+  if (!mimeType) return ".bin";
+  if (mimeType === "image/png") return ".png";
+  if (mimeType === "image/jpeg") return ".jpg";
+  if (mimeType === "image/gif") return ".gif";
+  if (mimeType === "image/webp") return ".webp";
+  if (mimeType === "image/svg+xml") return ".svg";
+  if (mimeType === "image/bmp") return ".bmp";
+  if (mimeType === "image/heic") return ".heic";
+  if (mimeType === "video/mp4") return ".mp4";
+  if (mimeType === "video/webm") return ".webm";
+  if (mimeType === "application/pdf") return ".pdf";
+  return ".bin";
+}
+
+function normalizeAttachmentFile(file, prefix = "upload") {
+  if (!file) return null;
+  if (file.name && file.name.trim()) return file;
+  const ext = extensionForMimeType(file.type || "");
+  const fallbackName = `${prefix}-${Date.now()}${ext}`;
+  try {
+    return new File([file], fallbackName, { type: file.type || "application/octet-stream" });
+  } catch {
+    return file;
+  }
+}
+
+function normalizeImageUrlInput(value = "") {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed) || /^data:image\//i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith("/")) return trimmed;
+  if (trimmed.startsWith("users/")) return `/v1/profile-images/${trimmed}`;
+  return trimmed;
+}
+
 export function App() {
   const voiceDebugEnabled = isVoiceDebugEnabled();
   const voiceDebug = (message, context = {}) => {
@@ -714,6 +752,7 @@ export function App() {
   const [dmNotification, setDmNotification] = useState(null);
   const [voiceStatesByGuild, setVoiceStatesByGuild] = useState({});
   const [voiceSpeakingByGuild, setVoiceSpeakingByGuild] = useState({});
+  const [remoteScreenSharesByProducerId, setRemoteScreenSharesByProducerId] = useState({});
   const [serverVoiceGatewayPrefs, setServerVoiceGatewayPrefs] = useState(getStoredJson(SERVER_VOICE_GATEWAY_PREFS_KEY, {}));
   const [nodeGatewayUnavailableByServer, setNodeGatewayUnavailableByServer] = useState({});
   const [clientExtensionCatalog, setClientExtensionCatalog] = useState([]);
@@ -742,7 +781,25 @@ export function App() {
       getSelfUserId: () => selfUserIdRef.current,
       sendDispatch: (type, data) => sendNodeVoiceDispatch(type, data),
       waitForEvent: waitForVoiceEvent,
-      debugLog: voiceDebug
+      onRemoteVideoAdded: ({ producerId, userId, stream }) => {
+        if (!producerId || !stream) return;
+        setRemoteScreenSharesByProducerId((prev) => ({
+          ...prev,
+          [producerId]: { producerId, userId: userId || "", stream }
+        }));
+      },
+      onRemoteVideoRemoved: ({ producerId }) => {
+        if (!producerId) return;
+        setRemoteScreenSharesByProducerId((prev) => {
+          if (!prev[producerId]) return prev;
+          const next = { ...prev };
+          delete next[producerId];
+          return next;
+        });
+      },
+      onScreenShareStateChange: (nextState) => {
+        setIsScreenSharing(!!nextState);
+      }
     });
   }
   const selfStatusRef = useRef(selfStatus);
@@ -1262,6 +1319,10 @@ export function App() {
     }
     return map;
   }, [mergedVoiceStates, memberNameById, resolvedMemberList]);
+  const remoteScreenShares = useMemo(
+    () => Object.values(remoteScreenSharesByProducerId),
+    [remoteScreenSharesByProducerId]
+  );
 
   const groupedChannelSections = useMemo(() => {
     const categories = categoryChannels.map((category) => ({
@@ -2549,26 +2610,88 @@ export function App() {
   }
 
   async function uploadAttachment(file) {
-    if (!activeServer || !activeGuildId || !activeChannelId || !file) return;
+    if (!activeServer || !activeGuildId || !activeChannelId || !file) return null;
+    const nextFile = normalizeAttachmentFile(file, "attachment") || file;
+    const form = new FormData();
+    form.append("guildId", activeGuildId);
+    form.append("channelId", activeChannelId);
+    form.append("file", nextFile, nextFile.name || "upload.bin");
+    const response = await fetch(`${activeServer.baseUrl}/v1/attachments/upload`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${activeServer.membershipToken}` },
+      body: form
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP_${response.status}`);
+    }
+    return response.json();
+  }
+
+  async function uploadAttachments(files, source = "files") {
+    const selected = Array.from(files || []).filter(Boolean);
+    if (!selected.length) return;
+
+    const availableSlots = Math.max(0, 10 - pendingAttachments.length);
+    if (!availableSlots) {
+      setStatus("You can attach up to 10 files per message.");
+      return;
+    }
+
+    const queue = selected.slice(0, availableSlots);
+    let uploaded = 0;
+    let failed = 0;
+
+    for (const file of queue) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const data = await uploadAttachment(file);
+        if (data) {
+          setPendingAttachments((current) => [...current, data]);
+          uploaded += 1;
+        }
+      } catch (error) {
+        failed += 1;
+        console.warn("Attachment upload failed", error);
+      }
+    }
+
+    if (uploaded > 0 && failed === 0) {
+      setStatus(`Attached ${uploaded} file${uploaded === 1 ? "" : "s"} from ${source}.`);
+      return;
+    }
+    if (uploaded > 0) {
+      setStatus(`Attached ${uploaded} file${uploaded === 1 ? "" : "s"} from ${source}; ${failed} failed.`);
+      return;
+    }
+    setStatus(`Attachment upload failed from ${source}.`);
+  }
+
+  async function openMessageAttachment(attachment) {
+    if (!attachment?.url || !activeServer?.baseUrl || !activeServer?.membershipToken) return;
     try {
-      const form = new FormData();
-      form.append("guildId", activeGuildId);
-      form.append("channelId", activeChannelId);
-      form.append("file", file, file.name || "upload.bin");
-      const response = await fetch(`${activeServer.baseUrl}/v1/attachments/upload`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${activeServer.membershipToken}` },
-        body: form
+      const url = attachment.url.startsWith("http")
+        ? attachment.url
+        : `${activeServer.baseUrl}${attachment.url}`;
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${activeServer.membershipToken}` }
       });
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
         throw new Error(err.error || `HTTP_${response.status}`);
       }
-      const data = await response.json();
-      setPendingAttachments((current) => [...current, data]);
-      setStatus(`Attached ${data.fileName || "file"} (${data.tier || "default"} tier).`);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const popup = window.open(blobUrl, "_blank", "noopener,noreferrer");
+      if (!popup) {
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = attachment.fileName || "attachment";
+        a.click();
+      }
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
     } catch (error) {
-      setStatus(`Attachment upload failed: ${error.message}`);
+      setStatus(`Attachment open failed: ${error.message || "UNKNOWN_ERROR"}`);
     }
   }
 
@@ -3033,8 +3156,8 @@ export function App() {
         body: JSON.stringify({
           displayName: profileForm.displayName || null,
           bio: profileForm.bio || null,
-          pfpUrl: profileForm.pfpUrl || null,
-          bannerUrl: profileForm.bannerUrl || null
+          pfpUrl: normalizeImageUrlInput(profileForm.pfpUrl) || null,
+          bannerUrl: normalizeImageUrlInput(profileForm.bannerUrl) || null
         })
       });
       if (me?.id) {
@@ -3052,7 +3175,9 @@ export function App() {
       setStatus("Profile updated.");
     } catch (error) {
       const msg = error?.message || "";
-      if (msg.includes("INVALID_IMAGE")) setStatus("Invalid image. Use PNG, JPG, GIF, or WebP under 4MB.");
+      if (msg.includes("INVALID_IMAGE") || msg.includes("Invalid image format")) {
+        setStatus("Invalid image URL. Use uploaded image paths (/v1/profile-images/...), users/... paths, or valid http(s) image URLs.");
+      }
       else setStatus(`Profile update failed: ${msg}`);
     }
   }
@@ -3110,8 +3235,8 @@ export function App() {
         headers: { Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({
           name: serverProfileForm.name?.trim() || undefined,
-          logoUrl: serverProfileForm.logoUrl?.trim() ? serverProfileForm.logoUrl.trim() : null,
-          bannerUrl: serverProfileForm.bannerUrl?.trim() ? serverProfileForm.bannerUrl.trim() : null
+          logoUrl: normalizeImageUrlInput(serverProfileForm.logoUrl || "") || null,
+          bannerUrl: normalizeImageUrlInput(serverProfileForm.bannerUrl || "") || null
         })
       });
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -3121,8 +3246,8 @@ export function App() {
     } catch (error) {
       const msg = error?.message || "";
       if (msg.includes("LOGO_REQUIRED")) setStatus("Server logo is required.");
-      else if (msg.includes("INVALID_LOGO_URL")) setStatus("Invalid server logo URL. Use an uploaded image or an image URL ending in .png/.jpg/.jpeg/.gif/.webp/.svg/.bmp.");
-      else if (msg.includes("INVALID_BANNER_URL")) setStatus("Invalid server banner URL. Use an uploaded image or an image URL ending in .png/.jpg/.jpeg/.gif/.webp/.svg/.bmp.");
+      else if (msg.includes("INVALID_LOGO_URL")) setStatus("Invalid server logo URL. Use uploaded paths (/v1/profile-images/... or users/...) or valid http(s) URLs.");
+      else if (msg.includes("INVALID_BANNER_URL")) setStatus("Invalid server banner URL. Use uploaded paths (/v1/profile-images/... or users/...) or valid http(s) URLs.");
       else if (msg.includes("VALIDATION_ERROR")) setStatus("Server profile data is invalid. Check name, logo URL, and banner URL.");
       else setStatus(`Server profile update failed: ${msg}`);
     }
@@ -3137,8 +3262,8 @@ export function App() {
         body: JSON.stringify({
           name: newServerName.trim(),
           baseUrl: newServerBaseUrl.trim(),
-          logoUrl: newServerLogoUrl.trim(),
-          bannerUrl: newServerBannerUrl.trim() || null
+          logoUrl: normalizeImageUrlInput(newServerLogoUrl),
+          bannerUrl: normalizeImageUrlInput(newServerBannerUrl) || null
         })
       });
       setNewServerName("");
@@ -3150,7 +3275,11 @@ export function App() {
       setServers(refreshed.servers || []);
       setAddServerModalOpen(false);
     } catch (error) {
-      setStatus(`Add server failed: ${error.message}`);
+      const msg = error?.message || "";
+      if (msg.includes("LOGO_REQUIRED")) setStatus("Server logo is required.");
+      else if (msg.includes("INVALID_LOGO_URL")) setStatus("Invalid server logo URL. Use uploaded paths (/v1/profile-images/... or users/...) or valid http(s) URLs.");
+      else if (msg.includes("INVALID_BANNER_URL")) setStatus("Invalid server banner URL. Use uploaded paths (/v1/profile-images/... or users/...) or valid http(s) URLs.");
+      else setStatus(`Add server failed: ${msg}`);
     }
   }
 
@@ -3997,6 +4126,8 @@ export function App() {
   async function cleanupVoiceRtc() {
     rejectPendingVoiceEvents("VOICE_SESSION_CLEANUP");
     await voiceSfuRef.current?.cleanup();
+    setIsScreenSharing(false);
+    setRemoteScreenSharesByProducerId({});
   }
 
   async function waitForVoiceGatewayReady(timeoutMs = 15000) {
@@ -4099,6 +4230,23 @@ export function App() {
     }
   }
 
+  async function toggleScreenShare() {
+    if (!isInVoiceChannel) return;
+    try {
+      if (isScreenSharing) {
+        await voiceSfuRef.current?.stopScreenShare();
+        setStatus("Screen sharing stopped.");
+      } else {
+        await voiceSfuRef.current?.startScreenShare();
+        setStatus("Screen sharing started.");
+      }
+    } catch (error) {
+      const message = `Screen sharing failed: ${error.message || "SCREEN_SHARE_FAILED"}`;
+      setStatus(message);
+      window.alert(message);
+    }
+  }
+
   async function leaveVoiceChannel() {
     if (isDisconnectingVoice) return;
 
@@ -4129,6 +4277,7 @@ export function App() {
     const forceLocalDisconnect = async () => {
       setVoiceSession({ guildId: "", channelId: "" });
       setIsScreenSharing(false);
+      setRemoteScreenSharesByProducerId({});
       setIsMuted(false);
       setIsDeafened(false);
       if (me?.id) {
@@ -4199,8 +4348,8 @@ export function App() {
         headers: { Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({
           name,
-          logoUrl: newOfficialServerLogoUrl.trim(),
-          bannerUrl: newOfficialServerBannerUrl.trim() || null
+          logoUrl: normalizeImageUrlInput(newOfficialServerLogoUrl),
+          bannerUrl: normalizeImageUrlInput(newOfficialServerBannerUrl) || null
         })
       });
       setNewOfficialServerName("");
@@ -4218,6 +4367,9 @@ export function App() {
     } catch (err) {
       const msg = err?.message || "";
       if (msg.includes("SERVER_LIMIT")) setStatus("You already have a server.");
+      else if (msg.includes("LOGO_REQUIRED")) setStatus("Server logo is required.");
+      else if (msg.includes("INVALID_LOGO_URL")) setStatus("Invalid server logo URL. Use uploaded paths (/v1/profile-images/... or users/...) or valid http(s) URLs.");
+      else if (msg.includes("INVALID_BANNER_URL")) setStatus("Invalid server banner URL. Use uploaded paths (/v1/profile-images/... or users/...) or valid http(s) URLs.");
       else if (msg.includes("OFFICIAL_SERVER_NOT_CONFIGURED")) setStatus("Server creation isn’t set up yet. The site admin needs to set OFFICIAL_NODE_SERVER_ID on the API server (same value as NODE_SERVER_ID on the node).");
       else if (msg.includes("OFFICIAL_SERVER_UNAVAILABLE")) setStatus("Official server is unavailable. Please try again later.");
       else setStatus(`Failed: ${msg}`);
@@ -4819,9 +4971,26 @@ export function App() {
             <div className="voice-widget">
               <div className="voice-top"><strong>Voice connected</strong><span title={voiceConnectedChannelName}>{voiceConnectedChannelName}</span></div>
               <div className="voice-actions">
-                <button className="ghost" onClick={() => setIsScreenSharing((value) => !value)}>{isScreenSharing ? "Stop Share" : "Share Screen"}</button>
+                <button className="ghost" onClick={toggleScreenShare}>{isScreenSharing ? "Stop Share" : "Share Screen"}</button>
                 <button className="danger" onClick={leaveVoiceChannel} disabled={isDisconnectingVoice}>{isDisconnectingVoice ? "Disconnecting..." : "Disconnect"}</button>
               </div>
+              {!!remoteScreenShares.length && (
+                <div className="voice-screen-grid">
+                  {remoteScreenShares.map((share) => (
+                    <div className="voice-screen-tile" key={share.producerId}>
+                      <video
+                        autoPlay
+                        playsInline
+                        ref={(node) => {
+                          if (!node || !share.stream) return;
+                          if (node.srcObject !== share.stream) node.srcObject = share.stream;
+                        }}
+                      />
+                      <span>{memberNameById.get(share.userId) || share.userId || "Screen Share"}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               <p className="hint">Voice controls moved to Settings → Voice.</p>
             </div>
           )}
@@ -4981,10 +5150,18 @@ export function App() {
                                 {Array.isArray(message?.attachments) && message.attachments.length > 0 && (
                                   <div className="message-embeds">
                                     {message.attachments.map((attachment, index) => (
-                                      <a key={`${message.id}-att-${index}`} className="message-embed-card" href={`${activeServer?.baseUrl || ""}${attachment.url}`} target="_blank" rel="noreferrer">
+                                      <button
+                                        key={`${message.id}-att-${index}`}
+                                        type="button"
+                                        className="message-embed-card message-embed-card-btn"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          openMessageAttachment(attachment);
+                                        }}
+                                      >
                                         <strong>{attachment.fileName || "Attachment"}</strong>
                                         <p>{attachment.contentType || "file"}</p>
-                                      </a>
+                                      </button>
                                     ))}
                                   </div>
                                 )}
@@ -5023,10 +5200,7 @@ export function App() {
                   style={{ display: "none" }}
                   onChange={async (event) => {
                     const files = Array.from(event.target.files || []);
-                    for (const file of files.slice(0, 10)) {
-                      // eslint-disable-next-line no-await-in-loop
-                      await uploadAttachment(file);
-                    }
+                    await uploadAttachments(files, "file picker");
                   }}
                 />
                 <div className="composer-input-wrap">
@@ -5053,6 +5227,12 @@ export function App() {
                     ref={composerInputRef}
                     value={messageText}
                     onChange={(event) => setMessageText(event.target.value)}
+                    onPaste={(event) => {
+                      const files = Array.from(event.clipboardData?.files || []).filter((file) => file && file.size > 0);
+                      if (!files.length) return;
+                      event.preventDefault();
+                      uploadAttachments(files, "clipboard").catch(() => {});
+                    }}
                     placeholder={`Message #${activeChannel?.name || "channel"}`}
                     onKeyDown={(event) => {
                       if (event.key === "ArrowDown" && slashCommandSuggestions.length > 0) {

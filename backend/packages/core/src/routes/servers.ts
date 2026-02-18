@@ -36,11 +36,28 @@ function isValidImageUrl(value: string | null | undefined) {
   if (value == null) return true;
   const trimmed = String(value).trim();
   if (!trimmed) return false;
-  const hasImageExtension = /\.(png|jpe?g|gif|webp|svg|bmp)(\?.*)?$/i.test(trimmed);
-  if (!hasImageExtension) return false;
-  if (/^https?:\/\//i.test(trimmed)) return true;
+  if (trimmed.length > 4096) return false;
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
   if (trimmed.startsWith("/")) return true;
+  if (trimmed.startsWith("users/")) return true;
   return false;
+}
+
+function normalizeImageUrl(value: string | null | undefined) {
+  if (value == null) return value;
+  const trimmed = String(value).trim();
+  if (!trimmed) return trimmed;
+  const base = env.PROFILE_IMAGE_BASE_URL.replace(/\/$/, "");
+  if (trimmed.startsWith("users/")) return `${base}/${trimmed}`;
+  if (trimmed.startsWith("/users/")) return `${base}${trimmed}`;
+  return trimmed;
 }
 
 async function getPlatformRole(userId: string): Promise<"user" | "admin" | "owner"> {
@@ -99,9 +116,11 @@ export async function serverRoutes(app: FastifyInstance) {
   app.post("/v1/servers/official", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
     const body = parseBody(CreateOfficialServer, req.body);
-    if (!body.logoUrl) return rep.code(400).send({ error: "LOGO_REQUIRED" });
-    if (!isValidImageUrl(body.logoUrl)) return rep.code(400).send({ error: "INVALID_LOGO_URL" });
-    if (!isValidImageUrl(body.bannerUrl ?? null)) return rep.code(400).send({ error: "INVALID_BANNER_URL" });
+    const logoUrl = normalizeImageUrl(body.logoUrl);
+    const bannerUrl = normalizeImageUrl(body.bannerUrl ?? null);
+    if (!logoUrl) return rep.code(400).send({ error: "LOGO_REQUIRED" });
+    if (!isValidImageUrl(logoUrl)) return rep.code(400).send({ error: "INVALID_LOGO_URL" });
+    if (!isValidImageUrl(bannerUrl)) return rep.code(400).send({ error: "INVALID_BANNER_URL" });
 
     if (!OFFICIAL_NODE_BASE_URL) {
       return rep.code(503).send({ error: "OFFICIAL_SERVER_UNAVAILABLE", message: "Official server node URL is not configured." });
@@ -131,7 +150,7 @@ export async function serverRoutes(app: FastifyInstance) {
         `UPDATE servers
          SET logo_url=:logoUrl, banner_url=:bannerUrl
          WHERE id=:id`,
-        { id, logoUrl: body.logoUrl ?? null, bannerUrl: body.bannerUrl ?? null }
+        { id, logoUrl: logoUrl ?? null, bannerUrl: bannerUrl ?? null }
       );
       await q(`INSERT INTO memberships (server_id,user_id,roles) VALUES (:id,:userId,:roles)`,
         { id, userId, roles: JSON.stringify(["owner"]) }
@@ -156,9 +175,11 @@ export async function serverRoutes(app: FastifyInstance) {
   app.post("/v1/servers", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
     const body = parseBody(CreateServer, req.body);
-    if (!body.logoUrl) return rep.code(400).send({ error: "LOGO_REQUIRED" });
-    if (!isValidImageUrl(body.logoUrl)) return rep.code(400).send({ error: "INVALID_LOGO_URL" });
-    if (!isValidImageUrl(body.bannerUrl ?? null)) return rep.code(400).send({ error: "INVALID_BANNER_URL" });
+    const logoUrl = normalizeImageUrl(body.logoUrl);
+    const bannerUrl = normalizeImageUrl(body.bannerUrl ?? null);
+    if (!logoUrl) return rep.code(400).send({ error: "LOGO_REQUIRED" });
+    if (!isValidImageUrl(logoUrl)) return rep.code(400).send({ error: "INVALID_LOGO_URL" });
+    if (!isValidImageUrl(bannerUrl)) return rep.code(400).send({ error: "INVALID_BANNER_URL" });
 
     const platformRole = await getPlatformRole(userId);
     if (platformRole === "user") {
@@ -175,8 +196,8 @@ export async function serverRoutes(app: FastifyInstance) {
         name: body.name,
         baseUrl: body.baseUrl,
         userId,
-        logoUrl: body.logoUrl ?? null,
-        bannerUrl: body.bannerUrl ?? null
+        logoUrl: logoUrl ?? null,
+        bannerUrl: bannerUrl ?? null
       }
     );
     await q(`INSERT INTO memberships (server_id,user_id,roles) VALUES (:id,:userId,:roles)`,
@@ -292,11 +313,13 @@ export async function serverRoutes(app: FastifyInstance) {
     const userId = req.user.sub as string;
     const { serverId } = z.object({ serverId: z.string().min(3) }).parse(req.params);
     const body = parseBody(UpdateServerProfile, req.body);
-    if (body.logoUrl === null) return rep.code(400).send({ error: "LOGO_REQUIRED" });
-    if (body.logoUrl !== undefined && body.logoUrl !== null && !isValidImageUrl(body.logoUrl)) {
+    const logoUrl = body.logoUrl === undefined ? undefined : normalizeImageUrl(body.logoUrl);
+    const bannerUrl = body.bannerUrl === undefined ? undefined : normalizeImageUrl(body.bannerUrl);
+    if (logoUrl === null) return rep.code(400).send({ error: "LOGO_REQUIRED" });
+    if (logoUrl !== undefined && logoUrl !== null && !isValidImageUrl(logoUrl)) {
       return rep.code(400).send({ error: "INVALID_LOGO_URL" });
     }
-    if (body.bannerUrl !== undefined && body.bannerUrl !== null && !isValidImageUrl(body.bannerUrl)) {
+    if (bannerUrl !== undefined && bannerUrl !== null && !isValidImageUrl(bannerUrl)) {
       return rep.code(400).send({ error: "INVALID_BANNER_URL" });
     }
 
@@ -317,10 +340,10 @@ export async function serverRoutes(app: FastifyInstance) {
       {
         serverId,
         name: body.name ?? null,
-        logoSet: body.logoUrl !== undefined ? 1 : 0,
-        logoUrl: body.logoUrl ?? null,
-        bannerSet: body.bannerUrl !== undefined ? 1 : 0,
-        bannerUrl: body.bannerUrl ?? null
+        logoSet: logoUrl !== undefined ? 1 : 0,
+        logoUrl: logoUrl ?? null,
+        bannerSet: bannerUrl !== undefined ? 1 : 0,
+        bannerUrl: bannerUrl ?? null
       }
     );
 

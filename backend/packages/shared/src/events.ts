@@ -90,6 +90,7 @@ export type VoiceCreateTransport = { guildId: string; channelId: string; directi
 export type VoiceConnectTransport = { transportId: string; dtlsParameters: any };
 export type VoiceProduce = { transportId: string; kind: "audio" | "video"; rtpParameters: any; appData?: any };
 export type VoiceConsume = { transportId: string; producerId: string; rtpCapabilities: any };
+export type VoiceCloseProducer = { producerId: string };
 
 // DM Call Signals
 export type CallSignal = {

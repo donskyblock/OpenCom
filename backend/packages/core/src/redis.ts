@@ -2,13 +2,13 @@ type MessageHandler = (raw: string) => void;
 
 type RedisLike = {
   pub: {
-    connect: () => Promise<void>;
-    quit: () => Promise<void>;
+    connect: () => Promise<unknown>;
+    quit: () => Promise<unknown>;
     publish: (channel: string, payload: string) => Promise<number>;
   };
   sub: {
-    connect: () => Promise<void>;
-    quit: () => Promise<void>;
+    connect: () => Promise<unknown>;
+    quit: () => Promise<unknown>;
     subscribe: (channel: string, handler: MessageHandler) => Promise<void>;
   };
   start: () => Promise<void>;

@@ -1,8 +1,8 @@
 import { WebSocketServer } from "ws";
 import type { FastifyInstance } from "fastify";
 import { GatewayEnvelope, NodeIdentify } from "@ods/shared/events.js";
-import { verifyMembershipToken } from "./auth/verifyMembership.js";
-import { q } from "./db.js";
+import { verifyMembershipToken } from "../auth/verifyMembership.js";
+import { q } from "../db.js";
 
 // Optional voice imports (only if you have the mediasoup module).
 // If you don't, comment these out and the VOICE_* events will just return VOICE_DISABLED.
@@ -75,7 +75,7 @@ export function attachNodeGateway(app: FastifyInstance) {
             op: "READY",
             d: {
               user: { id: conn.userId, username: "unknown" },
-              guildIds: guildRows.map(r => r.guild_id)
+              guildIds: guildRows.map((r: { guild_id: string }) => r.guild_id)
             }
           });
         } catch {

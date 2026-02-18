@@ -45,8 +45,15 @@ async function getOrCreateRoom(guildId: string, channelId: string) {
     {
       kind: "audio",
       mimeType: "audio/opus",
+      preferredPayloadType: 111,
       clockRate: 48000,
       channels: 2
+    },
+    {
+      kind: "video",
+      mimeType: "video/VP8",
+      preferredPayloadType: 112,
+      clockRate: 90000
     }
   ];
 
@@ -109,6 +116,12 @@ export async function produce(guildId: string, channelId: string, userId: string
 
   const producer = await transport.produce({ kind, rtpParameters });
   peer.producers.set(producer.id, producer);
+  producer.on("transportclose", () => {
+    peer.producers.delete(producer.id);
+  });
+  producer.on("@close", () => {
+    peer.producers.delete(producer.id);
+  });
 
   return { producerId: producer.id };
 }
@@ -137,6 +150,15 @@ export async function consume(
   });
 
   peer.consumers.set(consumer.id, consumer);
+  consumer.on("transportclose", () => {
+    peer.consumers.delete(consumer.id);
+  });
+  consumer.on("producerclose", () => {
+    peer.consumers.delete(consumer.id);
+  });
+  consumer.on("@close", () => {
+    peer.consumers.delete(consumer.id);
+  });
 
   return {
     id: consumer.id,
@@ -154,6 +176,18 @@ export function listProducers(guildId: string, channelId: string) {
     for (const pid of peer.producers.keys()) producers.push({ producerId: pid, userId: uid });
   }
   return producers;
+}
+
+export function closeProducer(guildId: string, channelId: string, userId: string, producerId: string): boolean {
+  const room = rooms.get(key(guildId, channelId));
+  if (!room) return false;
+  const peer = room.peers.get(userId);
+  if (!peer) return false;
+  const producer = peer.producers.get(producerId);
+  if (!producer) return false;
+  try { producer.close(); } catch {}
+  peer.producers.delete(producerId);
+  return true;
 }
 
 export function closePeer(guildId: string, channelId: string, userId: string): string[] {

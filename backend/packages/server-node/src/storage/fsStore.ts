@@ -31,7 +31,8 @@ export function streamToFile(readable: NodeJS.ReadableStream, filePath: string, 
     readable.on("data", (chunk: Buffer) => {
       written += chunk.length;
       if (written > maxBytes) {
-        readable.destroy(new Error("TOO_LARGE"));
+        const destroy = (readable as { destroy?: (error?: Error) => void }).destroy;
+        if (typeof destroy === "function") destroy(new Error("TOO_LARGE"));
       }
     });
 

@@ -7,11 +7,24 @@ import { saveProfileImage, saveProfileImageFromBuffer, deleteProfileImage } from
 import fs from "node:fs";
 import path from "node:path";
 
-const imageValue = z.string().max(6_000_000).refine((value) => {
-  if (/^https?:\/\//i.test(value)) return true;
-  if (/^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(value)) return true;
+function isValidImageReference(value: string) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return false;
+  if (/^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(trimmed)) return true;
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
+  if (trimmed.startsWith("/")) return true;
+  if (trimmed.startsWith("users/")) return true;
   return false;
-}, "Invalid image format");
+}
+
+const imageValue = z.string().max(6_000_000).refine(isValidImageReference, "Invalid image format");
 
 const UpdateProfile = z.object({
   displayName: z.string().min(1).max(64).nullable().optional(),
@@ -22,11 +35,30 @@ const UpdateProfile = z.object({
 
 /** Extract relative path (users/userId/filename) from stored URL for deleteProfileImage */
 function relPathFromStoredUrl(stored: string | null): string | null {
-  if (!stored || stored.startsWith("http")) return null;
+  if (!stored) return null;
+  let value = stored.trim();
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      value = new URL(value).pathname;
+    } catch {
+      return null;
+    }
+  }
   const base = env.PROFILE_IMAGE_BASE_URL.replace(/\/$/, "");
-  if (stored.startsWith(base + "/")) return stored.slice(base.length).replace(/^\//, "") || null;
-  if (stored.startsWith("users/")) return stored;
+  if (value.startsWith(base + "/")) return value.slice(base.length).replace(/^\//, "") || null;
+  if (value.startsWith("/users/")) return value.slice(1) || null;
+  if (value.startsWith("users/")) return value;
   return null;
+}
+
+function normalizeImageReference(value: string) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  const base = env.PROFILE_IMAGE_BASE_URL.replace(/\/$/, "");
+  if (trimmed.startsWith("users/")) return `${base}/${trimmed}`;
+  if (trimmed.startsWith("/users/")) return `${base}${trimmed}`;
+  return trimmed;
 }
 
 const ALLOWED_IMAGE_MIMES = new Set([
@@ -229,7 +261,7 @@ export async function profileRoutes(app: FastifyInstance) {
     };
   });
 
-  app.patch("/v1/me/profile", { preHandler: [app.authenticate] } as any, async (req: any) => {
+  app.patch("/v1/me/profile", { preHandler: [app.authenticate] } as any, async (req: any, rep: any) => {
     const userId = req.user.sub as string;
     const body = parseBody(UpdateProfile, req.body);
 
@@ -259,9 +291,10 @@ export async function profileRoutes(app: FastifyInstance) {
         } else {
           return rep.code(400).send({ error: "INVALID_IMAGE", field: "pfpUrl" });
         }
-      } else if (body.pfpUrl.startsWith("http")) {
-        // External URL - allow it
-        pfpUrl = body.pfpUrl;
+      } else if (isValidImageReference(body.pfpUrl)) {
+        pfpUrl = normalizeImageReference(body.pfpUrl);
+      } else {
+        return rep.code(400).send({ error: "INVALID_IMAGE", field: "pfpUrl" });
       }
     }
 
@@ -282,9 +315,10 @@ export async function profileRoutes(app: FastifyInstance) {
         } else {
           return rep.code(400).send({ error: "INVALID_IMAGE", field: "bannerUrl" });
         }
-      } else if (body.bannerUrl.startsWith("http")) {
-        // External URL - allow it
-        bannerUrl = body.bannerUrl;
+      } else if (isValidImageReference(body.bannerUrl)) {
+        bannerUrl = normalizeImageReference(body.bannerUrl);
+      } else {
+        return rep.code(400).send({ error: "INVALID_IMAGE", field: "bannerUrl" });
       }
     }
 

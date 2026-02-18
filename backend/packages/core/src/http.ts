@@ -37,12 +37,13 @@ export function buildHttp() {
     if (error instanceof ZodError) {
       return rep.code(400).send({ error: "VALIDATION_ERROR", issues: error.issues });
     }
-    if (error.message === "INVALID_JSON_BODY") {
+    const message = error instanceof Error ? error.message : "";
+    if (message === "INVALID_JSON_BODY") {
       return rep.code(400).send({ error: "INVALID_JSON_BODY" });
     }
 
     req.log.error({ err: error }, "Unhandled request error");
-    writeCoreLogLine(`[${new Date().toISOString()}] [ERROR] [core-http] ${req.method} ${req.url} ${error?.message || "UNKNOWN_ERROR"}`);
+    writeCoreLogLine(`[${new Date().toISOString()}] [ERROR] [core-http] ${req.method} ${req.url} ${message || "UNKNOWN_ERROR"}`);
     return rep.code(500).send({ error: "INTERNAL_SERVER_ERROR" });
   });
 

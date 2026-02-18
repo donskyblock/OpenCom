@@ -16,6 +16,7 @@ import {
   produce,
   consume,
   listProducers,
+  closeProducer,
   closePeer,
 } from "./voice/mediasoup.js";
 import { createLogger, sanitizeErrorMessage } from "./logger.js";
@@ -345,7 +346,7 @@ export function attachNodeGateway(app: FastifyInstance) {
           conn.voice = { guildId, channelId };
 
           const rtpCapabilities = await getRouterRtpCapabilities(guildId, channelId);
-          const producers = listProducers(guildId, channelId).filter((p) => p.userId !== conn.userId);
+          const producers = listProducers(guildId, channelId).filter((p) => p.userId !== conn?.userId);
 
           sendDispatch(conn, "VOICE_JOINED", { guildId, channelId, rtpCapabilities, producers });
           await emitVoiceState(guildId, conn.userId);
@@ -553,6 +554,40 @@ export function attachNodeGateway(app: FastifyInstance) {
           sendDispatch(conn, "VOICE_CONSUMED", { ...data, guildId: conn.voice.guildId, channelId: conn.voice.channelId });
         } catch (error) {
           sendVoiceError(conn, "VOICE_CONSUME_FAILED", error);
+        }
+        return;
+      }
+
+      if (msg.op === "DISPATCH" && msg.t === "VOICE_CLOSE_PRODUCER") {
+        try {
+          if (!conn.voice) {
+            sendVoiceError(conn, "NOT_IN_VOICE_CHANNEL", new Error("No active voice session"));
+            return;
+          }
+
+          const producerId = (msg.d as any)?.producerId;
+          if (typeof producerId !== "string" || !producerId) {
+            sendVoiceError(conn, "BAD_VOICE_CLOSE_PRODUCER", new Error("Missing producerId"));
+            return;
+          }
+
+          const { guildId, channelId } = conn.voice;
+          const closed = closeProducer(guildId, channelId, conn.userId, producerId);
+          if (!closed) {
+            sendVoiceError(conn, "VOICE_PRODUCER_NOT_FOUND", new Error("Producer not found"), { producerId });
+            return;
+          }
+
+          sendDispatch(conn, "VOICE_PRODUCER_CLOSED", { guildId, channelId, producerId, userId: conn.userId });
+          broadcastVoiceChannel(
+            guildId,
+            channelId,
+            "VOICE_PRODUCER_CLOSED",
+            { guildId, channelId, producerId, userId: conn.userId },
+            conn.userId
+          );
+        } catch (error) {
+          sendVoiceError(conn, "VOICE_CLOSE_PRODUCER_FAILED", error);
         }
         return;
       }

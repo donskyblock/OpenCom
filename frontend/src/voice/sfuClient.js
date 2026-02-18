@@ -2,7 +2,17 @@ import * as mediasoupClient from "mediasoup-client";
 
 const DEFAULT_TIMEOUT_MS = 10000;
 
-export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, waitForEvent, onRemoteAudioAdded, onRemoteAudioRemoved }) {
+export function createSfuVoiceClient({
+  selfUserId,
+  getSelfUserId,
+  sendDispatch,
+  waitForEvent,
+  onRemoteAudioAdded,
+  onRemoteAudioRemoved,
+  onRemoteVideoAdded,
+  onRemoteVideoRemoved,
+  onScreenShareStateChange
+}) {
   const state = {
     sessionToken: 0,
     guildId: "",
@@ -10,8 +20,11 @@ export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, 
     device: null,
     sendTransport: null,
     recvTransport: null,
-    localProducer: null,
+    localAudioProducer: null,
+    localScreenProducer: null,
     localStream: null,
+    localScreenStream: null,
+    localScreenTrackEndedHandler: null,
     consumersByProducerId: new Map(),
     producerOwnerByProducerId: new Map(),
     isMuted: false,
@@ -56,6 +69,10 @@ export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, 
 
   function isActive(token) {
     return token === state.sessionToken && !!state.channelId;
+  }
+
+  function setScreenSharing(active) {
+    onScreenShareStateChange?.(!!active);
   }
 
   function resolveSelfUserId() {
@@ -123,32 +140,49 @@ export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, 
 
     const consumer = await state.recvTransport.consume(consumerOptions);
     const stream = new MediaStream([consumer.track]);
-    const audio = document.createElement("audio");
-    audio.autoplay = true;
-    audio.playsInline = true;
-    audio.preload = "auto";
-    audio.muted = false;
-    audio.srcObject = stream;
-    audio.style.display = "none";
-    document.body.appendChild(audio);
-    audio.addEventListener("loadedmetadata", () => {
-      if (audio.paused) {
-        audio.play().catch(() => {
-          scheduleAudioStartRetry(audio, producerId);
-        });
+    if (consumer.kind === "audio") {
+      const audio = document.createElement("audio");
+      audio.autoplay = true;
+      audio.playsInline = true;
+      audio.preload = "auto";
+      audio.muted = false;
+      audio.srcObject = stream;
+      audio.style.display = "none";
+      document.body.appendChild(audio);
+      audio.addEventListener("loadedmetadata", () => {
+        if (audio.paused) {
+          audio.play().catch(() => {
+            scheduleAudioStartRetry(audio, producerId);
+          });
+        }
+      });
+      if (typeof audio.setSinkId === "function" && state.audioOutputDeviceId) {
+        await audio.setSinkId(state.audioOutputDeviceId).catch(() => {});
       }
-    });
-    if (typeof audio.setSinkId === "function" && state.audioOutputDeviceId) {
-      await audio.setSinkId(state.audioOutputDeviceId).catch(() => {});
+      audio.volume = state.isDeafened ? 0 : 1;
+      await audio.play().catch(() => {
+        scheduleAudioStartRetry(audio, producerId);
+      });
+      state.consumersByProducerId.set(producerId, {
+        consumer,
+        audio,
+        stream,
+        kind: "audio",
+        userId: userId || ""
+      });
+      if (userId) state.producerOwnerByProducerId.set(producerId, userId);
+      onRemoteAudioAdded?.({ producerId, userId, audio });
+      return;
     }
-    audio.volume = state.isDeafened ? 0 : 1;
-    await audio.play().catch(() => {
-      scheduleAudioStartRetry(audio, producerId);
-    });
 
-    state.consumersByProducerId.set(producerId, { consumer, audio, userId: userId || "" });
+    state.consumersByProducerId.set(producerId, {
+      consumer,
+      stream,
+      kind: consumer.kind,
+      userId: userId || ""
+    });
     if (userId) state.producerOwnerByProducerId.set(producerId, userId);
-    onRemoteAudioAdded?.({ producerId, userId, audio });
+    onRemoteVideoAdded?.({ producerId, userId, stream, kind: consumer.kind });
   }
 
   async function join({ guildId, channelId, audioInputDeviceId, isMuted = false, isDeafened = false, audioOutputDeviceId = "" }) {
@@ -230,9 +264,9 @@ export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, 
     state.localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
     const localTrack = state.localStream.getAudioTracks()[0];
     if (!localTrack) throw new Error("MIC_TRACK_NOT_FOUND");
-    state.localProducer = await state.sendTransport.produce({ track: localTrack });
+    state.localAudioProducer = await state.sendTransport.produce({ track: localTrack });
     if (state.isMuted) {
-      state.localProducer.pause();
+      state.localAudioProducer.pause();
       localTrack.enabled = false;
     }
 
@@ -271,8 +305,82 @@ export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, 
     state.producerOwnerByProducerId.delete(producerId);
     removePendingAudioStart(producerId);
     try { entry.consumer.close(); } catch {}
-    try { entry.audio.pause(); entry.audio.srcObject = null; entry.audio.remove(); } catch {}
-    onRemoteAudioRemoved?.({ producerId, userId: entry.userId || "" });
+    if (entry.audio) {
+      try { entry.audio.pause(); entry.audio.srcObject = null; entry.audio.remove(); } catch {}
+      onRemoteAudioRemoved?.({ producerId, userId: entry.userId || "" });
+      return;
+    }
+    onRemoteVideoRemoved?.({ producerId, userId: entry.userId || "" });
+  }
+
+  function clearLocalScreenState({ stopTracks = false } = {}) {
+    if (state.localScreenStream) {
+      const track = state.localScreenStream.getVideoTracks()?.[0];
+      if (track && state.localScreenTrackEndedHandler) {
+        track.removeEventListener("ended", state.localScreenTrackEndedHandler);
+      }
+      if (stopTracks) {
+        state.localScreenStream.getTracks().forEach((currentTrack) => currentTrack.stop());
+      }
+    }
+    state.localScreenTrackEndedHandler = null;
+    state.localScreenStream = null;
+    state.localScreenProducer = null;
+    setScreenSharing(false);
+  }
+
+  async function stopScreenShare({ notifyServer = true } = {}) {
+    if (!state.localScreenProducer) {
+      clearLocalScreenState({ stopTracks: true });
+      return;
+    }
+
+    const producerId = state.localScreenProducer.id;
+    try { state.localScreenProducer.close(); } catch {}
+    clearLocalScreenState({ stopTracks: true });
+
+    if (!notifyServer || !producerId || !state.guildId || !state.channelId) return;
+    await sendDispatch("VOICE_CLOSE_PRODUCER", {
+      guildId: state.guildId,
+      channelId: state.channelId,
+      producerId
+    }).catch(() => {});
+  }
+
+  async function startScreenShare() {
+    if (!state.sendTransport || !state.guildId || !state.channelId) {
+      throw new Error("NOT_IN_VOICE_CHANNEL");
+    }
+    if (state.localScreenProducer) return;
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      throw new Error("SCREEN_SHARE_NOT_SUPPORTED");
+    }
+
+    const displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    const screenTrack = displayStream.getVideoTracks()[0];
+    if (!screenTrack) {
+      displayStream.getTracks().forEach((track) => track.stop());
+      throw new Error("SCREEN_TRACK_NOT_FOUND");
+    }
+
+    try {
+      const producer = await state.sendTransport.produce({
+        track: screenTrack,
+        appData: { source: "screen" }
+      });
+      state.localScreenProducer = producer;
+      state.localScreenStream = displayStream;
+      const endedHandler = () => {
+        stopScreenShare().catch(() => {});
+      };
+      state.localScreenTrackEndedHandler = endedHandler;
+      screenTrack.addEventListener("ended", endedHandler);
+      setScreenSharing(true);
+    } catch (error) {
+      displayStream.getTracks().forEach((track) => track.stop());
+      clearLocalScreenState({ stopTracks: false });
+      throw error;
+    }
   }
 
   async function cleanup() {
@@ -283,8 +391,9 @@ export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, 
     for (const producerId of [...state.consumersByProducerId.keys()]) {
       await cleanupConsumer(producerId);
     }
-    try { state.localProducer?.close(); } catch {}
-    state.localProducer = null;
+    await stopScreenShare({ notifyServer: false }).catch(() => {});
+    try { state.localAudioProducer?.close(); } catch {}
+    state.localAudioProducer = null;
     if (state.localStream) {
       state.localStream.getTracks().forEach((track) => track.stop());
       state.localStream = null;
@@ -302,7 +411,8 @@ export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, 
     if (!state.channelId || !state.guildId) return;
     if (data?.guildId && data.guildId !== state.guildId) return;
     if (data?.channelId && data.channelId !== state.channelId) return;
-    if (state.localProducer && data.producerId === state.localProducer.id) return;
+    if (state.localAudioProducer && data.producerId === state.localAudioProducer.id) return;
+    if (state.localScreenProducer && data.producerId === state.localScreenProducer.id) return;
 
 
     if (type === "VOICE_NEW_PRODUCER" && data?.producerId) {
@@ -335,9 +445,9 @@ export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, 
   function setMuted(nextMuted) {
     state.isMuted = !!nextMuted;
     const track = state.localStream?.getAudioTracks?.()[0];
-    if (state.localProducer) {
-      if (state.isMuted) state.localProducer.pause();
-      else state.localProducer.resume();
+    if (state.localAudioProducer) {
+      if (state.isMuted) state.localAudioProducer.pause();
+      else state.localAudioProducer.resume();
     }
     if (track) track.enabled = !state.isMuted;
   }
@@ -345,6 +455,7 @@ export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, 
   function setDeafened(nextDeafened) {
     state.isDeafened = !!nextDeafened;
     for (const { audio } of state.consumersByProducerId.values()) {
+      if (!audio) continue;
       audio.volume = state.isDeafened ? 0 : 1;
     }
   }
@@ -352,6 +463,7 @@ export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, 
   function setAudioOutputDevice(deviceId) {
     state.audioOutputDeviceId = deviceId || "";
     for (const { audio } of state.consumersByProducerId.values()) {
+      if (!audio) continue;
       if (typeof audio.setSinkId === "function" && state.audioOutputDeviceId) {
         audio.setSinkId(state.audioOutputDeviceId).catch(() => {});
       }
@@ -374,6 +486,8 @@ export function createSfuVoiceClient({ selfUserId, getSelfUserId, sendDispatch, 
     setMuted,
     setDeafened,
     setAudioOutputDevice,
+    startScreenShare,
+    stopScreenShare,
     getLocalStream,
     getContext
   };
