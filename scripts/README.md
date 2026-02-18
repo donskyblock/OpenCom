@@ -36,6 +36,7 @@ Operations:
 ./scripts/ops/update-opencom.sh --pull --backup
 ./scripts/ops/configure-ws.sh --domain ws.opencom.online --ip 127.0.0.1
 ./scripts/ops/server-admin.sh search-users --query alice
+./scripts/verify-user-email.sh alice
 ```
 
 ## Compatibility wrappers
