@@ -32,7 +32,7 @@ const Env = z.object({
   CORE_MEMBERSHIP_PUBLIC_JWK: z.string().min(1),
   CORE_ISSUER: z.string().min(1),
   ADMIN_PANEL_PASSWORD: z.string().min(8),
-  REDIS_URL: z.string().url().optional(),
+  REDIS_URL: z.string().url(),
   CORE_NODE_SYNC_SECRET: z.string().min(16).optional(),
   
   // Profile image storage

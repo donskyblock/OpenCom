@@ -31,7 +31,7 @@ function nodeGatewayUrl(baseUrl: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
-export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub: any }) {
+export function attachCoreGateway(app: FastifyInstance, redis: { pub: any; sub: any }) {
   const wss = new WebSocketServer({ noServer: true });
   const HEARTBEAT_TIMEOUT_MS = 90_000;
   const PRESENCE_PROBE_INTERVAL_MS = 60_000;
@@ -57,36 +57,34 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
   const PRES_CH = "core:presence";
   const CALL_SIGNAL_CH = "core:call-signal";
 
-  if (redis) {
-    redis.sub.subscribe(DM_CH, (raw: string) => {
-      const { recipientDeviceId, payload } = JSON.parse(raw);
-      const c = byDevice.get(recipientDeviceId);
-      if (!c) return;
-      c.seq += 1;
-      send(c.ws, { op: "DISPATCH", t: "DM_MESSAGE_CREATE", s: c.seq, d: { envelope: payload } });
-    });
+  redis.sub.subscribe(DM_CH, (raw: string) => {
+    const { recipientDeviceId, payload } = JSON.parse(raw);
+    const c = byDevice.get(recipientDeviceId);
+    if (!c) return;
+    c.seq += 1;
+    send(c.ws, { op: "DISPATCH", t: "DM_MESSAGE_CREATE", s: c.seq, d: { envelope: payload } });
+  });
 
-    redis.sub.subscribe(PRES_CH, (raw: string) => {
-      const { userId, presence } = JSON.parse(raw);
-      // Broadcast to all connected users (MVP = global presence fanout)
-      for (const conns of byUser.values()) {
-        for (const c of conns) {
-          c.seq += 1;
-          send(c.ws, { op: "DISPATCH", t: "PRESENCE_UPDATE", s: c.seq, d: { userId, ...presence } });
-        }
-      }
-    });
-
-    redis.sub.subscribe(CALL_SIGNAL_CH, (raw: string) => {
-      const { targetUserId, signal } = JSON.parse(raw);
-      const conns = byUser.get(targetUserId);
-      if (!conns) return;
+  redis.sub.subscribe(PRES_CH, (raw: string) => {
+    const { userId, presence } = JSON.parse(raw);
+    // Broadcast to all connected users (MVP = global presence fanout)
+    for (const conns of byUser.values()) {
       for (const c of conns) {
         c.seq += 1;
-        send(c.ws, { op: "DISPATCH", t: "CALL_SIGNAL_CREATE", s: c.seq, d: signal });
+        send(c.ws, { op: "DISPATCH", t: "PRESENCE_UPDATE", s: c.seq, d: { userId, ...presence } });
       }
-    });
-  }
+    }
+  });
+
+  redis.sub.subscribe(CALL_SIGNAL_CH, (raw: string) => {
+    const { targetUserId, signal } = JSON.parse(raw);
+    const conns = byUser.get(targetUserId);
+    if (!conns) return;
+    for (const c of conns) {
+      c.seq += 1;
+      send(c.ws, { op: "DISPATCH", t: "CALL_SIGNAL_CREATE", s: c.seq, d: signal });
+    }
+  });
 
   const livenessSweep = setInterval(async () => {
     const now = Date.now();
@@ -138,16 +136,7 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
       const offline: PresenceUpdate = { status: "offline", customStatus: null, richPresence: null };
       for (const row of staleUsers) {
         if (!row.user_id) continue;
-        if (redis) {
-          await redis.pub.publish(PRES_CH, JSON.stringify({ userId: row.user_id, presence: offline }));
-          continue;
-        }
-        for (const conns of byUser.values()) {
-          for (const c of conns) {
-            c.seq += 1;
-            send(c.ws, { op: "DISPATCH", t: "PRESENCE_UPDATE", s: c.seq, d: { userId: row.user_id, ...offline } });
-          }
-        }
+        await redis.pub.publish(PRES_CH, JSON.stringify({ userId: row.user_id, presence: offline }));
       }
     } catch {}
   }, 30_000);
@@ -232,7 +221,7 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
             const presence: PresenceUpdate = { status: "online", customStatus: null };
             await app.pgPresenceUpsert(userId, presence);
             await touchPresenceUpdatedAt(userId);
-            if (redis) await redis.pub.publish(PRES_CH, JSON.stringify({ userId, presence }));
+            await redis.pub.publish(PRES_CH, JSON.stringify({ userId, presence }));
           } catch {
             send(ws, { op: "ERROR", d: { error: "INVALID_TOKEN" } });
             ws.close();
@@ -326,7 +315,7 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
         conn.lastPresenceSyncAt = Date.now();
         await app.pgPresenceUpsert(conn.userId, presence);
         await touchPresenceUpdatedAt(conn.userId);
-        if (redis) await redis.pub.publish(PRES_CH, JSON.stringify({ userId: conn.userId, presence }));
+        await redis.pub.publish(PRES_CH, JSON.stringify({ userId: conn.userId, presence }));
       }
     });
 
@@ -346,7 +335,7 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
         if (!still || still.size === 0) {
           const presence: PresenceUpdate = { status: "offline", customStatus: null, richPresence: null };
           await app.pgPresenceUpsert(conn.userId, presence);
-          if (redis) await redis.pub.publish(PRES_CH, JSON.stringify({ userId: conn.userId, presence }));
+          await redis.pub.publish(PRES_CH, JSON.stringify({ userId: conn.userId, presence }));
         }
       }
     });
@@ -376,7 +365,7 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
       return;
     }
     // cross-instance fanout
-    if (redis) await redis.pub.publish(DM_CH, JSON.stringify({ recipientDeviceId, payload }));
+    await redis.pub.publish(DM_CH, JSON.stringify({ recipientDeviceId, payload }));
   }
 
   async function broadcastCallSignal(targetUserId: string, signal: any) {
@@ -390,7 +379,7 @@ export function attachCoreGateway(app: FastifyInstance, redis?: { pub: any; sub:
       return;
     }
     // cross-instance fanout
-    if (redis) await redis.pub.publish(CALL_SIGNAL_CH, JSON.stringify({ targetUserId, signal }));
+    await redis.pub.publish(CALL_SIGNAL_CH, JSON.stringify({ targetUserId, signal }));
   }
 
   return { broadcastDM, broadcastCallSignal, broadcastToUser };

@@ -31,11 +31,11 @@ const app = buildHttp();
 // attach helper to app
 (app as any).pgPresenceUpsert = presenceUpsert;
 
-// Redis (optional but recommended)
-const redis = env.REDIS_URL ? await makeRedis(env.REDIS_URL) : null;
-if (redis) await redis.start();
+// Redis is required for cross-instance gateway fanout and presence signaling.
+const redis = await makeRedis(env.REDIS_URL);
+await redis.start();
 
-const gw = attachCoreGateway(app, redis ?? undefined);
+const gw = attachCoreGateway(app, redis);
 
 await authRoutes(app);
 await deviceRoutes(app);
