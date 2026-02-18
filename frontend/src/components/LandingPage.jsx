@@ -4,7 +4,8 @@ export function LandingPage({
   setDownloadsMenuOpen,
   downloadTargets,
   preferredDownloadTarget,
-  onOpenClient
+  onOpenClient,
+  onOpenTerms
 }) {
   return (
     <div className="landing-page">
@@ -86,6 +87,7 @@ export function LandingPage({
       </main>
       <footer className="landing-footer">
         <p>OpenCom. One place for teams, communities, and friends.</p>
+        <button type="button" className="link-btn" onClick={onOpenTerms}>Terms of Service</button>
       </footer>
     </div>
   );

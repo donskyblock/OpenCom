@@ -86,11 +86,11 @@ npm run build:stage:linux
 npm run build:stage:win
 ```
 
-These commands build and then copy artifacts into `frontend/`:
+These commands build and then copy installer artifacts into `frontend/`:
 
 - `frontend/OpenCom.deb`
 - `frontend/OpenCom.tar.gz`
-- `frontend/OpenCom.exe`
+- `frontend/OpenCom.exe` (Windows NSIS installer)
 
 Direct script entrypoints are also available:
 

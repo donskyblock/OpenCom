@@ -14,7 +14,7 @@
     "start": "npm run sync:web && electron .",
     "start:remote": "electron .",
     "build": "npm run sync:web && electron-builder",
-    "build:win": "npm run sync:web && electron-builder --win portable",
+    "build:win": "npm run sync:web && electron-builder --win nsis",
     "build:linux": "npm run sync:web && electron-builder --linux deb tar.gz",
     "build:stage:linux": "node scripts/build-and-stage.mjs linux",
     "build:stage:win": "node scripts/build-and-stage.mjs win",
@@ -43,7 +43,7 @@
     ],
     "win": {
       "target": [
-        "portable"
+        "nsis"
       ]
     },
     "linux": {

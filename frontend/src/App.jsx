@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createSfuVoiceClient } from "./voice/sfuClient";
 import { LandingPage } from "./components/LandingPage";
 import { AuthShell } from "./components/AuthShell";
+import { TermsPage } from "./components/TermsPage";
 import { DOWNLOAD_TARGETS, getPreferredDownloadTarget } from "./lib/downloads";
 import {
   APP_ROUTE_CLIENT,
   APP_ROUTE_HOME,
   APP_ROUTE_LOGIN,
+  APP_ROUTE_TERMS,
   buildBoostGiftUrl,
   buildInviteJoinUrl,
   getAppRouteFromLocation,
@@ -244,17 +246,6 @@ function getCoreGatewayWsCandidates() {
 function getDesktopBridge() {
   if (typeof window === "undefined") return null;
   return window.opencomDesktopBridge || null;
-}
-
-async function promptText(message, defaultValue = "") {
-  const bridge = getDesktopBridge();
-  if (bridge?.prompt) {
-    try {
-      return await bridge.prompt(message, defaultValue, "OpenCom");
-    } catch {}
-  }
-  if (typeof window === "undefined" || typeof window.prompt !== "function") return null;
-  return window.prompt(message, defaultValue);
 }
 
 
@@ -794,8 +785,10 @@ export function App() {
   const [presenceByUserId, setPresenceByUserId] = useState({});
   const [routePath, setRoutePath] = useState(getAppRouteFromLocation);
   const [downloadsMenuOpen, setDownloadsMenuOpen] = useState(false);
+  const [dialogModal, setDialogModal] = useState(null);
   const [gatewayConnected, setGatewayConnected] = useState(false);
   const [nodeGatewayConnected, setNodeGatewayConnected] = useState(false);
+  const [nodeGatewayServerId, setNodeGatewayServerId] = useState("");
   const [dmNotification, setDmNotification] = useState(null);
   const [voiceStatesByGuild, setVoiceStatesByGuild] = useState({});
   const [voiceSpeakingByGuild, setVoiceSpeakingByGuild] = useState({});
@@ -908,6 +901,9 @@ export function App() {
   const attachmentPreviewUrlByIdRef = useRef({});
   const autoJoinInviteAttemptRef = useRef("");
   const previousDmIdRef = useRef("");
+  const dialogResolverRef = useRef(null);
+  const dialogInputRef = useRef(null);
+  const activeServerIdRef = useRef("");
   const activeChannelIdRef = useRef("");
   const activeGuildIdRef = useRef("");
   const profileCardDragOffsetRef = useRef({ x: 0, y: 0 });
@@ -919,6 +915,63 @@ export function App() {
   const serversRef = useRef([]);
   const storageScope = me?.id || "anonymous";
 
+  function resolveDialog(value) {
+    const resolver = dialogResolverRef.current;
+    dialogResolverRef.current = null;
+    setDialogModal(null);
+    if (resolver) resolver(value);
+  }
+
+  function openDialog({ type = "alert", title = "OpenCom", message = "", defaultValue = "", confirmLabel = "OK", cancelLabel = "Cancel" }) {
+    if (dialogResolverRef.current) {
+      // If another dialog was open, safely resolve it first.
+      dialogResolverRef.current(type === "confirm" ? false : null);
+      dialogResolverRef.current = null;
+    }
+    setDialogModal({
+      type,
+      title,
+      message: String(message || ""),
+      value: String(defaultValue || ""),
+      confirmLabel,
+      cancelLabel
+    });
+    return new Promise((resolve) => {
+      dialogResolverRef.current = resolve;
+    });
+  }
+
+  async function promptText(message, defaultValue = "") {
+    return openDialog({
+      type: "prompt",
+      title: "Input",
+      message,
+      defaultValue,
+      confirmLabel: "Continue",
+      cancelLabel: "Cancel"
+    });
+  }
+
+  async function confirmDialog(message, title = "Confirm") {
+    const result = await openDialog({
+      type: "confirm",
+      title,
+      message,
+      confirmLabel: "Confirm",
+      cancelLabel: "Cancel"
+    });
+    return !!result;
+  }
+
+  async function alertDialog(message, title = "Notice") {
+    await openDialog({
+      type: "alert",
+      title,
+      message,
+      confirmLabel: "OK"
+    });
+  }
+
   function navigateAppRoute(nextRoute, { replace = false } = {}) {
     writeAppRoute(nextRoute, { replace });
     setRoutePath(getAppRouteFromLocation());
@@ -927,6 +980,24 @@ export function App() {
   useEffect(() => {
     serversRef.current = servers;
   }, [servers]);
+
+  useEffect(() => {
+    if (!dialogModal || dialogModal.type !== "prompt") return;
+    const timer = window.setTimeout(() => {
+      dialogInputRef.current?.focus();
+      dialogInputRef.current?.select?.();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [dialogModal]);
+
+  useEffect(() => {
+    return () => {
+      if (dialogResolverRef.current) {
+        dialogResolverRef.current(null);
+        dialogResolverRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     attachmentPreviewUrlByIdRef.current = attachmentPreviewUrlById || {};
@@ -951,6 +1022,7 @@ export function App() {
 
   useEffect(() => {
     if (!accessToken) return;
+    if (routePath === APP_ROUTE_TERMS) return;
     if (routePath === APP_ROUTE_CLIENT) return;
     navigateAppRoute(APP_ROUTE_CLIENT, { replace: true });
   }, [accessToken, routePath]);
@@ -1256,6 +1328,19 @@ export function App() {
   const voiceConnectedChannelId = voiceSession.channelId;
   const voiceConnectedGuildId = voiceSession.guildId;
   const isInVoiceChannel = !!voiceConnectedChannelId;
+  const voiceConnectedServer = useMemo(
+    () => servers.find((server) => server.defaultGuildId === voiceConnectedGuildId) || null,
+    [servers, voiceConnectedGuildId]
+  );
+  const nodeGatewayTargetServer = useMemo(() => {
+    if (voiceConnectedServer?.baseUrl && voiceConnectedServer?.membershipToken) return voiceConnectedServer;
+    return activeServer;
+  }, [voiceConnectedServer, activeServer]);
+  const nodeGatewayConnectedForActiveServer = !!(
+    nodeGatewayConnected
+    && activeServer?.id
+    && nodeGatewayServerId === activeServer.id
+  );
   const channels = guildState?.channels || [];
   const voiceConnectedChannelName = useMemo(() => {
     if (!voiceConnectedChannelId) return "";
@@ -1968,14 +2053,15 @@ export function App() {
   }, [selfStatus, accessToken, me?.id]);
 
   useEffect(() => {
-    const server = activeServer;
+    const server = nodeGatewayTargetServer;
 
-    // Keep node gateway alive as long as we have a selected server with credentials,
-    // regardless of navMode (DMs vs servers UI).
+    // Keep node gateway alive for the active server. If we're currently connected
+    // to voice in another server, pin the gateway to that voice server so VC stays alive.
     if (!server?.baseUrl || !server?.membershipToken) {
       voiceGatewayCandidatesRef.current = [];
       nodeGatewayReadyRef.current = false;
       setNodeGatewayConnected(false);
+      setNodeGatewayServerId("");
 
       if (nodeGatewayHeartbeatRef.current) {
         clearInterval(nodeGatewayHeartbeatRef.current);
@@ -1994,6 +2080,7 @@ export function App() {
       voiceGatewayCandidatesRef.current = [];
       nodeGatewayReadyRef.current = false;
       setNodeGatewayConnected(false);
+      setNodeGatewayServerId("");
 
       if (nodeGatewayHeartbeatRef.current) {
         clearInterval(nodeGatewayHeartbeatRef.current);
@@ -2015,6 +2102,7 @@ export function App() {
     voiceGatewayCandidatesRef.current = wsCandidates;
     if (!wsCandidates.length) {
       setNodeGatewayConnected(false);
+      setNodeGatewayServerId("");
       return;
     }
 
@@ -2027,6 +2115,7 @@ export function App() {
     let guildRefreshTimer = null;
 
     const applyGuildState = (state) => {
+      if (activeServerIdRef.current !== server.id) return;
       const allChannels = state.channels || [];
       setGuildState(state);
 
@@ -2038,6 +2127,7 @@ export function App() {
     };
 
     const refreshActiveGuildStateFromNode = () => {
+      if (activeServerIdRef.current !== server.id) return;
       const guildId = activeGuildIdRef.current;
       if (!guildId) return;
       nodeApi(server.baseUrl, `/v1/guilds/${guildId}/state`, server.membershipToken)
@@ -2095,13 +2185,14 @@ export function App() {
             reconnectAttempts = 0;
             nodeGatewayReadyRef.current = true;
             setNodeGatewayConnected(true);
+            setNodeGatewayServerId(server.id || "");
             localStorage.setItem(LAST_SERVER_GATEWAY_KEY, wsUrl);
 
             // Subscribe to whatever context we have right now.
-            if (activeGuildIdRef.current) {
+            if (activeServerIdRef.current === server.id && activeGuildIdRef.current) {
               ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_GUILD", d: { guildId: activeGuildIdRef.current } }));
             }
-            if (activeChannelIdRef.current) {
+            if (activeServerIdRef.current === server.id && activeChannelIdRef.current) {
               ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_CHANNEL", d: { channelId: activeChannelIdRef.current } }));
             }
             return;
@@ -2201,19 +2292,22 @@ export function App() {
             }
 
             if (
-              msg.t === "CHANNEL_CREATE"
-              || msg.t === "CHANNEL_UPDATE"
-              || msg.t === "CHANNEL_DELETE"
-              || msg.t === "CHANNEL_REORDER"
-              || msg.t === "ROLE_CREATE"
-              || msg.t === "ROLE_UPDATE"
-              || msg.t === "ROLE_DELETE"
-              || msg.t === "CHANNEL_OVERWRITE_UPDATE"
-              || msg.t === "CHANNEL_OVERWRITE_DELETE"
-              || msg.t === "CHANNEL_SYNC_PERMISSIONS"
-              || msg.t === "GUILD_MEMBER_UPDATE"
-              || msg.t === "GUILD_MEMBER_KICK"
-              || msg.t === "GUILD_MEMBER_BAN"
+              activeServerIdRef.current === server.id
+              && (
+                msg.t === "CHANNEL_CREATE"
+                || msg.t === "CHANNEL_UPDATE"
+                || msg.t === "CHANNEL_DELETE"
+                || msg.t === "CHANNEL_REORDER"
+                || msg.t === "ROLE_CREATE"
+                || msg.t === "ROLE_UPDATE"
+                || msg.t === "ROLE_DELETE"
+                || msg.t === "CHANNEL_OVERWRITE_UPDATE"
+                || msg.t === "CHANNEL_OVERWRITE_DELETE"
+                || msg.t === "CHANNEL_SYNC_PERMISSIONS"
+                || msg.t === "GUILD_MEMBER_UPDATE"
+                || msg.t === "GUILD_MEMBER_KICK"
+                || msg.t === "GUILD_MEMBER_BAN"
+              )
             ) {
               scheduleGuildRefresh();
             }
@@ -2235,6 +2329,7 @@ export function App() {
 
         nodeGatewayWsRef.current = null;
         setNodeGatewayConnected(false);
+        setNodeGatewayServerId("");
 
         connected = false;
         rejectPendingVoiceEvents("VOICE_GATEWAY_CLOSED");
@@ -2259,6 +2354,7 @@ export function App() {
 
       nodeGatewayReadyRef.current = false;
       setNodeGatewayConnected(false);
+      setNodeGatewayServerId("");
 
       if (nodeGatewayHeartbeatRef.current) {
         clearInterval(nodeGatewayHeartbeatRef.current);
@@ -2271,30 +2367,32 @@ export function App() {
       }
     };
   }, [
-    activeServer?.id,
-    activeServer?.baseUrl,
-    activeServer?.membershipToken,
+    nodeGatewayTargetServer?.id,
+    nodeGatewayTargetServer?.baseUrl,
+    nodeGatewayTargetServer?.membershipToken,
     nodeGatewayUnavailableByServer
   ]);
 
 
   useEffect(() => {
     if (!activeGuildId || !activeChannelId) return;
+    if (!nodeGatewayConnectedForActiveServer) return;
     const ws = nodeGatewayWsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN || !nodeGatewayReadyRef.current) return;
     ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_GUILD", d: { guildId: activeGuildId } }));
     ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_CHANNEL", d: { channelId: activeChannelId } }));
-  }, [activeGuildId, activeChannelId]);
+  }, [activeGuildId, activeChannelId, nodeGatewayConnectedForActiveServer]);
 
   useEffect(() => {
     if (navMode !== "servers" || !activeGuildId || !guildState?.channels?.length) return;
+    if (!nodeGatewayConnectedForActiveServer) return;
     const ws = nodeGatewayWsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN || !nodeGatewayReadyRef.current) return;
     for (const channel of guildState.channels) {
       if (!channel?.id || channel.type !== "text") continue;
       ws.send(JSON.stringify({ op: "DISPATCH", t: "SUBSCRIBE_CHANNEL", d: { channelId: channel.id } }));
     }
-  }, [navMode, activeGuildId, guildState?.channels]);
+  }, [navMode, activeGuildId, guildState?.channels, nodeGatewayConnectedForActiveServer]);
 
   useEffect(() => {
     if (!activeServerId) return;
@@ -2524,12 +2622,12 @@ export function App() {
       });
 
     loadGuildState();
-    const timer = nodeGatewayConnected ? null : window.setInterval(loadGuildState, 3000);
+    const timer = nodeGatewayConnectedForActiveServer ? null : window.setInterval(loadGuildState, 3000);
     return () => {
       cancelled = true;
       if (timer) window.clearInterval(timer);
     };
-  }, [activeServer, activeGuildId, navMode, activeChannelId, nodeGatewayConnected]);
+  }, [activeServer, activeGuildId, navMode, activeChannelId, nodeGatewayConnectedForActiveServer]);
 
   useEffect(() => {
     if (navMode !== "dms" || !activeDmId || !accessToken) return;
@@ -2765,6 +2863,7 @@ export function App() {
 
   activeChannelIdRef.current = activeChannelId;
   activeGuildIdRef.current = activeGuildId;
+  activeServerIdRef.current = activeServerId;
 
   useEffect(() => {
     if (navMode !== "servers" || !activeServer || !activeChannelId) {
@@ -2798,13 +2897,13 @@ export function App() {
       });
 
     loadChannelMessages();
-    const timer = nodeGatewayConnected ? null : window.setInterval(loadChannelMessages, 2000);
+    const timer = nodeGatewayConnectedForActiveServer ? null : window.setInterval(loadChannelMessages, 2000);
 
     return () => {
       cancelled = true;
       if (timer) window.clearInterval(timer);
     };
-  }, [activeServer, activeChannelId, navMode, nodeGatewayConnected]);
+  }, [activeServer, activeChannelId, navMode, nodeGatewayConnectedForActiveServer]);
 
   useEffect(() => {
     setPendingAttachments([]);
@@ -3671,15 +3770,15 @@ export function App() {
     setShow2FASetup(false);
   }
 
-  function disable2FA() {
-    if (window.confirm("Are you sure? You will lose 2FA protection.")) {
-      setSecuritySettings((current) => ({ ...current, twoFactorEnabled: false }));
-      setTwoFactorSecret("");
-      setBackupCodes([]);
-      setTwoFactorVerified(false);
-      setShow2FASetup(false);
-      setStatus("2FA has been disabled.");
-    }
+  async function disable2FA() {
+    const approved = await confirmDialog("Are you sure? You will lose 2FA protection.", "Disable 2FA");
+    if (!approved) return;
+    setSecuritySettings((current) => ({ ...current, twoFactorEnabled: false }));
+    setTwoFactorSecret("");
+    setBackupCodes([]);
+    setTwoFactorVerified(false);
+    setShow2FASetup(false);
+    setStatus("2FA has been disabled.");
   }
 
   async function openDmFromFriend(friend) {
@@ -4057,7 +4156,7 @@ export function App() {
 
     let privateRoleIds = null;
     if (type === "category") {
-      const makePrivate = window.confirm("Make this category private?");
+      const makePrivate = await confirmDialog("Make this category private?", "Category Privacy");
       if (makePrivate) {
         const roleList = (guildState?.roles || []).filter((role) => !role.is_everyone).map((role) => role.name).join(", ");
         const rawRoles = (await promptText(`Allowed roles (comma-separated names or IDs).\nAvailable: ${roleList}`, "")) || "";
@@ -4268,7 +4367,7 @@ export function App() {
     if (!activeServer || !activeGuildId || !memberId || !canKickMembers || moderationBusy) return;
     const member = resolvedMemberList.find((item) => item.id === memberId);
     const label = member?.username || memberId;
-    if (!window.confirm(`Kick ${label}? They can rejoin with an invite.`)) return;
+    if (!await confirmDialog(`Kick ${label}? They can rejoin with an invite.`, "Kick Member")) return;
 
     setModerationBusy(true);
     try {
@@ -4287,7 +4386,7 @@ export function App() {
     if (!activeServer || !activeGuildId || !memberId || !canBanMembers || moderationBusy) return;
     const member = resolvedMemberList.find((item) => item.id === memberId);
     const label = member?.username || memberId;
-    if (!window.confirm(`Ban ${label}? This removes them and blocks rejoin until unbanned.`)) return;
+    if (!await confirmDialog(`Ban ${label}? This removes them and blocks rejoin until unbanned.`, "Ban Member")) return;
 
     setModerationBusy(true);
     try {
@@ -4403,7 +4502,7 @@ export function App() {
     if (!channel || !canManageServer || !activeServer || !workingGuildId) return;
     try {
       await saveChannelName(channel.id, channel.name);
-      if (window.confirm("Configure visibility (private roles) for this channel/category?")) {
+      if (await confirmDialog("Configure visibility (private roles) for this channel/category?", "Channel Visibility")) {
         await setChannelVisibilityByRoles(channel.id);
       }
       const state = await nodeApi(activeServer.baseUrl, `/v1/guilds/${workingGuildId}/state`, activeServer.membershipToken);
@@ -4420,7 +4519,7 @@ export function App() {
   async function deleteChannelById(channel) {
     if (!channel || !canManageServer || !activeServer || !workingGuildId) return;
     const kind = channel.type === "category" ? "category" : "channel";
-    if (!window.confirm(`Delete ${kind} "${channel.name}"?`)) return;
+    if (!await confirmDialog(`Delete ${kind} "${channel.name}"?`, "Delete Channel")) return;
 
     try {
       if (channel.type === "category") {
@@ -4518,7 +4617,7 @@ export function App() {
 
   async function deleteServer(server) {
     if (!server?.id || !(server.roles || []).includes("owner")) return;
-    if (!window.confirm(`Delete "${server.name}"? This cannot be undone. All members will lose access.`)) return;
+    if (!await confirmDialog(`Delete "${server.name}"? This cannot be undone. All members will lose access.`, "Delete Server")) return;
     setServerContextMenu(null);
     try {
       await api(`/v1/servers/${server.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } });
@@ -4761,6 +4860,21 @@ export function App() {
     return usable;
   }
 
+  async function enterShareFullscreen(event) {
+    const node = event?.currentTarget;
+    if (!node) return;
+    const requestFullscreen = node.requestFullscreen || node.webkitRequestFullscreen || node.msRequestFullscreen;
+    if (typeof requestFullscreen !== "function") {
+      setStatus("Fullscreen is not supported in this browser.");
+      return;
+    }
+    try {
+      await requestFullscreen.call(node);
+    } catch (error) {
+      setStatus(`Could not open fullscreen: ${error.message || "FULLSCREEN_FAILED"}`);
+    }
+  }
+
   async function joinVoiceChannel(channel) {
     if (!channel?.id || !activeGuildId || !activeServer?.baseUrl || !activeServer?.membershipToken) return;
     let sfuError = null;
@@ -4787,7 +4901,7 @@ export function App() {
       const reason = sfuError?.message || "VOICE_GATEWAY_UNAVAILABLE";
       const message = `Voice connection failed: ${reason}. Realtime voice gateway is required; set VITE_ENABLE_REST_VOICE_FALLBACK=1 only for diagnostics.`;
       setStatus(message);
-      window.alert(message);
+      await alertDialog(message, "Voice Error");
       return;
     }
 
@@ -4799,7 +4913,7 @@ export function App() {
     } catch (error) {
       const message = `Voice connection failed: ${error.message || "VOICE_JOIN_FAILED"}`;
       setStatus(message);
-      window.alert(message);
+      await alertDialog(message, "Voice Error");
     }
   }
 
@@ -4816,7 +4930,7 @@ export function App() {
     } catch (error) {
       const message = `Screen sharing failed: ${error.message || "SCREEN_SHARE_FAILED"}`;
       setStatus(message);
-      window.alert(message);
+      await alertDialog(message, "Screen Share Error");
     }
   }
 
@@ -5477,6 +5591,14 @@ export function App() {
     setStatus(`Theme loaded: ${file.name}`);
   }
 
+  if (routePath === APP_ROUTE_TERMS) {
+    return (
+      <TermsPage
+        onBack={() => navigateAppRoute(accessToken ? APP_ROUTE_CLIENT : APP_ROUTE_HOME)}
+      />
+    );
+  }
+
   if (!accessToken) {
     if (routePath === APP_ROUTE_HOME) {
       return (
@@ -5487,6 +5609,7 @@ export function App() {
           downloadTargets={DOWNLOAD_TARGETS}
           preferredDownloadTarget={preferredDownloadTarget}
           onOpenClient={() => navigateAppRoute(APP_ROUTE_LOGIN)}
+          onOpenTerms={() => navigateAppRoute(APP_ROUTE_TERMS)}
         />
       );
     }
@@ -5505,6 +5628,7 @@ export function App() {
         onSubmit={handleAuthSubmit}
         onResendVerification={handleResendVerification}
         onBackHome={() => navigateAppRoute(APP_ROUTE_HOME)}
+        onOpenTerms={() => navigateAppRoute(APP_ROUTE_TERMS)}
       />
     );
   }
@@ -5757,6 +5881,8 @@ export function App() {
                       <video
                         autoPlay
                         playsInline
+                        title="Click to view fullscreen"
+                        onClick={enterShareFullscreen}
                         ref={(node) => {
                           if (!node || !share.stream) return;
                           if (node.srcObject !== share.stream) node.srcObject = share.stream;
@@ -6645,6 +6771,47 @@ export function App() {
         </div>
       )}
 
+      {dialogModal && (
+        <div
+          className="settings-overlay"
+          onClick={() => resolveDialog(dialogModal.type === "confirm" ? false : null)}
+        >
+          <div className="add-server-modal opencom-dialog-modal" onClick={(event) => event.stopPropagation()}>
+            <h3>{dialogModal.title}</h3>
+            <p className="hint opencom-dialog-message">{dialogModal.message}</p>
+            {dialogModal.type === "prompt" && (
+              <input
+                ref={dialogInputRef}
+                value={dialogModal.value}
+                onChange={(event) => setDialogModal((current) => (current ? { ...current, value: event.target.value } : current))}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    resolveDialog(null);
+                  }
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    resolveDialog(dialogModal.value);
+                  }
+                }}
+              />
+            )}
+            <div className="row-actions opencom-dialog-actions">
+              {dialogModal.type !== "alert" && (
+                <button className="ghost" onClick={() => resolveDialog(dialogModal.type === "confirm" ? false : null)}>
+                  {dialogModal.cancelLabel || "Cancel"}
+                </button>
+              )}
+              <button
+                onClick={() => resolveDialog(dialogModal.type === "prompt" ? dialogModal.value : true)}
+              >
+                {dialogModal.confirmLabel || "OK"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {boostUpsell && (
         <div className="settings-overlay" onClick={() => setBoostUpsell(null)}>
           <div className="add-server-modal boost-upsell-modal" onClick={(event) => event.stopPropagation()}>
@@ -7368,7 +7535,15 @@ export function App() {
                   <section className="card security-card danger-card">
                     <h4>⚠️ Danger Zone</h4>
                     <p className="hint">Irreversible actions. Proceed with caution.</p>
-                    <button className="danger" onClick={() => { if (window.confirm("Are you absolutely sure? This cannot be undone.")) setStatus("Account deletion request submitted for review."); }}>Delete Account Permanently</button>
+                    <button
+                      className="danger"
+                      onClick={async () => {
+                        const approved = await confirmDialog("Are you absolutely sure? This cannot be undone.", "Delete Account");
+                        if (approved) setStatus("Account deletion request submitted for review.");
+                      }}
+                    >
+                      Delete Account Permanently
+                    </button>
                   </section>
 
                   <section className="card">
