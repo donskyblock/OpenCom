@@ -61,6 +61,7 @@ const MIC_GAIN_KEY = "opencom_mic_gain";
 const MIC_SENSITIVITY_KEY = "opencom_mic_sensitivity";
 const AUDIO_INPUT_DEVICE_KEY = "opencom_audio_input_device";
 const AUDIO_OUTPUT_DEVICE_KEY = "opencom_audio_output_device";
+const NOISE_SUPPRESSION_KEY = "opencom_noise_suppression";
 // Kept for backward compatibility with any persisted/runtime references from older bundles.
 const SERVER_VOICE_GATEWAY_PREFS_KEY = "opencom_server_voice_gateway_prefs";
 const LAST_CORE_GATEWAY_KEY = "opencom_last_core_gateway";
@@ -724,6 +725,8 @@ export function App() {
   const [micSensitivity, setMicSensitivity] = useState(Number(localStorage.getItem(MIC_SENSITIVITY_KEY) || 50));
   const [audioInputDeviceId, setAudioInputDeviceId] = useState(localStorage.getItem(AUDIO_INPUT_DEVICE_KEY) || "");
   const [audioOutputDeviceId, setAudioOutputDeviceId] = useState(localStorage.getItem(AUDIO_OUTPUT_DEVICE_KEY) || "");
+  const [noiseSuppressionEnabled, setNoiseSuppressionEnabled] = useState(localStorage.getItem(NOISE_SUPPRESSION_KEY) !== "0");
+  const [localAudioProcessingInfo, setLocalAudioProcessingInfo] = useState(null);
   const [audioInputDevices, setAudioInputDevices] = useState([]);
   const [audioOutputDevices, setAudioOutputDevices] = useState([]);
   const [selfStatus, setSelfStatus] = useState(localStorage.getItem(SELF_STATUS_KEY) || "online");
@@ -825,6 +828,9 @@ export function App() {
       getSelfUserId: () => selfUserIdRef.current,
       sendDispatch: (type, data) => sendNodeVoiceDispatch(type, data),
       waitForEvent: waitForVoiceEvent,
+      onLocalAudioProcessingInfo: (info) => {
+        setLocalAudioProcessingInfo(info || null);
+      },
       onRemoteVideoAdded: ({ producerId, userId, stream }) => {
         if (!producerId || !stream) return;
         setRemoteScreenSharesByProducerId((prev) => ({
@@ -2589,7 +2595,12 @@ export function App() {
     (async () => {
       try {
         const stream = voiceSfuRef.current?.getLocalStream() || await navigator.mediaDevices.getUserMedia({
-          audio: audioInputDeviceId ? { deviceId: { exact: audioInputDeviceId } } : true
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: !!noiseSuppressionEnabled,
+            autoGainControl: true,
+            ...(audioInputDeviceId ? { deviceId: { exact: audioInputDeviceId } } : {})
+          }
         });
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
@@ -2646,7 +2657,7 @@ export function App() {
       detector.analyser = null;
       detector.lastSpeaking = false;
     };
-  }, [isInVoiceChannel, isVoiceSessionSynced, voiceConnectedGuildId, voiceConnectedChannelId, isMuted, isDeafened, micSensitivity, audioInputDeviceId, me?.id]);
+  }, [isInVoiceChannel, isVoiceSessionSynced, voiceConnectedGuildId, voiceConnectedChannelId, isMuted, isDeafened, micSensitivity, audioInputDeviceId, noiseSuppressionEnabled, me?.id]);
 
   useEffect(() => {
     localStorage.setItem(MIC_GAIN_KEY, String(micGain));
@@ -2665,6 +2676,10 @@ export function App() {
   }, [audioOutputDeviceId]);
 
   useEffect(() => {
+    localStorage.setItem(NOISE_SUPPRESSION_KEY, noiseSuppressionEnabled ? "1" : "0");
+  }, [noiseSuppressionEnabled]);
+
+  useEffect(() => {
     voiceSfuRef.current?.setMuted(isMuted);
   }, [isMuted]);
 
@@ -2675,6 +2690,10 @@ export function App() {
   useEffect(() => {
     voiceSfuRef.current?.setAudioOutputDevice(audioOutputDeviceId);
   }, [audioOutputDeviceId]);
+
+  useEffect(() => {
+    if (!isInVoiceChannel) setLocalAudioProcessingInfo(null);
+  }, [isInVoiceChannel]);
 
 
   useEffect(() => {
@@ -4751,6 +4770,7 @@ export function App() {
         guildId: activeGuildId,
         channelId: channel.id,
         audioInputDeviceId,
+        noiseSuppression: noiseSuppressionEnabled,
         isMuted,
         isDeafened,
         audioOutputDeviceId
@@ -7122,6 +7142,23 @@ export function App() {
                   <label>Mic Sensitivity ({micSensitivity}%)
                     <input type="range" min="0" max="100" step="5" value={micSensitivity} onChange={(e) => setMicSensitivity(Number(e.target.value))} />
                   </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={noiseSuppressionEnabled}
+                      onChange={(event) => setNoiseSuppressionEnabled(event.target.checked)}
+                    />
+                    {" "}
+                    Noise Suppression
+                  </label>
+                  {localAudioProcessingInfo && (
+                    <p className="hint">
+                      Noise suppression requested: {localAudioProcessingInfo.requested?.noiseSuppression ? "On" : "Off"}
+                      {" · "}
+                      applied: {localAudioProcessingInfo.applied?.noiseSuppression == null ? "Unknown" : localAudioProcessingInfo.applied.noiseSuppression ? "On" : "Off"}
+                      {!localAudioProcessingInfo.supported?.noiseSuppression ? " (not supported by this browser/device)" : ""}
+                    </p>
+                  )}
                   <p className="hint">Tip: allow microphone permissions so device names show properly.</p>
                 </section>
               )}

@@ -7,6 +7,7 @@ export function createSfuVoiceClient({
   getSelfUserId,
   sendDispatch,
   waitForEvent,
+  onLocalAudioProcessingInfo,
   onRemoteAudioAdded,
   onRemoteAudioRemoved,
   onRemoteVideoAdded,
@@ -185,7 +186,15 @@ export function createSfuVoiceClient({
     onRemoteVideoAdded?.({ producerId, userId, stream, kind: consumer.kind });
   }
 
-  async function join({ guildId, channelId, audioInputDeviceId, isMuted = false, isDeafened = false, audioOutputDeviceId = "" }) {
+  async function join({
+    guildId,
+    channelId,
+    audioInputDeviceId,
+    noiseSuppression = true,
+    isMuted = false,
+    isDeafened = false,
+    audioOutputDeviceId = ""
+  }) {
     await cleanup();
     state.sessionToken += 1;
     const token = state.sessionToken;
@@ -257,13 +266,32 @@ export function createSfuVoiceClient({
 
     const audioConstraints = {
       echoCancellation: true,
-      noiseSuppression: true,
+      noiseSuppression: !!noiseSuppression,
       autoGainControl: true,
       ...(audioInputDeviceId ? { deviceId: { exact: audioInputDeviceId } } : {})
     };
     state.localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
     const localTrack = state.localStream.getAudioTracks()[0];
     if (!localTrack) throw new Error("MIC_TRACK_NOT_FOUND");
+    const trackSettings = typeof localTrack.getSettings === "function" ? localTrack.getSettings() : {};
+    const supportedConstraints = navigator.mediaDevices?.getSupportedConstraints?.() || {};
+    onLocalAudioProcessingInfo?.({
+      requested: {
+        noiseSuppression: !!noiseSuppression,
+        echoCancellation: true,
+        autoGainControl: true
+      },
+      applied: {
+        noiseSuppression: typeof trackSettings.noiseSuppression === "boolean" ? trackSettings.noiseSuppression : null,
+        echoCancellation: typeof trackSettings.echoCancellation === "boolean" ? trackSettings.echoCancellation : null,
+        autoGainControl: typeof trackSettings.autoGainControl === "boolean" ? trackSettings.autoGainControl : null
+      },
+      supported: {
+        noiseSuppression: !!supportedConstraints.noiseSuppression,
+        echoCancellation: !!supportedConstraints.echoCancellation,
+        autoGainControl: !!supportedConstraints.autoGainControl
+      }
+    });
     state.localAudioProducer = await state.sendTransport.produce({ track: localTrack });
     if (state.isMuted) {
       state.localAudioProducer.pause();
