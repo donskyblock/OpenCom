@@ -44,6 +44,9 @@ const CORE_API = resolveCoreApiBase();
 /** Resolve profile image URL so it loads from the API when relative (e.g. /v1/profile-images/...) */
 function profileImageUrl(url) {
   if (!url || typeof url !== "string") return null;
+  const trimmed = url.trim();
+  if (!trimmed || trimmed === "null" || trimmed === "undefined" || trimmed === "[object Object]") return null;
+  url = trimmed;
   if (url.startsWith("data:")) return url;
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
   if (url.startsWith("users/")) return `${CORE_API.replace(/\/$/, "")}/v1/profile-images/${url}`;
@@ -52,10 +55,95 @@ function profileImageUrl(url) {
   return url;
 }
 
+function createBasicFullProfile(profileData = {}) {
+  const hasBio = !!String(profileData?.bio || "").trim();
+  return {
+    version: 1,
+    mode: "basic",
+    enabled: true,
+    theme: {
+      background: "linear-gradient(150deg, #16274b, #0f1a33 65%)",
+      card: "rgba(9, 14, 28, 0.62)",
+      text: "#dfe9ff"
+    },
+    elements: [
+      { id: "banner", type: "banner", x: 0, y: 0, w: 100, h: 34, order: 0 },
+      { id: "avatar", type: "avatar", x: 4, y: 21, w: 20, h: 31, order: 1 },
+      { id: "name", type: "name", x: 30, y: 30, w: 66, h: 10, order: 2 },
+      { id: "bio", type: "bio", x: 4, y: 54, w: 92, h: hasBio ? 30 : 18, order: 3 }
+    ],
+    links: []
+  };
+}
+
+function clampProfilePercent(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(max, numeric));
+}
+
+function normalizeFullProfile(profileData = {}, fullProfileCandidate) {
+  const basic = createBasicFullProfile(profileData);
+  const raw = fullProfileCandidate && typeof fullProfileCandidate === "object" ? fullProfileCandidate : {};
+
+  const themeInput = raw.theme && typeof raw.theme === "object" ? raw.theme : {};
+  const theme = {
+    background: typeof themeInput.background === "string" && themeInput.background.trim() ? themeInput.background.trim().slice(0, 300) : basic.theme.background,
+    card: typeof themeInput.card === "string" && themeInput.card.trim() ? themeInput.card.trim().slice(0, 120) : basic.theme.card,
+    text: typeof themeInput.text === "string" && themeInput.text.trim() ? themeInput.text.trim().slice(0, 40) : basic.theme.text
+  };
+
+  const rawElements = Array.isArray(raw.elements) ? raw.elements : [];
+  const elements = rawElements
+    .filter((item) => item && typeof item === "object")
+    .slice(0, 24)
+    .map((item, index) => {
+      const type = String(item.type || "").toLowerCase();
+      if (!["avatar", "banner", "name", "bio", "links", "text"].includes(type)) return null;
+      return {
+        id: String(item.id || `${type}-${index + 1}`).slice(0, 40),
+        type,
+        x: clampProfilePercent(item.x, 0, 100, type === "banner" ? 0 : 5),
+        y: clampProfilePercent(item.y, 0, 100, type === "banner" ? 0 : 5 + index * 8),
+        w: clampProfilePercent(item.w, 1, 100, type === "banner" ? 100 : (type === "avatar" ? 20 : 80)),
+        h: clampProfilePercent(item.h, 1, 100, type === "banner" ? 34 : (type === "avatar" ? 31 : 12)),
+        order: Math.max(0, Math.min(100, Number.isFinite(Number(item.order)) ? Math.round(Number(item.order)) : index)),
+        text: typeof item.text === "string" ? item.text.slice(0, 500) : ""
+      };
+    })
+    .filter(Boolean);
+
+  const rawLinks = Array.isArray(raw.links) ? raw.links : [];
+  const links = rawLinks
+    .filter((item) => item && typeof item === "object")
+    .slice(0, 16)
+    .map((item, index) => {
+      const label = String(item.label || "").trim().slice(0, 40);
+      const url = String(item.url || "").trim().slice(0, 500);
+      if (!label || !/^https?:\/\//i.test(url)) return null;
+      return {
+        id: String(item.id || `link-${index + 1}`).slice(0, 40),
+        label,
+        url,
+        x: clampProfilePercent(item.x, 0, 100, 0),
+        y: clampProfilePercent(item.y, 0, 100, 0)
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    version: 1,
+    mode: raw.mode === "custom" ? "custom" : "basic",
+    enabled: raw.enabled !== false,
+    theme,
+    elements: elements.length ? elements : basic.elements,
+    links
+  };
+}
+
 const THEME_STORAGE_KEY = "opencom_custom_theme_css";
 const THEME_ENABLED_STORAGE_KEY = "opencom_custom_theme_enabled";
 const SELF_STATUS_KEY = "opencom_self_status";
-const PINNED_SERVER_KEY = "opencom_pinned_server_messages";
 const PINNED_DM_KEY = "opencom_pinned_dm_messages";
 const ACTIVE_DM_KEY = "opencom_active_dm";
 const GATEWAY_DEVICE_ID_KEY = "opencom_gateway_device_id";
@@ -64,6 +152,7 @@ const MIC_SENSITIVITY_KEY = "opencom_mic_sensitivity";
 const AUDIO_INPUT_DEVICE_KEY = "opencom_audio_input_device";
 const AUDIO_OUTPUT_DEVICE_KEY = "opencom_audio_output_device";
 const NOISE_SUPPRESSION_KEY = "opencom_noise_suppression";
+const VOICE_MEMBER_AUDIO_PREFS_KEY = "opencom_voice_member_audio_prefs";
 // Kept for backward compatibility with any persisted/runtime references from older bundles.
 const SERVER_VOICE_GATEWAY_PREFS_KEY = "opencom_server_voice_gateway_prefs";
 const LAST_CORE_GATEWAY_KEY = "opencom_last_core_gateway";
@@ -100,6 +189,12 @@ const GUILD_PERM = {
   MANAGE_ROLES: 1n << 3n,
   KICK_MEMBERS: 1n << 4n,
   BAN_MEMBERS: 1n << 5n,
+  MUTE_MEMBERS: 1n << 6n,
+  DEAFEN_MEMBERS: 1n << 7n,
+  MOVE_MEMBERS: 1n << 8n,
+  CONNECT: 1n << 9n,
+  SPEAK: 1n << 10n,
+  ATTACH_FILES: 1n << 11n,
   ADMINISTRATOR: 1n << 60n
 };
 
@@ -673,6 +768,11 @@ export function App() {
 
   const [profile, setProfile] = useState(null);
   const [profileForm, setProfileForm] = useState({ displayName: "", bio: "", pfpUrl: "", bannerUrl: "" });
+  const [fullProfileDraft, setFullProfileDraft] = useState(createBasicFullProfile({}));
+  const [fullProfileViewer, setFullProfileViewer] = useState(null);
+  const [fullProfileDraggingElementId, setFullProfileDraggingElementId] = useState("");
+  const fullProfileDragOffsetRef = useRef({ x: 0, y: 0 });
+  const fullProfileEditorCanvasRef = useRef(null);
   const [rpcForm, setRpcForm] = useState({
     name: "",
     details: "",
@@ -725,7 +825,7 @@ export function App() {
   const [newOfficialServerName, setNewOfficialServerName] = useState("");
   const [newOfficialServerLogoUrl, setNewOfficialServerLogoUrl] = useState("");
   const [newOfficialServerBannerUrl, setNewOfficialServerBannerUrl] = useState("");
-  const [pinnedServerMessages, setPinnedServerMessages] = useState(getStoredJson(PINNED_SERVER_KEY, {}));
+  const [pinnedServerMessages, setPinnedServerMessages] = useState({});
   const [pinnedDmMessages, setPinnedDmMessages] = useState(getStoredJson(PINNED_DM_KEY, {}));
   const [newRoleName, setNewRoleName] = useState("");
   const [selectedRoleId, setSelectedRoleId] = useState("");
@@ -736,6 +836,8 @@ export function App() {
   const [moderationBusy, setModerationBusy] = useState(false);
   const [profileCardPosition, setProfileCardPosition] = useState({ x: 26, y: 26 });
   const [draggingProfileCard, setDraggingProfileCard] = useState(false);
+  const [invertProfileDrag, setInvertProfileDrag] = useState(false);
+  const [dmReplyTarget, setDmReplyTarget] = useState(null);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState("profile");
@@ -793,6 +895,7 @@ export function App() {
   const [voiceStatesByGuild, setVoiceStatesByGuild] = useState({});
   const [voiceSpeakingByGuild, setVoiceSpeakingByGuild] = useState({});
   const [remoteScreenSharesByProducerId, setRemoteScreenSharesByProducerId] = useState({});
+  const [voiceMemberAudioPrefsByGuild, setVoiceMemberAudioPrefsByGuild] = useState(getStoredJson(VOICE_MEMBER_AUDIO_PREFS_KEY, {}));
   const [serverVoiceGatewayPrefs, setServerVoiceGatewayPrefs] = useState(getStoredJson(SERVER_VOICE_GATEWAY_PREFS_KEY, {}));
   const [nodeGatewayUnavailableByServer, setNodeGatewayUnavailableByServer] = useState({});
   const [clientExtensionCatalog, setClientExtensionCatalog] = useState([]);
@@ -814,6 +917,8 @@ export function App() {
   const voiceSpeakingDetectorRef = useRef({ audioCtx: null, stream: null, analyser: null, timer: null, lastSpeaking: false });
   const pendingVoiceEventsRef = useRef(new Map());
   const selfUserIdRef = useRef("");
+  const voiceMemberAudioPrefsByGuildRef = useRef(voiceMemberAudioPrefsByGuild);
+  voiceMemberAudioPrefsByGuildRef.current = voiceMemberAudioPrefsByGuild;
   selfUserIdRef.current = me?.id || "";
   const voiceSfuRef = useRef(null);
   if (!voiceSfuRef.current) {
@@ -830,6 +935,13 @@ export function App() {
           ...prev,
           [producerId]: { producerId, userId: userId || "", stream }
         }));
+      },
+      onRemoteAudioAdded: ({ guildId, userId }) => {
+        const uid = String(userId || "").trim();
+        if (!guildId || !uid) return;
+        const guildPrefs = voiceMemberAudioPrefsByGuildRef.current?.[guildId] || {};
+        const pref = guildPrefs[uid] || { muted: false, volume: 100 };
+        voiceSfuRef.current?.setUserAudioPreference(uid, pref);
       },
       onRemoteVideoRemoved: ({ producerId }) => {
         if (!producerId) return;
@@ -873,18 +985,30 @@ export function App() {
     const avatarStatus = getPresence(userId);
     const seed = String(userId || username || "?");
     const seedCode = seed.charCodeAt(0) || 0;
+    const resolvedUrl = profileImageUrl(pfpUrl);
     return (
       <div className="avatar-with-presence" style={{ width: `${size}px`, height: `${size}px` }}>
-        {pfpUrl ? (
-          <img src={profileImageUrl(pfpUrl)} alt={username} className="avatar-presence-image" />
-        ) : (
-          <div
-            className="avatar-presence-fallback"
-            style={{ background: `hsl(${Math.abs(seedCode * 7) % 360}, 70%, 60%)` }}
-          >
-            {String(username || "?").substring(0, 1).toUpperCase()}
-          </div>
+        {resolvedUrl && (
+          <img
+            src={resolvedUrl}
+            alt={username}
+            className="avatar-presence-image"
+            onError={(event) => {
+              event.currentTarget.style.display = "none";
+              const fallback = event.currentTarget.parentElement?.querySelector(".avatar-presence-fallback");
+              if (fallback) fallback.style.display = "grid";
+            }}
+          />
         )}
+        <div
+          className="avatar-presence-fallback"
+          style={{
+            background: `hsl(${Math.abs(seedCode * 7) % 360}, 70%, 60%)`,
+            display: resolvedUrl ? "none" : "grid"
+          }}
+        >
+          {String(username || "?").substring(0, 1).toUpperCase()}
+        </div>
         <span className={`presence-indicator-dot ${presenceIndicatorClass(avatarStatus)}`} />
       </div>
     );
@@ -913,6 +1037,7 @@ export function App() {
   const desktopSessionLoadedRef = useRef(false);
   const extensionPanelsRef = useRef([]);
   const serversRef = useRef([]);
+  const dragEasterEggBufferRef = useRef("");
   const storageScope = me?.id || "anonymous";
 
   function resolveDialog(value) {
@@ -1216,7 +1341,40 @@ export function App() {
           headers: { Authorization: `Bearer ${accessToken}`, ...(options.headers || {}) }
         }),
         getSelf: () => me,
-        setStatus
+        setStatus,
+        voice: {
+          getState: () => ({
+            connected: !!voiceSession.channelId,
+            guildId: voiceSession.guildId || "",
+            channelId: voiceSession.channelId || "",
+            muted: !!isMuted,
+            deafened: !!isDeafened,
+            screenSharing: !!isScreenSharing
+          }),
+          join: async (channelId) => {
+            const channel = (channels || []).find((item) => item?.id === channelId && item?.type === "voice");
+            if (!channel) throw new Error("VOICE_CHANNEL_NOT_FOUND");
+            await joinVoiceChannel(channel);
+          },
+          leave: async () => {
+            await leaveVoiceChannel();
+          },
+          setMuted: (nextMuted) => setIsMuted(!!nextMuted),
+          setDeafened: (nextDeafened) => setIsDeafened(!!nextDeafened),
+          toggleScreenShare: async () => {
+            await toggleScreenShare();
+          },
+          onStateChange: (handler) => {
+            if (typeof handler !== "function") return () => {};
+            const listener = (event) => {
+              try {
+                handler(event?.detail || {});
+              } catch {}
+            };
+            window.addEventListener("opencom-voice-state-change", listener);
+            return () => window.removeEventListener("opencom-voice-state-change", listener);
+          }
+        }
       };
 
       await Promise.resolve(activate(extensionApi));
@@ -1390,7 +1548,35 @@ export function App() {
       || hasGuildPermission(GUILD_PERM.BAN_MEMBERS);
   }, [activeServer, hasGuildPermission]);
 
+  const canServerMuteMembers = useMemo(() => {
+    if (!activeServer) return false;
+    return (activeServer.roles || []).includes("owner")
+      || (activeServer.roles || []).includes("platform_admin")
+      || hasGuildPermission(GUILD_PERM.MUTE_MEMBERS);
+  }, [activeServer, hasGuildPermission]);
+
+  const canServerDeafenMembers = useMemo(() => {
+    if (!activeServer) return false;
+    return (activeServer.roles || []).includes("owner")
+      || (activeServer.roles || []).includes("platform_admin")
+      || hasGuildPermission(GUILD_PERM.DEAFEN_MEMBERS);
+  }, [activeServer, hasGuildPermission]);
+
+  const canMoveVoiceMembers = useMemo(() => {
+    if (!activeServer) return false;
+    return (activeServer.roles || []).includes("owner")
+      || (activeServer.roles || []).includes("platform_admin")
+      || hasGuildPermission(GUILD_PERM.MOVE_MEMBERS);
+  }, [activeServer, hasGuildPermission]);
+
   const canModerateMembers = canKickMembers || canBanMembers;
+  const hasBoostForFullProfiles = !!(boostStatus?.active || profile?.boostActive || profile?.badges?.includes?.("boost"));
+  const canAccessServerAdminPanel = useMemo(() => {
+    return servers.some((server) => {
+      const roles = Array.isArray(server?.roles) ? server.roles : [];
+      return roles.includes("owner") || roles.includes("platform_admin") || roles.includes("admin") || roles.includes("server_admin");
+    });
+  }, [servers]);
 
   const sortedChannels = useMemo(() => [...(channels || [])].filter(Boolean).sort((a, b) => (a.position ?? 0) - (b.position ?? 0)), [channels]);
   const categoryChannels = useMemo(() => sortedChannels.filter((channel) => channel && channel.type === "category"), [sortedChannels]);
@@ -1516,6 +1702,11 @@ export function App() {
     () => Object.values(remoteScreenSharesByProducerId),
     [remoteScreenSharesByProducerId]
   );
+  const activeVoiceMemberAudioPrefs = useMemo(() => {
+    if (!activeGuildId) return {};
+    const scoped = voiceMemberAudioPrefsByGuild?.[activeGuildId];
+    return scoped && typeof scoped === "object" ? scoped : {};
+  }, [voiceMemberAudioPrefsByGuild, activeGuildId]);
 
   const groupedChannelSections = useMemo(() => {
     const categories = categoryChannels.map((category) => ({
@@ -1555,6 +1746,60 @@ export function App() {
 
   const activePinnedServerMessages = useMemo(() => pinnedServerMessages[activeChannelId] || [], [pinnedServerMessages, activeChannelId]);
   const activePinnedDmMessages = useMemo(() => pinnedDmMessages[activeDmId] || [], [pinnedDmMessages, activeDmId]);
+  const voiceStateByUserId = useMemo(() => {
+    const map = new Map();
+    for (const item of mergedVoiceStates || []) {
+      if (!item?.userId) continue;
+      map.set(item.userId, item);
+    }
+    return map;
+  }, [mergedVoiceStates]);
+
+  function getVoiceMemberAudioPref(userId) {
+    const id = String(userId || "").trim();
+    const pref = activeVoiceMemberAudioPrefs[id] || {};
+    const volume = Number(pref.volume);
+    return {
+      muted: !!pref.muted,
+      volume: Number.isFinite(volume) ? Math.max(0, Math.min(100, volume)) : 100
+    };
+  }
+
+  function setVoiceMemberAudioPref(userId, patch = {}) {
+    const id = String(userId || "").trim();
+    if (!id || !activeGuildId) return;
+    setVoiceMemberAudioPrefsByGuild((current) => {
+      const guildPrefs = current?.[activeGuildId] || {};
+      const existing = guildPrefs[id] || { muted: false, volume: 100 };
+      const next = {
+        muted: patch.muted === undefined ? !!existing.muted : !!patch.muted,
+        volume: patch.volume === undefined
+          ? (Number.isFinite(Number(existing.volume)) ? Math.max(0, Math.min(100, Number(existing.volume))) : 100)
+          : Math.max(0, Math.min(100, Number(patch.volume)))
+      };
+      return {
+        ...(current || {}),
+        [activeGuildId]: {
+          ...guildPrefs,
+          [id]: next
+        }
+      };
+    });
+  }
+
+  async function promptSetVoiceMemberLocalVolume(userId) {
+    const current = getVoiceMemberAudioPref(userId);
+    const raw = await promptText("Set local user volume (0-100):", String(current.volume));
+    if (raw == null) return;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) {
+      setStatus("Invalid volume value.");
+      return;
+    }
+    const clamped = Math.max(0, Math.min(100, Math.round(parsed)));
+    setVoiceMemberAudioPref(userId, { volume: clamped });
+    setStatus(`Local voice volume set to ${clamped}%.`);
+  }
   const activeServerVoiceGatewayPref = useMemo(() => {
     if (!activeServerId) return { mode: "core", customUrl: "" };
     const pref = serverVoiceGatewayPrefs[activeServerId] || {};
@@ -1723,22 +1968,29 @@ export function App() {
   }, [selfStatus]);
 
   useEffect(() => {
-    localStorage.setItem(PINNED_SERVER_KEY, JSON.stringify(pinnedServerMessages));
-  }, [pinnedServerMessages]);
-
-  useEffect(() => {
     localStorage.setItem(PINNED_DM_KEY, JSON.stringify(pinnedDmMessages));
   }, [pinnedDmMessages]);
 
   useEffect(() => {
+    localStorage.setItem(VOICE_MEMBER_AUDIO_PREFS_KEY, JSON.stringify(voiceMemberAudioPrefsByGuild || {}));
+  }, [voiceMemberAudioPrefsByGuild]);
+
+  useEffect(() => {
     if (activeDmId) localStorage.setItem(ACTIVE_DM_KEY, activeDmId);
+    setDmReplyTarget(null);
   }, [activeDmId]);
 
   useEffect(() => {
     if (!draggingProfileCard) return;
     const onMove = (event) => {
-      const x = Math.max(8, Math.min(window.innerWidth - 340, event.clientX - profileCardDragOffsetRef.current.x));
-      const y = Math.max(8, Math.min(window.innerHeight - 280, event.clientY - profileCardDragOffsetRef.current.y));
+      const rawX = invertProfileDrag
+        ? profileCardDragOffsetRef.current.x - event.clientX
+        : event.clientX - profileCardDragOffsetRef.current.x;
+      const rawY = invertProfileDrag
+        ? profileCardDragOffsetRef.current.y - event.clientY
+        : event.clientY - profileCardDragOffsetRef.current.y;
+      const x = Math.max(8, Math.min(window.innerWidth - 340, rawX));
+      const y = Math.max(8, Math.min(window.innerHeight - 280, rawY));
       setProfileCardPosition({ x, y });
     };
     const onUp = () => setDraggingProfileCard(false);
@@ -1749,7 +2001,29 @@ export function App() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [draggingProfileCard]);
+  }, [draggingProfileCard, invertProfileDrag]);
+
+  useEffect(() => {
+    if (!fullProfileDraggingElementId) return;
+    const onMove = (event) => {
+      const canvas = fullProfileEditorCanvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const px = ((event.clientX - rect.left) / rect.width) * 100;
+      const py = ((event.clientY - rect.top) / rect.height) * 100;
+      const x = Math.max(0, Math.min(100, px - fullProfileDragOffsetRef.current.x));
+      const y = Math.max(0, Math.min(100, py - fullProfileDragOffsetRef.current.y));
+      updateFullProfileElement(fullProfileDraggingElementId, { x, y });
+    };
+    const onUp = () => setFullProfileDraggingElementId("");
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [fullProfileDraggingElementId, fullProfileDraft.elements]);
 
   useEffect(() => {
     const onGlobalClick = () => {
@@ -1779,6 +2053,65 @@ export function App() {
       window.removeEventListener("keydown", onEscape);
     };
   }, [settingsOpen]);
+
+  useEffect(() => {
+    const secret = "invert";
+    const onSecretKey = (event) => {
+      if (!event?.key || event.ctrlKey || event.metaKey || event.altKey) return;
+      const key = String(event.key).toLowerCase();
+      if (!/^[a-z]$/.test(key)) {
+        dragEasterEggBufferRef.current = "";
+        return;
+      }
+      const next = (dragEasterEggBufferRef.current + key).slice(-secret.length);
+      dragEasterEggBufferRef.current = next;
+      if (next === secret) {
+        setInvertProfileDrag((current) => {
+          const updated = !current;
+          setStatus(updated ? "Easter egg enabled: profile drag is inverted." : "Easter egg disabled: profile drag restored.");
+          return updated;
+        });
+        dragEasterEggBufferRef.current = "";
+      }
+    };
+
+    window.addEventListener("keydown", onSecretKey);
+    return () => window.removeEventListener("keydown", onSecretKey);
+  }, []);
+
+  useEffect(() => {
+    const isTypingTarget = (target) => {
+      if (!target) return false;
+      const tag = String(target.tagName || "").toLowerCase();
+      return tag === "input" || tag === "textarea" || tag === "select" || !!target.isContentEditable;
+    };
+
+    const onHotkey = (event) => {
+      if (!(event.ctrlKey || event.metaKey) || !event.shiftKey) return;
+      if (isTypingTarget(event.target)) return;
+      const key = String(event.key || "").toLowerCase();
+
+      if (key === "m") {
+        event.preventDefault();
+        setIsMuted((value) => !value);
+      } else if (key === "d") {
+        event.preventDefault();
+        setIsDeafened((value) => !value);
+      } else if (key === "v") {
+        event.preventDefault();
+        if (isInVoiceChannel) toggleScreenShare().catch(() => {});
+      } else if (key === "x") {
+        event.preventDefault();
+        if (isInVoiceChannel) leaveVoiceChannel().catch(() => {});
+      } else if (key === ",") {
+        event.preventDefault();
+        setSettingsOpen(true);
+      }
+    };
+
+    window.addEventListener("keydown", onHotkey);
+    return () => window.removeEventListener("keydown", onHotkey);
+  }, [isInVoiceChannel]);
 
   // Handle scroll position for server messages
   useEffect(() => {
@@ -1850,6 +2183,7 @@ export function App() {
 
         const nextServers = serverData.servers || [];
         setProfile(profileData);
+        setFullProfileDraft(normalizeFullProfile(profileData, profileData.fullProfile));
         setProfileForm({
           displayName: profileData.displayName || "",
           bio: profileData.bio || "",
@@ -2790,6 +3124,14 @@ export function App() {
   }, [audioOutputDeviceId]);
 
   useEffect(() => {
+    if (!activeGuildId) return;
+    const guildPrefs = voiceMemberAudioPrefsByGuild?.[activeGuildId] || {};
+    for (const [userId, pref] of Object.entries(guildPrefs)) {
+      voiceSfuRef.current?.setUserAudioPreference(userId, pref);
+    }
+  }, [activeGuildId, voiceMemberAudioPrefsByGuild, isDeafened]);
+
+  useEffect(() => {
     if (!isInVoiceChannel) setLocalAudioProcessingInfo(null);
   }, [isInVoiceChannel]);
 
@@ -2866,6 +3208,19 @@ export function App() {
   activeServerIdRef.current = activeServerId;
 
   useEffect(() => {
+    window.dispatchEvent(new CustomEvent("opencom-voice-state-change", {
+      detail: {
+        connected: !!voiceSession.channelId,
+        guildId: voiceSession.guildId || "",
+        channelId: voiceSession.channelId || "",
+        muted: !!isMuted,
+        deafened: !!isDeafened,
+        screenSharing: !!isScreenSharing
+      }
+    }));
+  }, [voiceSession.guildId, voiceSession.channelId, isMuted, isDeafened, isScreenSharing]);
+
+  useEffect(() => {
     if (navMode !== "servers" || !activeServer || !activeChannelId) {
       if (navMode !== "servers") setMessages([]);
       return;
@@ -2904,6 +3259,11 @@ export function App() {
       if (timer) window.clearInterval(timer);
     };
   }, [activeServer, activeChannelId, navMode, nodeGatewayConnectedForActiveServer]);
+
+  useEffect(() => {
+    if (navMode !== "servers" || !activeServer || !activeChannelId) return;
+    loadServerPins(activeChannelId).catch(() => {});
+  }, [navMode, activeServer, activeChannelId]);
 
   useEffect(() => {
     setPendingAttachments([]);
@@ -3272,7 +3632,7 @@ export function App() {
   async function sendDm() {
     if (!activeDm || !dmText.trim()) return;
 
-    const content = dmText.trim();
+    const content = `${dmReplyTarget ? `> replying to ${dmReplyTarget.author}: ${dmReplyTarget.content}\n` : ""}${dmText.trim()}`;
     setDmText("");
 
     try {
@@ -3287,6 +3647,7 @@ export function App() {
       });
 
       setDms((current) => current.map((item) => item.id === activeDm.id ? { ...item, messages: data.messages || [] } : item));
+      setDmReplyTarget(null);
     } catch (error) {
       setDmText(content);
       setStatus(`DM send failed: ${error.message}`);
@@ -3824,6 +4185,7 @@ export function App() {
       if (me?.id) {
         const updated = await api(`/v1/users/${me.id}/profile`, { headers: { Authorization: `Bearer ${accessToken}` } });
         setProfile(updated);
+        setFullProfileDraft(normalizeFullProfile(updated, updated.fullProfile));
         setProfileForm({
           displayName: updated.displayName ?? "",
           bio: updated.bio ?? "",
@@ -3841,6 +4203,128 @@ export function App() {
       }
       else setStatus(`Profile update failed: ${msg}`);
     }
+  }
+
+  function updateFullProfileElement(elementId, patch) {
+    setFullProfileDraft((current) => ({
+      ...current,
+      mode: "custom",
+      elements: (current.elements || []).map((item) => item.id === elementId ? { ...item, ...patch } : item)
+    }));
+  }
+
+  function addFullProfileTextBlock() {
+    setFullProfileDraft((current) => {
+      const nextIndex = (current.elements || []).filter((item) => item.type === "text").length + 1;
+      const textBlock = {
+        id: `text-${Date.now()}`,
+        type: "text",
+        x: 8,
+        y: Math.min(92, 14 + nextIndex * 10),
+        w: 58,
+        h: 12,
+        order: 10 + nextIndex,
+        text: `Custom text ${nextIndex}`
+      };
+      return {
+        ...current,
+        mode: "custom",
+        enabled: true,
+        elements: [...(current.elements || []), textBlock]
+      };
+    });
+  }
+
+  function removeFullProfileElement(elementId) {
+    setFullProfileDraft((current) => ({
+      ...current,
+      mode: "custom",
+      elements: (current.elements || []).filter((item) => item.id !== elementId)
+    }));
+  }
+
+  function addFullProfileLink() {
+    setFullProfileDraft((current) => {
+      const nextIndex = (current.links || []).length + 1;
+      return {
+        ...current,
+        mode: "custom",
+        links: [
+          ...(current.links || []),
+          {
+            id: `link-${Date.now()}`,
+            label: `Link ${nextIndex}`,
+            url: "https://",
+            x: 0,
+            y: 0
+          }
+        ].slice(0, 16)
+      };
+    });
+  }
+
+  function updateFullProfileLink(linkId, patch) {
+    setFullProfileDraft((current) => ({
+      ...current,
+      mode: "custom",
+      links: (current.links || []).map((item) => item.id === linkId ? { ...item, ...patch } : item)
+    }));
+  }
+
+  function removeFullProfileLink(linkId) {
+    setFullProfileDraft((current) => ({
+      ...current,
+      mode: "custom",
+      links: (current.links || []).filter((item) => item.id !== linkId)
+    }));
+  }
+
+  function resetFullProfileDraftToBasic() {
+    setFullProfileDraft(createBasicFullProfile(profile || {}));
+  }
+
+  async function saveFullProfileDraft() {
+    if (!hasBoostForFullProfiles) {
+      openBoostUpsell("Boost required", "Custom full profiles are a Boost perk. Without Boost you get the default profile layout.", "Open billing");
+      return;
+    }
+    try {
+      const payload = normalizeFullProfile(profile || {}, { ...fullProfileDraft, mode: "custom", enabled: true });
+      const data = await api("/v1/me/profile/full", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify(payload)
+      });
+      const nextProfile = {
+        ...(profile || {}),
+        fullProfile: normalizeFullProfile(profile || {}, data?.fullProfile || payload),
+        hasCustomFullProfile: true
+      };
+      setProfile(nextProfile);
+      setFullProfileDraft(nextProfile.fullProfile);
+      setStatus("Full profile updated.");
+    } catch (error) {
+      const message = String(error?.message || "");
+      if (message.includes("BOOST_REQUIRED")) {
+        openBoostUpsell("Boost required", "Custom full profiles are a Boost perk. Activate Boost to save your layout.", "Open billing");
+      } else {
+        setStatus(`Full profile update failed: ${message}`);
+      }
+    }
+  }
+
+  function onFullProfileElementMouseDown(event, elementId) {
+    if (!fullProfileEditorCanvasRef.current) return;
+    const element = (fullProfileDraft.elements || []).find((item) => item.id === elementId);
+    if (!element) return;
+    const rect = fullProfileEditorCanvasRef.current.getBoundingClientRect();
+    const px = ((event.clientX - rect.left) / rect.width) * 100;
+    const py = ((event.clientY - rect.top) / rect.height) * 100;
+    fullProfileDragOffsetRef.current = {
+      x: px - Number(element.x || 0),
+      y: py - Number(element.y || 0)
+    };
+    setFullProfileDraggingElementId(elementId);
   }
 
   async function saveRichPresence() {
@@ -4038,7 +4522,8 @@ export function App() {
       setInvitePreview(null);
       setInvitePendingCode("");
       setInvitePendingAutoJoin(false);
-      setStatus("Joined server from invite.");
+      const joinedServerName = data?.serverName || data?.server?.name || invitePreview?.serverName || "";
+      setStatus(joinedServerName ? `Joined ${joinedServerName}.` : "Joined server from invite.");
 
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
       const next = refreshed.servers || [];
@@ -4441,10 +4926,15 @@ export function App() {
 
   function startDraggingProfileCard(event) {
     event.preventDefault();
-    profileCardDragOffsetRef.current = {
-      x: event.clientX - profileCardPosition.x,
-      y: event.clientY - profileCardPosition.y
-    };
+    profileCardDragOffsetRef.current = invertProfileDrag
+      ? {
+          x: event.clientX + profileCardPosition.x,
+          y: event.clientY + profileCardPosition.y
+        }
+      : {
+          x: event.clientX - profileCardPosition.x,
+          y: event.clientY - profileCardPosition.y
+        };
     setDraggingProfileCard(true);
   }
 
@@ -4665,20 +5155,38 @@ export function App() {
     setMessageContextMenu(null);
   }
 
-  function togglePinMessage(message) {
+  async function loadServerPins(channelId = activeChannelId) {
+    if (!activeServer || !channelId) return;
+    try {
+      const data = await nodeApi(activeServer.baseUrl, `/v1/channels/${channelId}/pins`, activeServer.membershipToken);
+      setPinnedServerMessages((current) => ({
+        ...current,
+        [channelId]: Array.isArray(data?.pins) ? data.pins : []
+      }));
+    } catch (error) {
+      setStatus(`Failed to load pinned messages: ${error.message}`);
+    }
+  }
+
+  async function togglePinMessage(message) {
     if (!message?.id) return;
 
     if (message.kind === "server") {
-      if (!activeChannelId) return;
-      setPinnedServerMessages((current) => {
-        const existing = current[activeChannelId] || [];
-        const isPinned = existing.some((item) => item.id === message.id);
-        const next = isPinned
-          ? existing.filter((item) => item.id !== message.id)
-          : [{ id: message.id, author: message.author, content: message.content }, ...existing].slice(0, 50);
-        return { ...current, [activeChannelId]: next };
-      });
-      setStatus("Updated pinned messages.");
+      if (!activeServer || !activeChannelId) return;
+      const existing = pinnedServerMessages[activeChannelId] || [];
+      const isPinned = existing.some((item) => item.id === message.id);
+      try {
+        await nodeApi(
+          activeServer.baseUrl,
+          `/v1/channels/${activeChannelId}/pins/${message.id}`,
+          activeServer.membershipToken,
+          { method: isPinned ? "DELETE" : "PUT", body: "{}" }
+        );
+        await loadServerPins(activeChannelId);
+        setStatus("Updated pinned messages.");
+      } catch (error) {
+        setStatus(`Pin update failed: ${error.message}`);
+      }
       return;
     }
 
@@ -4872,6 +5380,42 @@ export function App() {
       await requestFullscreen.call(node);
     } catch (error) {
       setStatus(`Could not open fullscreen: ${error.message || "FULLSCREEN_FAILED"}`);
+    }
+  }
+
+  async function setServerVoiceMemberState(channelId, memberId, patch = {}) {
+    if (!activeServer?.baseUrl || !activeServer?.membershipToken || !channelId || !memberId) return;
+    const hasMuted = patch.muted !== undefined;
+    const hasDeafened = patch.deafened !== undefined;
+    if (!hasMuted && !hasDeafened) return;
+    try {
+      await nodeApi(
+        activeServer.baseUrl,
+        `/v1/channels/${channelId}/voice/members/${memberId}/state`,
+        activeServer.membershipToken,
+        { method: "PATCH", body: JSON.stringify(patch) }
+      );
+      const actionParts = [];
+      if (hasMuted) actionParts.push(patch.muted ? "muted" : "unmuted");
+      if (hasDeafened) actionParts.push(patch.deafened ? "deafened" : "undeafened");
+      setStatus(`Voice member ${actionParts.join(" and ")}.`);
+    } catch (error) {
+      setStatus(`Voice moderation failed: ${error.message || "VOICE_MODERATION_FAILED"}`);
+    }
+  }
+
+  async function disconnectVoiceMember(channelId, memberId) {
+    if (!activeServer?.baseUrl || !activeServer?.membershipToken || !channelId || !memberId) return;
+    try {
+      await nodeApi(
+        activeServer.baseUrl,
+        `/v1/channels/${channelId}/voice/members/${memberId}/disconnect`,
+        activeServer.membershipToken,
+        { method: "POST" }
+      );
+      setStatus("Voice member disconnected.");
+    } catch (error) {
+      setStatus(`Disconnect failed: ${error.message || "VOICE_DISCONNECT_FAILED"}`);
     }
   }
 
@@ -5078,7 +5622,7 @@ export function App() {
     event.preventDefault();
     event.stopPropagation();
     const x = Math.min(event.clientX, window.innerWidth - 250);
-    const y = Math.min(event.clientY, window.innerHeight - 220);
+    const y = Math.min(event.clientY, window.innerHeight - 420);
     setServerContextMenu(null);
     setChannelContextMenu(null);
     setCategoryContextMenu(null);
@@ -5193,6 +5737,7 @@ export function App() {
       }));
       setMemberProfileCard({
         ...profileData,
+        fullProfile: normalizeFullProfile(profileData, profileData.fullProfile),
         username: profileData.username || member.username,
         status: getPresence(member.id) || "offline",
         roleIds: member.roleIds || []
@@ -5208,6 +5753,7 @@ export function App() {
         status: getPresence(member.id) || "offline",
         platformTitle: null,
         createdAt: null,
+        fullProfile: createBasicFullProfile({ username: member.username || member.id }),
         roleIds: member.roleIds || []
       });
     }
@@ -5232,6 +5778,41 @@ export function App() {
       bgColor: badge?.bgColor || "#3a4f72",
       fgColor: badge?.fgColor || "#ffffff"
     };
+  }
+
+  function renderFullProfileElement(element, viewerProfile) {
+    if (!element || !viewerProfile) return null;
+    const type = String(element.type || "").toLowerCase();
+    if (type === "banner") {
+      const banner = profileImageUrl(viewerProfile.bannerUrl || profile?.bannerUrl);
+      return banner ? <img src={banner} alt="Banner" className="full-profile-banner-image" /> : <div className="full-profile-banner-fallback" />;
+    }
+    if (type === "avatar") {
+      const avatar = profileImageUrl(viewerProfile.pfpUrl || profile?.pfpUrl);
+      return (
+        <div className="full-profile-avatar-element">
+          {avatar ? <img src={avatar} alt="Avatar" className="full-profile-avatar-image" /> : getInitials(viewerProfile.displayName || viewerProfile.username || "U")}
+        </div>
+      );
+    }
+    if (type === "name") {
+      return <strong>{viewerProfile.displayName || viewerProfile.username || "User"}</strong>;
+    }
+    if (type === "bio") {
+      return <span>{viewerProfile.bio || "No bio set."}</span>;
+    }
+    if (type === "links") {
+      const links = Array.isArray(viewerProfile.fullProfile?.links) ? viewerProfile.fullProfile.links : [];
+      return (
+        <div className="full-profile-links-list">
+          {links.length === 0 && <span className="hint">No links configured.</span>}
+          {links.map((link) => (
+            <a key={link.id || link.url} href={link.url} target="_blank" rel="noreferrer">{link.label}</a>
+          ))}
+        </div>
+      );
+    }
+    return <span>{element.text || "Custom text"}</span>;
   }
 
   function insertEmoteToken(name) {
@@ -5591,6 +6172,17 @@ export function App() {
     setStatus(`Theme loaded: ${file.name}`);
   }
 
+  function logout() {
+    cleanupVoiceRtc().catch(() => {});
+    setAccessToken("");
+    setRefreshToken("");
+    setServers([]);
+    setGuildState(null);
+    setMessages([]);
+    setSettingsOpen(false);
+    setStatus("Logged out.");
+  }
+
   if (routePath === APP_ROUTE_TERMS) {
     return (
       <TermsPage
@@ -5802,13 +6394,64 @@ export function App() {
                               <div className="voice-channel-members">
                                 {voiceMembersByChannel.get(channel.id).map((member) => {
                                   const speaking = !!voiceSpeakingByGuild[activeGuildId]?.[member.userId];
+                                  const audioPref = getVoiceMemberAudioPref(member.userId);
+                                  const canModerateThisMember = member.userId !== me?.id;
                                   return (
                                     <div key={`${channel.id}-${member.userId}`} className="voice-channel-member-row">
-                                      <div className={`avatar member-avatar vc-avatar ${speaking ? "speaking" : ""}`}>
-                                        {member.pfp_url ? <img src={profileImageUrl(member.pfp_url)} alt={member.username} className="avatar-image" /> : getInitials(member.username)}
+                                      <div className="voice-channel-member-main">
+                                        <div className={`avatar member-avatar vc-avatar ${speaking ? "speaking" : ""}`}>
+                                          {member.pfp_url ? <img src={profileImageUrl(member.pfp_url)} alt={member.username} className="avatar-image" /> : getInitials(member.username)}
+                                        </div>
+                                        <span className="voice-channel-member-name">{member.username}</span>
+                                        <span className="voice-channel-member-icons">{member.deafened ? "🔇" : member.muted ? "🎙️" : "🎤"}</span>
                                       </div>
-                                      <span className="voice-channel-member-name">{member.username}</span>
-                                      <span className="voice-channel-member-icons">{member.deafened ? "🔇" : member.muted ? "🎙️" : "🎤"}</span>
+                                      <div className="voice-channel-member-controls">
+                                        <button
+                                          type="button"
+                                          className={`voice-mini-btn ${audioPref.muted ? "danger" : "ghost"}`}
+                                          onClick={() => setVoiceMemberAudioPref(member.userId, { muted: !audioPref.muted })}
+                                        >
+                                          {audioPref.muted ? "Unmute local" : "Mute local"}
+                                        </button>
+                                        <label className="voice-volume-control">
+                                          <span>{audioPref.volume}%</span>
+                                          <input
+                                            type="range"
+                                            min={0}
+                                            max={100}
+                                            step={1}
+                                            value={audioPref.volume}
+                                            onChange={(event) => setVoiceMemberAudioPref(member.userId, { volume: Number(event.target.value) })}
+                                          />
+                                        </label>
+                                        {canModerateThisMember && canServerMuteMembers && (
+                                          <button
+                                            type="button"
+                                            className={`voice-mini-btn ${member.muted ? "danger" : "ghost"}`}
+                                            onClick={() => setServerVoiceMemberState(channel.id, member.userId, { muted: !member.muted })}
+                                          >
+                                            {member.muted ? "Server Unmute" : "Server Mute"}
+                                          </button>
+                                        )}
+                                        {canModerateThisMember && canServerDeafenMembers && (
+                                          <button
+                                            type="button"
+                                            className={`voice-mini-btn ${member.deafened ? "danger" : "ghost"}`}
+                                            onClick={() => setServerVoiceMemberState(channel.id, member.userId, { deafened: !member.deafened })}
+                                          >
+                                            {member.deafened ? "Server Undeafen" : "Server Deafen"}
+                                          </button>
+                                        )}
+                                        {canModerateThisMember && canMoveVoiceMembers && (
+                                          <button
+                                            type="button"
+                                            className="voice-mini-btn danger"
+                                            onClick={() => disconnectVoiceMember(channel.id, member.userId)}
+                                          >
+                                            Disconnect
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
                                   );
                                 })}
@@ -5869,10 +6512,23 @@ export function App() {
         <footer className="self-card">
           {isInVoiceChannel && (
             <div className="voice-widget">
-              <div className="voice-top"><strong>Voice connected</strong><span title={voiceConnectedChannelName}>{voiceConnectedChannelName}</span></div>
-              <div className="voice-actions">
-                <button className="ghost" onClick={toggleScreenShare}>{isScreenSharing ? "Stop Share" : "Share Screen"}</button>
-                <button className="danger" onClick={leaveVoiceChannel} disabled={isDisconnectingVoice}>{isDisconnectingVoice ? "Disconnecting..." : "Disconnect"}</button>
+              <div className="voice-top"><strong>Voice Connected</strong><span title={voiceConnectedChannelName}>{voiceConnectedChannelName}</span></div>
+              <div className="voice-actions voice-actions-modern">
+                <button className={`voice-action-pill ${isMuted ? "active danger" : ""}`} title={isMuted ? "Unmute" : "Mute"} onClick={() => setIsMuted((value) => !value)}>
+                  {isMuted ? "🔇" : "🎤"}
+                </button>
+                <button className={`voice-action-pill ${isDeafened ? "active danger" : ""}`} title={isDeafened ? "Undeafen" : "Deafen"} onClick={() => setIsDeafened((value) => !value)}>
+                  {isDeafened ? "🔕" : "🎧"}
+                </button>
+                <button className={`voice-action-pill ${isScreenSharing ? "active" : ""}`} title={isScreenSharing ? "Stop screen share" : "Start screen share"} onClick={toggleScreenShare}>
+                  {isScreenSharing ? "🖥️" : "📺"}
+                </button>
+                <button className="voice-action-pill danger" title="Disconnect from voice" onClick={leaveVoiceChannel} disabled={isDisconnectingVoice}>
+                  {isDisconnectingVoice ? "…" : "📞"}
+                </button>
+                <button className="voice-action-pill" title="Voice settings" onClick={() => { setSettingsOpen(true); setSettingsTab("voice"); }}>
+                  ⚙️
+                </button>
               </div>
               {!!remoteScreenShares.length && (
                 <div className="voice-screen-grid">
@@ -5893,7 +6549,6 @@ export function App() {
                   ))}
                 </div>
               )}
-              <p className="hint">Voice controls moved to Settings → Voice.</p>
             </div>
           )}
 
@@ -5910,7 +6565,6 @@ export function App() {
               <button className={`icon-btn ${isMuted ? "danger" : "ghost"}`} onClick={() => setIsMuted((value) => !value)}>{isMuted ? "🎙️" : "🎤"}</button>
               <button className={`icon-btn ${isDeafened ? "danger" : "ghost"}`} onClick={() => setIsDeafened((value) => !value)}>{isDeafened ? "🔇" : "🎧"}</button>
               <button className="icon-btn ghost" onClick={() => { setSettingsOpen(true); setSettingsTab("profile"); }}>⚙️</button>
-              <button className="icon-btn danger" onClick={() => { cleanupVoiceRtc().catch(() => {}); setAccessToken(""); setRefreshToken(""); setServers([]); setGuildState(null); setMessages([]); }}>⎋</button>
             </div>
           </div>
         </footer>
@@ -6399,6 +7053,12 @@ export function App() {
               })()}
               {!activeDm && <p className="empty">Select a DM on the left.</p>}
             </div>
+            {dmReplyTarget && (
+              <div className="reply-banner">
+                <span>Replying to {dmReplyTarget.author}</span>
+                <button className="ghost" onClick={() => setDmReplyTarget(null)}>Cancel</button>
+              </div>
+            )}
             <footer className="composer dm-composer" onClick={() => dmComposerInputRef.current?.focus()}>
               <textarea
                 ref={dmComposerInputRef}
@@ -6510,6 +7170,9 @@ export function App() {
           {messageContextMenu.message.kind === "server" && (
             <button onClick={() => { setReplyTarget({ author: messageContextMenu.message.author, content: messageContextMenu.message.content }); setMessageContextMenu(null); }}>Reply</button>
           )}
+          {messageContextMenu.message.kind === "dm" && (
+            <button onClick={() => { setDmReplyTarget({ author: messageContextMenu.message.author, content: messageContextMenu.message.content }); setMessageContextMenu(null); }}>Reply</button>
+          )}
           <button onClick={() => { togglePinMessage(messageContextMenu.message); setMessageContextMenu(null); }}>
             {messageContextMenu.message.pinned ? "Unpin" : "Pin"}
           </button>
@@ -6535,6 +7198,66 @@ export function App() {
 
       {memberContextMenu && (
         <div className="server-context-menu" style={{ top: memberContextMenu.y, left: memberContextMenu.x }} onClick={(event) => event.stopPropagation()}>
+          {(() => {
+            const memberId = memberContextMenu.member?.id;
+            const memberVoice = memberId ? voiceStateByUserId.get(memberId) : null;
+            const localVoicePref = getVoiceMemberAudioPref(memberId);
+            return (
+              <>
+                {memberVoice?.channelId && (
+                  <button className="ghost" disabled>
+                    In voice: {memberVoice.channelId}
+                  </button>
+                )}
+                <button onClick={() => {
+                  setVoiceMemberAudioPref(memberId, { muted: !localVoicePref.muted });
+                  setStatus(localVoicePref.muted ? "Local voice unmuted for member." : "Local voice muted for member.");
+                  setMemberContextMenu(null);
+                }}>
+                  {localVoicePref.muted ? "Local Unmute" : "Local Mute"}
+                </button>
+                <button onClick={async () => {
+                  await promptSetVoiceMemberLocalVolume(memberId);
+                  setMemberContextMenu(null);
+                }}>
+                  Local Volume ({localVoicePref.volume}%)
+                </button>
+                {memberVoice?.channelId && memberId !== me?.id && canServerMuteMembers && (
+                  <button
+                    className={memberVoice.muted ? "danger" : "ghost"}
+                    onClick={async () => {
+                      await setServerVoiceMemberState(memberVoice.channelId, memberId, { muted: !memberVoice.muted });
+                      setMemberContextMenu(null);
+                    }}
+                  >
+                    {memberVoice.muted ? "Server Unmute" : "Server Mute"}
+                  </button>
+                )}
+                {memberVoice?.channelId && memberId !== me?.id && canServerDeafenMembers && (
+                  <button
+                    className={memberVoice.deafened ? "danger" : "ghost"}
+                    onClick={async () => {
+                      await setServerVoiceMemberState(memberVoice.channelId, memberId, { deafened: !memberVoice.deafened });
+                      setMemberContextMenu(null);
+                    }}
+                  >
+                    {memberVoice.deafened ? "Server Undeafen" : "Server Deafen"}
+                  </button>
+                )}
+                {memberVoice?.channelId && memberId !== me?.id && canMoveVoiceMembers && (
+                  <button
+                    className="danger"
+                    onClick={async () => {
+                      await disconnectVoiceMember(memberVoice.channelId, memberId);
+                      setMemberContextMenu(null);
+                    }}
+                  >
+                    Disconnect From VC
+                  </button>
+                )}
+              </>
+            );
+          })()}
           <button onClick={() => { openMemberProfile(memberContextMenu.member); setMemberContextMenu(null); }}>View Profile</button>
           <button onClick={() => { openDmFromFriend({ id: memberContextMenu.member.id, username: memberContextMenu.member.username || memberContextMenu.member.id }); setMemberContextMenu(null); }}>
             Message
@@ -6636,7 +7359,7 @@ export function App() {
                 <button type="button" className={addServerTab === "join" ? "active" : "ghost"} onClick={() => setAddServerTab("join")}>Join</button>
                 <button type="button" className={addServerTab === "custom" ? "active" : "ghost"} onClick={() => setAddServerTab("custom")}>Add host</button>
                 <button type="button" className={addServerTab === "create" ? "active" : "ghost"} onClick={() => setAddServerTab("create")}>Create yours</button>
-                {servers.some((s) => s?.roles?.includes?.("owner")) && (
+                {canAccessServerAdminPanel && (
                   <a href="/server-admin.html" target="_blank" rel="noopener noreferrer" className="add-server-admin-link" onClick={(e) => e.stopPropagation()}>🔧 Admin</a>
                 )}
               </div>
@@ -6693,13 +7416,18 @@ export function App() {
               )}
             </div>
 
-            <button type="button" className="ghost" style={{ width: "100%", marginTop: "0.5rem" }} onClick={() => setAddServerModalOpen(false)}>Close</button>
+            <button type="button" className="danger" style={{ width: "100%", marginTop: "0.5rem" }} onClick={() => setAddServerModalOpen(false)}>Close</button>
           </div>
         </div>
       )}
 
       {memberProfileCard && (
-        <div className="member-profile-popout" style={{ right: profileCardPosition.x, bottom: profileCardPosition.y }} onClick={(event) => event.stopPropagation()}>
+        <div
+          className="member-profile-popout"
+          style={{ right: profileCardPosition.x, bottom: profileCardPosition.y }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => openMemberContextMenu(event, memberProfileCard)}
+        >
           <div className="popout-drag-handle" onMouseDown={startDraggingProfileCard}>Drag</div>
           <div className="popout-banner" style={{ backgroundImage: memberProfileCard.bannerUrl ? `url(${profileImageUrl(memberProfileCard.bannerUrl)})` : undefined }} />
           <div className="popout-content">
@@ -6759,6 +7487,7 @@ export function App() {
             })()}
             <div className="popout-actions">
               <button className="ghost" onClick={() => openDmFromFriend({ id: memberProfileCard.id, username: memberProfileCard.username })}>Message</button>
+              <button className="ghost" onClick={() => setFullProfileViewer(memberProfileCard)}>View Full Profile</button>
               {canKickMembers && memberProfileCard.id !== me?.id && (
                 <button className="ghost" onClick={() => kickMember(memberProfileCard.id)}>Kick</button>
               )}
@@ -6767,6 +7496,45 @@ export function App() {
               )}
               <button onClick={() => setMemberProfileCard(null)}>Close</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {fullProfileViewer && (
+        <div className="settings-overlay" onClick={() => setFullProfileViewer(null)}>
+          <div className="add-server-modal full-profile-viewer-modal" onClick={(event) => event.stopPropagation()}>
+            <h3>{fullProfileViewer.displayName || fullProfileViewer.username}'s Full Profile</h3>
+            <div
+              className="full-profile-canvas full-profile-canvas-readonly"
+              style={{
+                background: fullProfileViewer.fullProfile?.theme?.background || "linear-gradient(150deg, #16274b, #0f1a33 65%)",
+                color: fullProfileViewer.fullProfile?.theme?.text || "#dfe9ff"
+              }}
+            >
+              <div
+                className="full-profile-canvas-card"
+                style={{ background: fullProfileViewer.fullProfile?.theme?.card || "rgba(9, 14, 28, 0.62)" }}
+              >
+                {(fullProfileViewer.fullProfile?.elements || [])
+                  .slice()
+                  .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                  .map((element) => (
+                    <div
+                      key={element.id}
+                      className={`full-profile-element full-profile-element-${element.type}`}
+                      style={{
+                        left: `${element.x}%`,
+                        top: `${element.y}%`,
+                        width: `${element.w}%`,
+                        height: `${element.h}%`
+                      }}
+                    >
+                      {renderFullProfileElement(element, fullProfileViewer)}
+                    </div>
+                  ))}
+              </div>
+            </div>
+            <button className="danger" style={{ width: "100%", marginTop: "0.65rem" }} onClick={() => setFullProfileViewer(null)}>Close</button>
           </div>
         </div>
       )}
@@ -6860,10 +7628,11 @@ export function App() {
               <button className={settingsTab === "appearance" ? "active" : "ghost"} onClick={() => setSettingsTab("appearance")}>Appearance</button>
               <button className={settingsTab === "extensions" ? "active" : "ghost"} onClick={() => setSettingsTab("extensions")}>Extensions</button>
               <button className={settingsTab === "voice" ? "active" : "ghost"} onClick={() => setSettingsTab("voice")}>Voice</button>
-              {servers.some(s => s.roles.includes("owner")) && (
+              {canAccessServerAdminPanel && (
                 <a href="/server-admin.html" target="_blank" style={{ display: "block", padding: "var(--space-sm) var(--space-md)", background: "rgba(149, 168, 205, 0.12)", border: "1px solid rgba(125, 164, 255, 0.25)", borderRadius: "calc(var(--radius) * 0.9)", color: "var(--text-main)", textDecoration: "none", textAlign: "center", fontWeight: "500", cursor: "pointer", fontSize: "0.95em" }}>🔧 Server Admin Panel</a>
               )}
-              <button className="ghost" onClick={() => setSettingsOpen(false)}>Close</button>
+              <button className="danger" onClick={() => setSettingsOpen(false)}>Close</button>
+              <button className="danger" onClick={logout}>Log out</button>
             </aside>
 
             <section className="settings-content">
@@ -6877,6 +7646,95 @@ export function App() {
                   <label>Banner URL<input value={profileForm.bannerUrl} onChange={(event) => setProfileForm((current) => ({ ...current, bannerUrl: event.target.value }))} /></label>
                   <label>Upload Banner<input type="file" accept="image/*" onChange={onBannerUpload} /></label>
                   <button onClick={saveProfile}>Save Profile</button>
+
+                  <hr style={{ borderColor: "var(--border-subtle)", width: "100%" }} />
+                  <h4>Full Profile (Boost)</h4>
+                  <p className="hint">
+                    Non-boost users automatically use avatar + banner + bio. Boost lets you fully customize layout, links, and text blocks.
+                  </p>
+                  <div
+                    ref={fullProfileEditorCanvasRef}
+                    className={`full-profile-canvas ${hasBoostForFullProfiles ? "" : "locked"}`}
+                    style={{
+                      background: fullProfileDraft?.theme?.background || "linear-gradient(150deg, #16274b, #0f1a33 65%)",
+                      color: fullProfileDraft?.theme?.text || "#dfe9ff"
+                    }}
+                  >
+                    <div
+                      className="full-profile-canvas-card"
+                      style={{ background: fullProfileDraft?.theme?.card || "rgba(9, 14, 28, 0.62)" }}
+                    >
+                      {(fullProfileDraft?.elements || [])
+                        .slice()
+                        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                        .map((element) => (
+                          <div
+                            key={element.id}
+                            className={`full-profile-element full-profile-element-${element.type} ${fullProfileDraggingElementId === element.id ? "dragging" : ""}`}
+                            style={{
+                              left: `${element.x}%`,
+                              top: `${element.y}%`,
+                              width: `${element.w}%`,
+                              height: `${element.h}%`
+                            }}
+                            onMouseDown={(event) => {
+                              if (!hasBoostForFullProfiles) return;
+                              onFullProfileElementMouseDown(event, element.id);
+                            }}
+                          >
+                            {renderFullProfileElement(element, { ...(profile || {}), fullProfile: fullProfileDraft })}
+                          </div>
+                        ))}
+                    </div>
+                    {!hasBoostForFullProfiles && (
+                      <div className="full-profile-lock-overlay">
+                        <p>Boost required for full customization.</p>
+                        <button type="button" onClick={() => openBoostUpsell("Boost required", "Custom full profiles are a Boost perk.", "Open billing")}>See Boost</button>
+                      </div>
+                    )}
+                  </div>
+
+                  <label>Canvas Background<input value={fullProfileDraft?.theme?.background || ""} onChange={(event) => setFullProfileDraft((current) => ({ ...current, mode: "custom", theme: { ...(current.theme || {}), background: event.target.value } }))} /></label>
+                  <label>Card Surface<input value={fullProfileDraft?.theme?.card || ""} onChange={(event) => setFullProfileDraft((current) => ({ ...current, mode: "custom", theme: { ...(current.theme || {}), card: event.target.value } }))} /></label>
+                  <label>Text Color<input value={fullProfileDraft?.theme?.text || ""} onChange={(event) => setFullProfileDraft((current) => ({ ...current, mode: "custom", theme: { ...(current.theme || {}), text: event.target.value } }))} /></label>
+
+                  <div className="full-profile-editor-grid">
+                    {(fullProfileDraft?.elements || []).map((element) => (
+                      <div key={`editor-${element.id}`} className="full-profile-editor-item">
+                        <div className="full-profile-editor-item-head">
+                          <strong>{element.type}</strong>
+                          {element.type === "text" && <button type="button" className="danger" onClick={() => removeFullProfileElement(element.id)}>Remove</button>}
+                        </div>
+                        {element.type === "text" && (
+                          <input value={element.text || ""} onChange={(event) => updateFullProfileElement(element.id, { text: event.target.value })} placeholder="Text content" />
+                        )}
+                        <div className="full-profile-editor-item-row">
+                          <label>X<input type="number" min={0} max={100} value={Math.round(element.x)} onChange={(event) => updateFullProfileElement(element.id, { x: clampProfilePercent(event.target.value, 0, 100, element.x) })} /></label>
+                          <label>Y<input type="number" min={0} max={100} value={Math.round(element.y)} onChange={(event) => updateFullProfileElement(element.id, { y: clampProfilePercent(event.target.value, 0, 100, element.y) })} /></label>
+                          <label>W<input type="number" min={1} max={100} value={Math.round(element.w)} onChange={(event) => updateFullProfileElement(element.id, { w: clampProfilePercent(event.target.value, 1, 100, element.w) })} /></label>
+                          <label>H<input type="number" min={1} max={100} value={Math.round(element.h)} onChange={(event) => updateFullProfileElement(element.id, { h: clampProfilePercent(event.target.value, 1, 100, element.h) })} /></label>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="row-actions" style={{ width: "100%" }}>
+                    <button type="button" className="ghost" onClick={addFullProfileTextBlock}>Add Text Block</button>
+                    <button type="button" className="ghost" onClick={resetFullProfileDraftToBasic}>Reset to Default</button>
+                  </div>
+
+                  <h5 style={{ margin: "0.25rem 0" }}>Links</h5>
+                  {(fullProfileDraft?.links || []).map((link) => (
+                    <div key={link.id} className="full-profile-link-editor">
+                      <input value={link.label || ""} placeholder="Label" onChange={(event) => updateFullProfileLink(link.id, { label: event.target.value })} />
+                      <input value={link.url || ""} placeholder="https://..." onChange={(event) => updateFullProfileLink(link.id, { url: event.target.value })} />
+                      <button type="button" className="danger" onClick={() => removeFullProfileLink(link.id)}>Remove</button>
+                    </div>
+                  ))}
+                  <div className="row-actions" style={{ width: "100%" }}>
+                    <button type="button" className="ghost" onClick={addFullProfileLink}>Add Link</button>
+                    <button type="button" onClick={saveFullProfileDraft}>Save Full Profile</button>
+                  </div>
 
                   <hr style={{ borderColor: "var(--border-subtle)", width: "100%" }} />
                   <h4>Rich Presence (RPC-style)</h4>
@@ -7326,6 +8184,7 @@ export function App() {
                       {!localAudioProcessingInfo.supported?.noiseSuppression ? " (not supported by this browser/device)" : ""}
                     </p>
                   )}
+                  <p className="hint">Hotkeys: Ctrl/Cmd+Shift+M mute, Ctrl/Cmd+Shift+D deafen, Ctrl/Cmd+Shift+V screen share, Ctrl/Cmd+Shift+X disconnect, Ctrl/Cmd+Shift+, settings.</p>
                   <p className="hint">Tip: allow microphone permissions so device names show properly.</p>
                 </section>
               )}

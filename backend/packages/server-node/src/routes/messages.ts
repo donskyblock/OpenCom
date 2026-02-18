@@ -105,6 +105,103 @@ export async function messageRoutes(
   broadcastToChannel: (channelId: string, event: any) => void,
   broadcastMention: (userIds: string[], payload: any) => void
 ) {
+  app.get("/v1/channels/:channelId/pins", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { channelId } = z.object({ channelId: z.string().min(3) }).parse(req.params);
+    const userId = req.auth.userId as string;
+
+    const ch = await q<{ id: string; guild_id: string }>(
+      `SELECT id,guild_id FROM channels WHERE id=:channelId`,
+      { channelId }
+    );
+    if (!ch.length) return rep.code(404).send({ error: "CHANNEL_NOT_FOUND" });
+    const guildId = ch[0].guild_id;
+
+    try { await requireGuildMember(guildId, userId, req.auth.roles, req.auth.coreServerId); }
+    catch { return rep.code(403).send({ error: "NOT_GUILD_MEMBER" }); }
+
+    const perms = await resolveChannelPermissions({ guildId, channelId, userId, roles: req.auth.roles || [] });
+    if (!has(perms, Perm.VIEW_CHANNEL)) return rep.code(403).send({ error: "MISSING_PERMS" });
+
+    const rows = await q<any>(
+      `SELECT p.message_id, p.pinned_by, p.pinned_at, m.author_id, m.content, m.created_at
+       FROM channel_pins p
+       JOIN messages m ON m.id = p.message_id
+       WHERE p.channel_id=:channelId
+       ORDER BY p.pinned_at DESC
+       LIMIT 50`,
+      { channelId }
+    );
+
+    return rep.send({
+      pins: rows.map((row) => ({
+        id: row.message_id,
+        author: row.author_id,
+        content: row.content,
+        pinnedBy: row.pinned_by,
+        pinnedAt: row.pinned_at,
+        createdAt: row.created_at
+      }))
+    });
+  });
+
+  app.put("/v1/channels/:channelId/pins/:messageId", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { channelId, messageId } = z.object({ channelId: z.string().min(3), messageId: z.string().min(3) }).parse(req.params);
+    const userId = req.auth.userId as string;
+
+    const ch = await q<{ guild_id: string }>(
+      `SELECT guild_id FROM channels WHERE id=:channelId`,
+      { channelId }
+    );
+    if (!ch.length) return rep.code(404).send({ error: "CHANNEL_NOT_FOUND" });
+    const guildId = ch[0].guild_id;
+
+    try { await requireGuildMember(guildId, userId, req.auth.roles, req.auth.coreServerId); }
+    catch { return rep.code(403).send({ error: "NOT_GUILD_MEMBER" }); }
+
+    const perms = await resolveChannelPermissions({ guildId, channelId, userId, roles: req.auth.roles || [] });
+    if (!has(perms, Perm.VIEW_CHANNEL)) return rep.code(403).send({ error: "MISSING_PERMS" });
+
+    const message = await q<{ id: string }>(
+      `SELECT id FROM messages WHERE id=:messageId AND channel_id=:channelId LIMIT 1`,
+      { messageId, channelId }
+    );
+    if (!message.length) return rep.code(404).send({ error: "MESSAGE_NOT_FOUND" });
+
+    await q(
+      `INSERT INTO channel_pins (channel_id,message_id,pinned_by,pinned_at)
+       VALUES (:channelId,:messageId,:pinnedBy,NOW())
+       ON DUPLICATE KEY UPDATE pinned_by=:pinnedBy, pinned_at=NOW()`,
+      { channelId, messageId, pinnedBy: userId }
+    );
+
+    return rep.send({ ok: true });
+  });
+
+  app.delete("/v1/channels/:channelId/pins/:messageId", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { channelId, messageId } = z.object({ channelId: z.string().min(3), messageId: z.string().min(3) }).parse(req.params);
+    const userId = req.auth.userId as string;
+
+    const ch = await q<{ guild_id: string }>(
+      `SELECT guild_id FROM channels WHERE id=:channelId`,
+      { channelId }
+    );
+    if (!ch.length) return rep.code(404).send({ error: "CHANNEL_NOT_FOUND" });
+    const guildId = ch[0].guild_id;
+
+    try { await requireGuildMember(guildId, userId, req.auth.roles, req.auth.coreServerId); }
+    catch { return rep.code(403).send({ error: "NOT_GUILD_MEMBER" }); }
+
+    const perms = await resolveChannelPermissions({ guildId, channelId, userId, roles: req.auth.roles || [] });
+    if (!has(perms, Perm.VIEW_CHANNEL)) return rep.code(403).send({ error: "MISSING_PERMS" });
+
+    await q(
+      `DELETE FROM channel_pins WHERE channel_id=:channelId AND message_id=:messageId`,
+      { channelId, messageId }
+    );
+
+    return rep.send({ ok: true });
+  });
+
   // Fetch messages (requires VIEW_CHANNEL)
   app.get("/v1/channels/:channelId/messages", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const { channelId } = z.object({ channelId: z.string().min(3) }).parse(req.params);

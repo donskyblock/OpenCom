@@ -31,8 +31,26 @@ export function createSfuVoiceClient({
     isMuted: false,
     isDeafened: false,
     audioOutputDeviceId: "",
-    pendingAudioStartByProducerId: new Map()
+    pendingAudioStartByProducerId: new Map(),
+    userAudioPrefsByUserId: new Map()
   };
+
+  function normalizeUserAudioPreference(pref = {}) {
+    const muted = !!pref?.muted;
+    const volumeRaw = Number(pref?.volume);
+    const volume = Number.isFinite(volumeRaw) ? Math.max(0, Math.min(100, volumeRaw)) : 100;
+    return { muted, volume };
+  }
+
+  function applyAudioPreferenceToAudio(audio, userId) {
+    if (!audio) return;
+    if (state.isDeafened) {
+      audio.volume = 0;
+      return;
+    }
+    const pref = normalizeUserAudioPreference(state.userAudioPrefsByUserId.get(userId) || {});
+    audio.volume = pref.muted ? 0 : pref.volume / 100;
+  }
 
   function removePendingAudioStart(producerId) {
     const pending = state.pendingAudioStartByProducerId.get(producerId);
@@ -160,7 +178,7 @@ export function createSfuVoiceClient({
       if (typeof audio.setSinkId === "function" && state.audioOutputDeviceId) {
         await audio.setSinkId(state.audioOutputDeviceId).catch(() => {});
       }
-      audio.volume = state.isDeafened ? 0 : 1;
+      applyAudioPreferenceToAudio(audio, userId || "");
       await audio.play().catch(() => {
         scheduleAudioStartRetry(audio, producerId);
       });
@@ -172,7 +190,7 @@ export function createSfuVoiceClient({
         userId: userId || ""
       });
       if (userId) state.producerOwnerByProducerId.set(producerId, userId);
-      onRemoteAudioAdded?.({ producerId, userId, audio });
+      onRemoteAudioAdded?.({ producerId, guildId: state.guildId, channelId: state.channelId, userId, audio });
       return;
     }
 
@@ -482,9 +500,19 @@ export function createSfuVoiceClient({
 
   function setDeafened(nextDeafened) {
     state.isDeafened = !!nextDeafened;
-    for (const { audio } of state.consumersByProducerId.values()) {
+    for (const { audio, userId } of state.consumersByProducerId.values()) {
       if (!audio) continue;
-      audio.volume = state.isDeafened ? 0 : 1;
+      applyAudioPreferenceToAudio(audio, userId || "");
+    }
+  }
+
+  function setUserAudioPreference(userId, pref = {}) {
+    const key = String(userId || "").trim();
+    if (!key) return;
+    state.userAudioPrefsByUserId.set(key, normalizeUserAudioPreference(pref));
+    for (const { audio, userId: ownerId } of state.consumersByProducerId.values()) {
+      if (!audio || ownerId !== key) continue;
+      applyAudioPreferenceToAudio(audio, key);
     }
   }
 
@@ -513,6 +541,7 @@ export function createSfuVoiceClient({
     closeConsumersForUser,
     setMuted,
     setDeafened,
+    setUserAudioPreference,
     setAudioOutputDevice,
     startScreenShare,
     stopScreenShare,

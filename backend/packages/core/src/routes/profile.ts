@@ -4,6 +4,7 @@ import { q } from "../db.js";
 import { parseBody } from "../validation.js";
 import { env } from "../env.js";
 import { saveProfileImage, saveProfileImageFromBuffer, deleteProfileImage } from "../storage.js";
+import { reconcileBoostBadge } from "../boost.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -33,6 +34,36 @@ const UpdateProfile = z.object({
   bannerUrl: imageValue.nullable().optional()
 });
 
+const FullProfileElementInput = z.object({
+  id: z.string().min(1).max(40).optional(),
+  type: z.enum(["avatar", "banner", "name", "bio", "links", "text"]),
+  x: z.number().min(0).max(100),
+  y: z.number().min(0).max(100),
+  w: z.number().min(1).max(100),
+  h: z.number().min(1).max(100),
+  order: z.number().int().min(0).max(100).optional(),
+  text: z.string().max(500).optional().nullable()
+});
+
+const FullProfileLinkInput = z.object({
+  id: z.string().min(1).max(40).optional(),
+  label: z.string().min(1).max(40),
+  url: z.string().min(1).max(500),
+  x: z.number().min(0).max(100).optional(),
+  y: z.number().min(0).max(100).optional()
+});
+
+const UpdateFullProfile = z.object({
+  enabled: z.boolean().optional(),
+  theme: z.object({
+    background: z.string().max(300).optional(),
+    card: z.string().max(120).optional(),
+    text: z.string().max(40).optional()
+  }).optional(),
+  elements: z.array(FullProfileElementInput).max(24).optional(),
+  links: z.array(FullProfileLinkInput).max(16).optional()
+});
+
 /** Extract relative path (users/userId/filename) from stored URL for deleteProfileImage */
 function relPathFromStoredUrl(stored: string | null): string | null {
   if (!stored) return null;
@@ -59,6 +90,112 @@ function normalizeImageReference(value: string) {
   if (trimmed.startsWith("users/")) return `${base}/${trimmed}`;
   if (trimmed.startsWith("/users/")) return `${base}${trimmed}`;
   return trimmed;
+}
+
+function clampNumber(value: any, min: number, max: number, fallback: number) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function isHttpUrl(value: string) {
+  const trimmed = String(value || "").trim();
+  if (!/^https?:\/\//i.test(trimmed)) return false;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function parseFullProfileJson(value: string | null): any {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function buildBasicFullProfile(user: { display_name: string | null; username: string; bio: string | null }) {
+  const hasBio = !!String(user.bio || "").trim();
+  return {
+    version: 1,
+    mode: "basic",
+    enabled: true,
+    theme: {
+      background: "linear-gradient(150deg, #16274b, #0f1a33 65%)",
+      card: "rgba(9, 14, 28, 0.62)",
+      text: "#dfe9ff"
+    },
+    elements: [
+      { id: "banner", type: "banner", x: 0, y: 0, w: 100, h: 34, order: 0 },
+      { id: "avatar", type: "avatar", x: 4, y: 21, w: 20, h: 31, order: 1 },
+      { id: "name", type: "name", x: 30, y: 30, w: 66, h: 10, order: 2 },
+      { id: "bio", type: "bio", x: 4, y: 54, w: 92, h: hasBio ? 30 : 18, order: 3 }
+    ],
+    links: []
+  };
+}
+
+function normalizeFullProfile(raw: any, fallbackUser: { display_name: string | null; username: string; bio: string | null }) {
+  const basic = buildBasicFullProfile(fallbackUser);
+  if (!raw || typeof raw !== "object") return basic;
+
+  const parsedTheme = raw.theme && typeof raw.theme === "object" ? raw.theme : {};
+  const theme = {
+    background: typeof parsedTheme.background === "string" && parsedTheme.background.trim() ? parsedTheme.background.trim().slice(0, 300) : basic.theme.background,
+    card: typeof parsedTheme.card === "string" && parsedTheme.card.trim() ? parsedTheme.card.trim().slice(0, 120) : basic.theme.card,
+    text: typeof parsedTheme.text === "string" && parsedTheme.text.trim() ? parsedTheme.text.trim().slice(0, 40) : basic.theme.text
+  };
+
+  const incomingElements = Array.isArray(raw.elements) ? raw.elements : [];
+  const elements = incomingElements
+    .filter((item: any) => item && typeof item === "object")
+    .slice(0, 24)
+    .map((item: any, index: number) => {
+      const type = String(item.type || "").toLowerCase();
+      if (!["avatar", "banner", "name", "bio", "links", "text"].includes(type)) return null;
+      return {
+        id: typeof item.id === "string" && item.id.trim() ? item.id.trim().slice(0, 40) : `${type}-${index + 1}`,
+        type,
+        x: clampNumber(item.x, 0, 100, type === "banner" ? 0 : 5),
+        y: clampNumber(item.y, 0, 100, type === "banner" ? 0 : 5 + index * 8),
+        w: clampNumber(item.w, 1, 100, type === "banner" ? 100 : (type === "avatar" ? 20 : 80)),
+        h: clampNumber(item.h, 1, 100, type === "banner" ? 34 : (type === "avatar" ? 31 : 12)),
+        order: Math.round(clampNumber(item.order, 0, 100, index)),
+        text: typeof item.text === "string" ? item.text.slice(0, 500) : null
+      };
+    })
+    .filter(Boolean);
+
+  const incomingLinks = Array.isArray(raw.links) ? raw.links : [];
+  const links = incomingLinks
+    .filter((item: any) => item && typeof item === "object")
+    .slice(0, 16)
+    .map((item: any, index: number) => {
+      const label = String(item.label || "").trim().slice(0, 40);
+      const url = String(item.url || "").trim().slice(0, 500);
+      if (!label || !url || !isHttpUrl(url)) return null;
+      return {
+        id: typeof item.id === "string" && item.id.trim() ? item.id.trim().slice(0, 40) : `link-${index + 1}`,
+        label,
+        url,
+        x: clampNumber(item.x, 0, 100, 0),
+        y: clampNumber(item.y, 0, 100, 0)
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    version: 1,
+    mode: "custom",
+    enabled: raw.enabled !== false,
+    theme,
+    elements: elements.length ? elements : basic.elements,
+    links
+  };
 }
 
 const ALLOWED_IMAGE_MIMES = new Set([
@@ -188,8 +325,10 @@ export async function profileRoutes(app: FastifyInstance) {
   app.get("/v1/users/:id/profile", async (req, rep) => {
     const { id } = z.object({ id: z.string().min(3) }).parse(req.params);
 
+    const boostEntitlement = await reconcileBoostBadge(id);
+
     const u = await q<any>(
-      `SELECT id, username, display_name, bio, pfp_url, banner_url, created_at FROM users WHERE id=:id`,
+      `SELECT id, username, display_name, bio, pfp_url, banner_url, full_profile_json, created_at FROM users WHERE id=:id`,
       { id }
     );
     if (!u.length) return rep.code(404).send({ error: "NOT_FOUND" });
@@ -246,6 +385,11 @@ export async function profileRoutes(app: FastifyInstance) {
       });
     }
 
+    const basicFullProfile = buildBasicFullProfile(u[0]);
+    const parsedFullProfile = normalizeFullProfile(parseFullProfileJson(u[0].full_profile_json ?? null), u[0]);
+    const canUseCustomProfile = boostEntitlement.active && parsedFullProfile.mode === "custom" && parsedFullProfile.enabled;
+    const fullProfile = canUseCustomProfile ? parsedFullProfile : { ...basicFullProfile, mode: "basic" };
+
     return {
       id: u[0].id,
       username: u[0].username,
@@ -257,7 +401,10 @@ export async function profileRoutes(app: FastifyInstance) {
       badges: badges.map(b => b.badge),
       badgeDetails,
       platformRole: isOwner ? "owner" : (isAdmin ? "admin" : "user"),
-      platformTitle: isOwner ? "Platform Owner" : (isAdmin ? "Platform Admin" : null)
+      platformTitle: isOwner ? "Platform Owner" : (isAdmin ? "Platform Admin" : null),
+      boostActive: boostEntitlement.active,
+      hasCustomFullProfile: canUseCustomProfile,
+      fullProfile
     };
   });
 
@@ -333,5 +480,23 @@ export async function profileRoutes(app: FastifyInstance) {
     );
 
     return { ok: true };
+  });
+
+  app.patch("/v1/me/profile/full", { preHandler: [app.authenticate] } as any, async (req: any, rep: any) => {
+    const userId = req.user.sub as string;
+    const entitlement = await reconcileBoostBadge(userId);
+    if (!entitlement.active) return rep.code(403).send({ error: "BOOST_REQUIRED" });
+
+    const body = parseBody(UpdateFullProfile, req.body);
+    const parsed = normalizeFullProfile(body, { display_name: null, username: userId, bio: null });
+    parsed.mode = "custom";
+    if (body.enabled === false) parsed.enabled = false;
+
+    await q(
+      `UPDATE users SET full_profile_json=:fullProfileJson WHERE id=:userId`,
+      { userId, fullProfileJson: JSON.stringify(parsed) }
+    );
+
+    return { ok: true, fullProfile: parsed };
   });
 }

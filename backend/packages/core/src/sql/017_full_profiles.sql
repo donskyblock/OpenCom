@@ -1,0 +1,2 @@
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS full_profile_json LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL;

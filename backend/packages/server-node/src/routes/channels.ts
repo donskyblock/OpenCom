@@ -358,4 +358,108 @@ export async function channelRoutes(
     broadcastGuild(guildId, "VOICE_STATE_UPDATE", { guildId, userId, channelId, ...updated });
     return rep.send({ ok: true });
   });
+
+  // Moderate another member's server mute/deafen state in a voice channel.
+  app.patch("/v1/channels/:channelId/voice/members/:memberId/state", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { channelId, memberId } = z.object({
+      channelId: z.string().min(3),
+      memberId: z.string().min(3)
+    }).parse(req.params);
+    const actorId = req.auth.userId as string;
+    const body = z.object({
+      muted: z.boolean().optional(),
+      deafened: z.boolean().optional()
+    }).parse(req.body || {});
+
+    if (body.muted === undefined && body.deafened === undefined) {
+      return rep.code(400).send({ error: "NO_STATE_CHANGES" });
+    }
+
+    const ch = await q<{ guild_id: string; type: string }>(
+      `SELECT guild_id,type FROM channels WHERE id=:channelId`,
+      { channelId }
+    );
+    if (!ch.length) return rep.code(404).send({ error: "CHANNEL_NOT_FOUND" });
+    if (ch[0].type !== "voice") return rep.code(400).send({ error: "NOT_VOICE_CHANNEL" });
+    const guildId = ch[0].guild_id;
+
+    try { await requireGuildMember(guildId, actorId, req.auth.roles, req.auth.coreServerId); }
+    catch { return rep.code(403).send({ error: "NOT_GUILD_MEMBER" }); }
+
+    const actorPerms = await resolveChannelPermissions({ guildId, channelId, userId: actorId, roles: req.auth.roles || [] });
+    const isAdmin = has(actorPerms, Perm.ADMINISTRATOR);
+    if (memberId !== actorId) {
+      if (body.muted !== undefined && !isAdmin && !has(actorPerms, Perm.MUTE_MEMBERS)) {
+        return rep.code(403).send({ error: "MISSING_PERMS" });
+      }
+      if (body.deafened !== undefined && !isAdmin && !has(actorPerms, Perm.DEAFEN_MEMBERS)) {
+        return rep.code(403).send({ error: "MISSING_PERMS" });
+      }
+    }
+
+    const existing = await q<any>(
+      `SELECT muted,deafened FROM voice_states WHERE guild_id=:guildId AND channel_id=:channelId AND user_id=:memberId LIMIT 1`,
+      { guildId, channelId, memberId }
+    );
+    if (!existing.length) return rep.code(404).send({ error: "TARGET_NOT_IN_VOICE" });
+
+    await q(
+      `UPDATE voice_states SET
+        muted = COALESCE(:muted, muted),
+        deafened = COALESCE(:deafened, deafened),
+        updated_at = NOW()
+       WHERE guild_id=:guildId AND channel_id=:channelId AND user_id=:memberId`,
+      { guildId, channelId, memberId, muted: body.muted, deafened: body.deafened }
+    );
+
+    const updated = (await q<any>(
+      `SELECT muted,deafened FROM voice_states WHERE guild_id=:guildId AND channel_id=:channelId AND user_id=:memberId LIMIT 1`,
+      { guildId, channelId, memberId }
+    ))[0];
+
+    broadcastGuild(guildId, "VOICE_STATE_UPDATE", { guildId, userId: memberId, channelId, ...updated });
+    return rep.send({ ok: true, userId: memberId, channelId, muted: !!updated?.muted, deafened: !!updated?.deafened });
+  });
+
+  // Disconnect another member from a voice channel (move-members moderation action).
+  app.post("/v1/channels/:channelId/voice/members/:memberId/disconnect", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { channelId, memberId } = z.object({
+      channelId: z.string().min(3),
+      memberId: z.string().min(3)
+    }).parse(req.params);
+    const actorId = req.auth.userId as string;
+
+    const ch = await q<{ guild_id: string; type: string }>(
+      `SELECT guild_id,type FROM channels WHERE id=:channelId`,
+      { channelId }
+    );
+    if (!ch.length) return rep.code(404).send({ error: "CHANNEL_NOT_FOUND" });
+    if (ch[0].type !== "voice") return rep.code(400).send({ error: "NOT_VOICE_CHANNEL" });
+    const guildId = ch[0].guild_id;
+
+    try { await requireGuildMember(guildId, actorId, req.auth.roles, req.auth.coreServerId); }
+    catch { return rep.code(403).send({ error: "NOT_GUILD_MEMBER" }); }
+
+    if (memberId !== actorId) {
+      const actorPerms = await resolveChannelPermissions({ guildId, channelId, userId: actorId, roles: req.auth.roles || [] });
+      const isAdmin = has(actorPerms, Perm.ADMINISTRATOR);
+      if (!isAdmin && !has(actorPerms, Perm.MOVE_MEMBERS)) {
+        return rep.code(403).send({ error: "MISSING_PERMS" });
+      }
+    }
+
+    const target = await q<any>(
+      `SELECT user_id FROM voice_states WHERE guild_id=:guildId AND channel_id=:channelId AND user_id=:memberId LIMIT 1`,
+      { guildId, channelId, memberId }
+    );
+    if (!target.length) return rep.code(404).send({ error: "TARGET_NOT_IN_VOICE" });
+
+    await q(
+      `DELETE FROM voice_states WHERE guild_id=:guildId AND channel_id=:channelId AND user_id=:memberId`,
+      { guildId, channelId, memberId }
+    );
+
+    broadcastGuild(guildId, "VOICE_STATE_REMOVE", { guildId, userId: memberId, channelId });
+    return rep.send({ ok: true, userId: memberId, channelId });
+  });
 }
