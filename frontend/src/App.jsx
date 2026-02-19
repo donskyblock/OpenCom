@@ -805,7 +805,9 @@ export function App() {
   const [fullProfileViewer, setFullProfileViewer] = useState(null);
   const [fullProfileDraggingElementId, setFullProfileDraggingElementId] = useState("");
   const [profileStudioSelectedElementId, setProfileStudioSelectedElementId] = useState("");
+  const [profileStudioScaleAuto, setProfileStudioScaleAuto] = useState(true);
   const [profileStudioScale, setProfileStudioScale] = useState(100);
+  const [viewportSize, setViewportSize] = useState(() => ({ width: typeof window !== "undefined" ? window.innerWidth : 1280, height: typeof window !== "undefined" ? window.innerHeight : 720 }));
   const fullProfileDragOffsetRef = useRef({ x: 0, y: 0 });
   const fullProfileEditorCanvasRef = useRef(null);
   const [rpcForm, setRpcForm] = useState({
@@ -1604,8 +1606,30 @@ export function App() {
       || hasGuildPermission(GUILD_PERM.MOVE_MEMBERS);
   }, [activeServer, hasGuildPermission]);
 
+  const canDeleteServerMessages = useMemo(() => {
+    if (!activeServer) return false;
+    const coreStaff = (activeServer.roles || []).includes("owner")
+      || (activeServer.roles || []).includes("platform_admin")
+      || (activeServer.roles || []).includes("admin")
+      || (activeServer.roles || []).includes("server_admin");
+    return coreStaff || hasGuildPermission(GUILD_PERM.MANAGE_CHANNELS);
+  }, [activeServer, hasGuildPermission]);
+
   const canModerateMembers = canKickMembers || canBanMembers;
   const hasBoostForFullProfiles = !!(boostStatus?.active || profile?.boostActive || profile?.badges?.includes?.("boost"));
+  const autoProfileStudioScale = useMemo(
+    () => Math.max(85, Math.min(130, Math.round((viewportSize.width / 1920) * 115))),
+    [viewportSize.width]
+  );
+  const effectiveProfileStudioScale = profileStudioScaleAuto ? autoProfileStudioScale : profileStudioScale;
+  const profileStudioPreviewProfile = useMemo(() => ({
+    ...(profile || {}),
+    displayName: typeof profileForm?.displayName === "string" ? profileForm.displayName : (profile?.displayName ?? ""),
+    bio: typeof profileForm?.bio === "string" ? profileForm.bio : (profile?.bio ?? ""),
+    pfpUrl: typeof profileForm?.pfpUrl === "string" ? profileForm.pfpUrl : (profile?.pfpUrl ?? ""),
+    bannerUrl: typeof profileForm?.bannerUrl === "string" ? profileForm.bannerUrl : (profile?.bannerUrl ?? ""),
+    fullProfile: fullProfileDraft
+  }), [profile, profileForm, fullProfileDraft]);
   const selectedProfileStudioElement = useMemo(
     () => (fullProfileDraft?.elements || []).find((item) => item.id === profileStudioSelectedElementId) || null,
     [fullProfileDraft?.elements, profileStudioSelectedElementId]
@@ -2018,6 +2042,12 @@ export function App() {
     if (activeDmId) localStorage.setItem(ACTIVE_DM_KEY, activeDmId);
     setDmReplyTarget(null);
   }, [activeDmId]);
+
+  useEffect(() => {
+    const onResize = () => setViewportSize({ width: window.innerWidth, height: window.innerHeight });
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     if (!draggingProfileCard) return;
@@ -5871,6 +5901,29 @@ export function App() {
     }
   }
 
+  async function openFullProfileViewer(userLikeProfile) {
+    if (!userLikeProfile) return;
+    const userId = String(userLikeProfile.id || "").trim();
+    if (!userId || !accessToken) {
+      setFullProfileViewer(userLikeProfile);
+      return;
+    }
+    try {
+      const latest = await api(`/v1/users/${userId}/profile`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      setFullProfileViewer({
+        ...userLikeProfile,
+        ...latest,
+        username: latest.username || userLikeProfile.username || userId,
+        displayName: latest.displayName ?? userLikeProfile.displayName ?? latest.username ?? userId,
+        fullProfile: normalizeFullProfile(latest, latest.fullProfile)
+      });
+    } catch {
+      setFullProfileViewer(userLikeProfile);
+    }
+  }
+
   function getBadgePresentation(badge) {
     if (badge && typeof badge === "object" && (badge.bgColor || badge.icon || badge.name)) {
       return {
@@ -5896,11 +5949,11 @@ export function App() {
     if (!element || !viewerProfile) return null;
     const type = String(element.type || "").toLowerCase();
     if (type === "banner") {
-      const banner = profileImageUrl(viewerProfile.bannerUrl || profile?.bannerUrl);
+      const banner = profileImageUrl((viewerProfile.bannerUrl ?? profile?.bannerUrl) || "");
       return banner ? <img src={banner} alt="Banner" className="full-profile-banner-image" /> : <div className="full-profile-banner-fallback" />;
     }
     if (type === "avatar") {
-      const avatar = profileImageUrl(viewerProfile.pfpUrl || profile?.pfpUrl);
+      const avatar = profileImageUrl((viewerProfile.pfpUrl ?? profile?.pfpUrl) || "");
       return (
         <div className="full-profile-avatar-element">
           {avatar ? <img src={avatar} alt="Avatar" className="full-profile-avatar-image" /> : getInitials(viewerProfile.displayName || viewerProfile.username || "U")}
@@ -6203,7 +6256,14 @@ export function App() {
     const resolvedImageUrl = imageUrl || fallbackImageUrl;
     if (resolvedImageUrl) {
       return (
-        <a key={key} className="message-image-link-embed" href={embed.url} target="_blank" rel="noreferrer">
+        <a
+          key={key}
+          className="message-image-link-embed"
+          href={embed.url}
+          target="_blank"
+          rel="noreferrer"
+          onContextMenu={(event) => event.stopPropagation()}
+        >
           <img src={resolvedImageUrl} alt={embed.title || "Image"} loading="lazy" />
           <div className="message-image-link-meta">
             <strong>{embed.title || "Image"}</strong>
@@ -6232,13 +6292,13 @@ export function App() {
 
     if (isImage && imageUrl) {
       return (
-        <button
+        <div
           key={key}
-          type="button"
           className="message-image-attachment"
-          onClick={(event) => {
+          title="Right-click image to save"
+          onContextMenu={(event) => {
+            // Keep native browser image context menu (Save image as...) instead of message menu.
             event.stopPropagation();
-            openMessageAttachment(attachment);
           }}
         >
           <img src={imageUrl} alt={attachment?.fileName || "Image attachment"} loading="lazy" />
@@ -6246,7 +6306,7 @@ export function App() {
             <strong>{attachment?.fileName || "Image"}</strong>
             <p>{attachment?.contentType || "image"}</p>
           </div>
-        </button>
+        </div>
       );
     }
 
@@ -7224,7 +7284,7 @@ export function App() {
         )}
 
         {navMode === "profile" && (
-          <div className="profile-studio profile-studio-full-page" style={{ fontSize: `${Math.max(0.8, Math.min(1.5, profileStudioScale / 100))}rem` }}>
+          <div className="profile-studio profile-studio-full-page" style={{ fontSize: `${Math.max(0.8, Math.min(1.5, effectiveProfileStudioScale / 100))}rem` }}>
             <section className="profile-studio-header card">
               <div>
                 <h3>Profile Studio</h3>
@@ -7232,9 +7292,19 @@ export function App() {
               </div>
               <div className="profile-studio-scale">
                 <label>
-                  UI Scale ({profileStudioScale}%)
-                  <input type="range" min={80} max={150} value={profileStudioScale} onChange={(event) => setProfileStudioScale(Number(event.target.value))} />
+                  UI Scale ({effectiveProfileStudioScale}%)
+                  <input
+                    type="range"
+                    min={80}
+                    max={150}
+                    value={profileStudioScaleAuto ? effectiveProfileStudioScale : profileStudioScale}
+                    onChange={(event) => {
+                      setProfileStudioScaleAuto(false);
+                      setProfileStudioScale(Number(event.target.value));
+                    }}
+                  />
                 </label>
+                <label><input type="checkbox" checked={profileStudioScaleAuto} onChange={(event) => setProfileStudioScaleAuto(event.target.checked)} /> Auto scale for my resolution</label>
               </div>
               <div className="row-actions">
                 <button type="button" className="ghost" onClick={resetFullProfileDraftToBasic}>Reset</button>
@@ -7276,7 +7346,7 @@ export function App() {
                   style={{
                     background: fullProfileDraft?.theme?.background || "linear-gradient(150deg, #16274b, #0f1a33 65%)",
                     color: fullProfileDraft?.theme?.text || "#dfe9ff",
-                    minHeight: `${Math.round(620 * Math.max(0.9, Math.min(1.35, profileStudioScale / 100)))}px`
+                    minHeight: `${Math.max(420, Math.min(900, Math.round((viewportSize.height - 320) * Math.max(0.86, Math.min(1.2, effectiveProfileStudioScale / 100)))))}px`
                   }}
                 >
                   <div className="full-profile-canvas-card" style={{ background: fullProfileDraft?.theme?.card || "rgba(9, 14, 28, 0.62)" }}>
@@ -7294,7 +7364,7 @@ export function App() {
                           }}
                           onClick={() => setProfileStudioSelectedElementId(element.id)}
                         >
-                          {renderFullProfileElement(element, { ...(profile || {}), ...profileForm, fullProfile: fullProfileDraft })}
+                          {renderFullProfileElement(element, profileStudioPreviewProfile)}
                         </div>
                       ))}
                   </div>
@@ -7423,7 +7493,7 @@ export function App() {
               setMessageContextMenu(null);
             }}>Copy Text</button>
           )}
-          {messageContextMenu.message.mine && messageContextMenu.message.kind === "server" && (
+          {(messageContextMenu.message.mine || canDeleteServerMessages) && messageContextMenu.message.kind === "server" && (
             <button className="danger" onClick={() => deleteServerMessage(messageContextMenu.message.id)}>Delete</button>
           )}
           {messageContextMenu.message.mine && messageContextMenu.message.kind === "dm" && (
@@ -7723,7 +7793,7 @@ export function App() {
             })()}
             <div className="popout-actions">
               <button className="ghost" onClick={() => openDmFromFriend({ id: memberProfileCard.id, username: memberProfileCard.username })}>Message</button>
-              <button className="ghost" onClick={() => setFullProfileViewer(memberProfileCard)}>View Full Profile</button>
+              <button className="ghost" onClick={() => openFullProfileViewer(memberProfileCard)}>View Full Profile</button>
               {canKickMembers && memberProfileCard.id !== me?.id && (
                 <button className="ghost" onClick={() => kickMember(memberProfileCard.id)}>Kick</button>
               )}

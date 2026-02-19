@@ -423,12 +423,16 @@ export async function messageRoutes(
     try { await requireGuildMember(guildId, userId, req.auth.roles, req.auth.coreServerId); }
     catch { return rep.code(403).send({ error: "NOT_GUILD_MEMBER" }); }
 
+    const perms = await resolveChannelPermissions({ guildId, channelId, userId, roles: req.auth.roles || [] });
+    if (!has(perms, Perm.VIEW_CHANNEL)) return rep.code(403).send({ error: "MISSING_PERMS" });
+
     const rows = await q<{ id: string; author_id: string }>(
       `SELECT id,author_id FROM messages WHERE id=:messageId AND channel_id=:channelId LIMIT 1`,
       { messageId, channelId }
     );
     if (!rows.length) return rep.code(404).send({ error: "MESSAGE_NOT_FOUND" });
-    if (rows[0].author_id !== userId) return rep.code(403).send({ error: "MISSING_PERMS" });
+    const canModerateMessages = has(perms, Perm.ADMINISTRATOR) || has(perms, Perm.MANAGE_CHANNELS);
+    if (rows[0].author_id !== userId && !canModerateMessages) return rep.code(403).send({ error: "MISSING_PERMS" });
 
     await q(`DELETE FROM messages WHERE id=:messageId`, { messageId });
     broadcastToChannel(channelId, { channelId, messageDelete: { id: messageId } });

@@ -1879,12 +1879,16 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
   display: grid;
   grid-template-columns: minmax(220px, 300px) minmax(0, 1fr) minmax(220px, 320px);
   gap: var(--space-sm);
+  min-height: calc(100vh - 220px);
+  align-items: stretch;
 }
 .profile-studio-panel {
   padding: var(--space-sm);
   display: grid;
   gap: 0.45rem;
   align-content: start;
+  max-height: calc(100vh - 220px);
+  overflow: auto;
 }
 .profile-studio-panel h4 {
   margin: 0.25rem 0;
@@ -1899,6 +1903,7 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
   display: grid;
   gap: var(--space-xs);
   align-content: start;
+  min-height: 0;
 }
 .profile-studio-canvas-head {
   display: flex;
@@ -1908,6 +1913,7 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 }
 .profile-studio-canvas {
   min-height: min(70vh, 620px);
+  height: 100%;
 }
 
 .status, .hint { color: var(--text-dim); font-size: 0.87em; margin: 0;}
@@ -2023,7 +2029,7 @@ textarea { resize: vertical; min-height: clamp(80px, 13vw, 120px); font-size: 1e
   display: grid;
   align-content: start;
   overflow: hidden;
-  font-size: 0.9em;
+  font-size: clamp(0.72rem, 0.95vw, 1rem);
   cursor: grab;
   user-select: none;
 }
@@ -2469,6 +2475,8 @@ textarea { resize: vertical; min-height: clamp(80px, 13vw, 120px); font-size: 1e
   .profile-studio-layout { grid-template-columns: minmax(0, 1fr); }
   .profile-studio-header { flex-direction: column; align-items: flex-start; }
   .profile-studio-scale { width: 100%; min-width: 0; }
+  .profile-studio-layout { min-height: 0; }
+  .profile-studio-panel { max-height: none; }
   .profile-studio-canvas { min-height: 420px; }
   .settings-panel { grid-template-columns: 1fr; height: min(90vh, 900px);}
   .settings-nav { grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: var(--space-xs); border-right: none; border-bottom: 1px solid rgba(125, 164, 255, 0.15); padding: var(--space-md);}
