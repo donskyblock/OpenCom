@@ -30,6 +30,8 @@ export function createSfuVoiceClient({
     producerOwnerByProducerId: new Map(),
     isMuted: false,
     isDeafened: false,
+    noiseSuppression: true,
+    audioInputDeviceId: "",
     audioOutputDeviceId: "",
     pendingAudioStartByProducerId: new Map(),
     userAudioPrefsByUserId: new Map()
@@ -96,6 +98,137 @@ export function createSfuVoiceClient({
 
   function resolveSelfUserId() {
     return getSelfUserId?.() || selfUserId || "";
+  }
+
+  function emitLocalAudioProcessingInfo(localTrack) {
+    const trackSettings = localTrack && typeof localTrack.getSettings === "function" ? localTrack.getSettings() : {};
+    const supportedConstraints = navigator.mediaDevices?.getSupportedConstraints?.() || {};
+    onLocalAudioProcessingInfo?.({
+      requested: {
+        noiseSuppression: !!state.noiseSuppression,
+        echoCancellation: true,
+        autoGainControl: true
+      },
+      applied: {
+        noiseSuppression: typeof trackSettings.noiseSuppression === "boolean" ? trackSettings.noiseSuppression : null,
+        echoCancellation: typeof trackSettings.echoCancellation === "boolean" ? trackSettings.echoCancellation : null,
+        autoGainControl: typeof trackSettings.autoGainControl === "boolean" ? trackSettings.autoGainControl : null
+      },
+      supported: {
+        noiseSuppression: !!supportedConstraints.noiseSuppression,
+        echoCancellation: !!supportedConstraints.echoCancellation,
+        autoGainControl: !!supportedConstraints.autoGainControl
+      }
+    });
+  }
+
+  async function replaceLocalAudioTrack(newTrack) {
+    if (!newTrack) return;
+    const oldTrack = state.localStream?.getAudioTracks?.()?.[0] || null;
+    const nextStream = new MediaStream([newTrack]);
+    state.localStream = nextStream;
+    if (state.localAudioProducer) {
+      await state.localAudioProducer.replaceTrack({ track: newTrack });
+      if (state.isMuted) {
+        state.localAudioProducer.pause();
+        newTrack.enabled = false;
+      } else {
+        state.localAudioProducer.resume();
+        newTrack.enabled = true;
+      }
+    }
+    if (oldTrack && oldTrack !== newTrack) {
+      try { oldTrack.stop(); } catch {}
+    }
+    emitLocalAudioProcessingInfo(newTrack);
+  }
+
+  async function setNoiseSuppression(nextNoiseSuppression) {
+    state.noiseSuppression = !!nextNoiseSuppression;
+    const currentTrack = state.localStream?.getAudioTracks?.()?.[0];
+    if (!currentTrack) return;
+
+    const requestedConstraints = {
+      echoCancellation: true,
+      noiseSuppression: !!state.noiseSuppression,
+      autoGainControl: true
+    };
+
+    try {
+      if (typeof currentTrack.applyConstraints === "function") {
+        await currentTrack.applyConstraints(requestedConstraints);
+      }
+      emitLocalAudioProcessingInfo(currentTrack);
+      return;
+    } catch {
+      // Some devices/browsers ignore or fail applyConstraints; reacquire and replace track.
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          ...requestedConstraints,
+          ...(state.audioInputDeviceId ? { deviceId: { exact: state.audioInputDeviceId } } : {})
+        }
+      });
+      const nextTrack = stream.getAudioTracks?.()[0];
+      if (!nextTrack) return;
+      await replaceLocalAudioTrack(nextTrack);
+    } catch {
+      emitLocalAudioProcessingInfo(currentTrack);
+    }
+  }
+
+  async function setAudioInputDevice(nextAudioInputDeviceId) {
+    state.audioInputDeviceId = nextAudioInputDeviceId || "";
+    const currentTrack = state.localStream?.getAudioTracks?.()?.[0];
+    if (!currentTrack) return;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: !!state.noiseSuppression,
+          autoGainControl: true,
+          ...(state.audioInputDeviceId ? { deviceId: { exact: state.audioInputDeviceId } } : {})
+        }
+      });
+      const nextTrack = stream.getAudioTracks?.()[0];
+      if (!nextTrack) return;
+      await replaceLocalAudioTrack(nextTrack);
+    } catch {
+      emitLocalAudioProcessingInfo(currentTrack);
+    }
+  }
+
+  function getDesktopBridge() {
+    if (typeof window === "undefined") return null;
+    return window.opencomDesktopBridge || null;
+  }
+
+  async function getDesktopFallbackDisplayStream() {
+    const bridge = getDesktopBridge();
+    if (!bridge?.getDisplaySources || !navigator?.mediaDevices?.getUserMedia) {
+      throw new Error("SCREEN_SHARE_NOT_SUPPORTED");
+    }
+
+    const sources = await bridge.getDisplaySources();
+    if (!Array.isArray(sources) || sources.length === 0) {
+      throw new Error("SCREEN_SOURCE_NOT_FOUND");
+    }
+    const preferred = sources.find((source) => source?.type === "screen") || sources[0];
+    if (!preferred?.id) throw new Error("SCREEN_SOURCE_NOT_FOUND");
+
+    return navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        mandatory: {
+          chromeMediaSource: "desktop",
+          chromeMediaSourceId: preferred.id,
+          maxFrameRate: 30
+        }
+      }
+    });
   }
 
   async function waitDispatch(type, match, timeoutMs = DEFAULT_TIMEOUT_MS) {
@@ -220,6 +353,8 @@ export function createSfuVoiceClient({
     state.channelId = channelId;
     state.isMuted = !!isMuted;
     state.isDeafened = !!isDeafened;
+    state.noiseSuppression = !!noiseSuppression;
+    state.audioInputDeviceId = audioInputDeviceId || "";
     state.audioOutputDeviceId = audioOutputDeviceId || "";
 
     await sendDispatch("VOICE_JOIN", { guildId, channelId });
@@ -284,32 +419,14 @@ export function createSfuVoiceClient({
 
     const audioConstraints = {
       echoCancellation: true,
-      noiseSuppression: !!noiseSuppression,
+      noiseSuppression: !!state.noiseSuppression,
       autoGainControl: true,
-      ...(audioInputDeviceId ? { deviceId: { exact: audioInputDeviceId } } : {})
+      ...(state.audioInputDeviceId ? { deviceId: { exact: state.audioInputDeviceId } } : {})
     };
     state.localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
     const localTrack = state.localStream.getAudioTracks()[0];
     if (!localTrack) throw new Error("MIC_TRACK_NOT_FOUND");
-    const trackSettings = typeof localTrack.getSettings === "function" ? localTrack.getSettings() : {};
-    const supportedConstraints = navigator.mediaDevices?.getSupportedConstraints?.() || {};
-    onLocalAudioProcessingInfo?.({
-      requested: {
-        noiseSuppression: !!noiseSuppression,
-        echoCancellation: true,
-        autoGainControl: true
-      },
-      applied: {
-        noiseSuppression: typeof trackSettings.noiseSuppression === "boolean" ? trackSettings.noiseSuppression : null,
-        echoCancellation: typeof trackSettings.echoCancellation === "boolean" ? trackSettings.echoCancellation : null,
-        autoGainControl: typeof trackSettings.autoGainControl === "boolean" ? trackSettings.autoGainControl : null
-      },
-      supported: {
-        noiseSuppression: !!supportedConstraints.noiseSuppression,
-        echoCancellation: !!supportedConstraints.echoCancellation,
-        autoGainControl: !!supportedConstraints.autoGainControl
-      }
-    });
+    emitLocalAudioProcessingInfo(localTrack);
     state.localAudioProducer = await state.sendTransport.produce({ track: localTrack });
     if (state.isMuted) {
       state.localAudioProducer.pause();
@@ -398,11 +515,18 @@ export function createSfuVoiceClient({
       throw new Error("NOT_IN_VOICE_CHANNEL");
     }
     if (state.localScreenProducer) return;
-    if (!navigator.mediaDevices?.getDisplayMedia) {
-      throw new Error("SCREEN_SHARE_NOT_SUPPORTED");
+    let displayStream = null;
+    if (navigator.mediaDevices?.getDisplayMedia) {
+      try {
+        displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      } catch (error) {
+        displayStream = await getDesktopFallbackDisplayStream().catch(() => {
+          throw error;
+        });
+      }
+    } else {
+      displayStream = await getDesktopFallbackDisplayStream();
     }
-
-    const displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
     const screenTrack = displayStream.getVideoTracks()[0];
     if (!screenTrack) {
       displayStream.getTracks().forEach((track) => track.stop());
@@ -541,6 +665,8 @@ export function createSfuVoiceClient({
     closeConsumersForUser,
     setMuted,
     setDeafened,
+    setNoiseSuppression,
+    setAudioInputDevice,
     setUserAudioPreference,
     setAudioOutputDevice,
     startScreenShare,
