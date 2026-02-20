@@ -83,6 +83,20 @@ function clampProfilePercent(value, min, max, fallback) {
   return Math.max(min, Math.min(max, numeric));
 }
 
+function getContextMenuPoint(clientX, clientY, options = {}) {
+  const padding = Number.isFinite(Number(options.padding)) ? Math.max(0, Number(options.padding)) : 8;
+  const menuWidth = Number.isFinite(Number(options.width)) ? Math.max(1, Number(options.width)) : 240;
+  const menuHeight = Number.isFinite(Number(options.height)) ? Math.max(1, Number(options.height)) : 240;
+  const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1280;
+  const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 720;
+  const maxX = Math.max(padding, viewportWidth - menuWidth - padding);
+  const maxY = Math.max(padding, viewportHeight - menuHeight - padding);
+  return {
+    x: Math.max(padding, Math.min(Number(clientX) || 0, maxX)),
+    y: Math.max(padding, Math.min(Number(clientY) || 0, maxY))
+  };
+}
+
 function normalizeFullProfile(profileData = {}, fullProfileCandidate) {
   const basic = createBasicFullProfile(profileData);
   const raw = fullProfileCandidate && typeof fullProfileCandidate === "object" ? fullProfileCandidate : {};
@@ -1618,8 +1632,12 @@ export function App() {
   const canModerateMembers = canKickMembers || canBanMembers;
   const hasBoostForFullProfiles = !!(boostStatus?.active || profile?.boostActive || profile?.badges?.includes?.("boost"));
   const autoProfileStudioScale = useMemo(
-    () => Math.max(85, Math.min(130, Math.round((viewportSize.width / 1920) * 115))),
-    [viewportSize.width]
+    () => {
+      const widthFactor = viewportSize.width / 1920;
+      const heightFactor = viewportSize.height / 1080;
+      return Math.max(85, Math.min(130, Math.round(Math.min(widthFactor, heightFactor) * 115)));
+    },
+    [viewportSize.width, viewportSize.height]
   );
   const effectiveProfileStudioScale = profileStudioScaleAuto ? autoProfileStudioScale : profileStudioScale;
   const profileStudioPreviewProfile = useMemo(() => ({
@@ -3184,12 +3202,27 @@ export function App() {
   }, [audioInputDeviceId]);
 
   useEffect(() => {
+    if (!isInVoiceChannel) return;
+    voiceSfuRef.current?.setAudioInputDevice?.(audioInputDeviceId).catch(() => {
+      setStatus("Could not switch microphone device on current voice session.");
+    });
+  }, [audioInputDeviceId, isInVoiceChannel]);
+
+  useEffect(() => {
     localStorage.setItem(AUDIO_OUTPUT_DEVICE_KEY, audioOutputDeviceId || "");
   }, [audioOutputDeviceId]);
 
   useEffect(() => {
     localStorage.setItem(NOISE_SUPPRESSION_KEY, noiseSuppressionEnabled ? "1" : "0");
   }, [noiseSuppressionEnabled]);
+
+  useEffect(() => {
+    if (!isInVoiceChannel) return;
+    voiceSfuRef.current?.setNoiseSuppression?.(noiseSuppressionEnabled).catch((error) => {
+      const reason = String(error?.message || "").trim();
+      setStatus(reason ? `Could not apply noise suppression: ${reason}` : "Could not apply noise suppression on current microphone track.");
+    });
+  }, [noiseSuppressionEnabled, isInVoiceChannel]);
 
   useEffect(() => {
     voiceSfuRef.current?.setMuted(isMuted);
@@ -5057,29 +5090,32 @@ export function App() {
 
   function openServerContextMenu(event, server) {
     event.preventDefault();
+    const pos = getContextMenuPoint(event.clientX, event.clientY, { width: 260, height: 260 });
     setMessageContextMenu(null);
     setMemberContextMenu(null);
     setChannelContextMenu(null);
     setCategoryContextMenu(null);
-    setServerContextMenu({ server, x: event.clientX, y: event.clientY });
+    setServerContextMenu({ server, x: pos.x, y: pos.y });
   }
 
   function openChannelContextMenu(event, channel) {
     event.preventDefault();
+    const pos = getContextMenuPoint(event.clientX, event.clientY, { width: 260, height: 230 });
     setServerContextMenu(null);
     setMessageContextMenu(null);
     setMemberContextMenu(null);
     setCategoryContextMenu(null);
-    setChannelContextMenu({ channel, x: event.clientX, y: event.clientY });
+    setChannelContextMenu({ channel, x: pos.x, y: pos.y });
   }
 
   function openCategoryContextMenu(event, category) {
     event.preventDefault();
+    const pos = getContextMenuPoint(event.clientX, event.clientY, { width: 260, height: 230 });
     setServerContextMenu(null);
     setMessageContextMenu(null);
     setMemberContextMenu(null);
     setChannelContextMenu(null);
-    setCategoryContextMenu({ category, x: event.clientX, y: event.clientY });
+    setCategoryContextMenu({ category, x: pos.x, y: pos.y });
   }
 
   async function saveChannelName(channelId, currentName) {
@@ -5722,25 +5758,23 @@ export function App() {
 
   function openMessageContextMenu(event, message) {
     event.preventDefault();
-    const x = Math.min(event.clientX, window.innerWidth - 240);
-    const y = Math.min(event.clientY, window.innerHeight - 180);
+    const pos = getContextMenuPoint(event.clientX, event.clientY, { width: 260, height: 220 });
     setChannelContextMenu(null);
     setCategoryContextMenu(null);
     setMemberContextMenu(null);
-    setMessageContextMenu({ x, y, message: { ...message, pinned: isMessagePinned(message) } });
+    setMessageContextMenu({ x: pos.x, y: pos.y, message: { ...message, pinned: isMessagePinned(message) } });
   }
 
   function openMemberContextMenu(event, member) {
     if (!member?.id) return;
     event.preventDefault();
     event.stopPropagation();
-    const x = Math.min(event.clientX, window.innerWidth - 250);
-    const y = Math.min(event.clientY, window.innerHeight - 420);
+    const pos = getContextMenuPoint(event.clientX, event.clientY, { width: 280, height: 460 });
     setServerContextMenu(null);
     setChannelContextMenu(null);
     setCategoryContextMenu(null);
     setMessageContextMenu(null);
-    setMemberContextMenu({ x, y, member });
+    setMemberContextMenu({ x: pos.x, y: pos.y, member });
   }
 
   const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // 25MB for raw image upload
@@ -5949,11 +5983,11 @@ export function App() {
     if (!element || !viewerProfile) return null;
     const type = String(element.type || "").toLowerCase();
     if (type === "banner") {
-      const banner = profileImageUrl((viewerProfile.bannerUrl ?? profile?.bannerUrl) || "");
+      const banner = profileImageUrl(viewerProfile.bannerUrl || "");
       return banner ? <img src={banner} alt="Banner" className="full-profile-banner-image" /> : <div className="full-profile-banner-fallback" />;
     }
     if (type === "avatar") {
-      const avatar = profileImageUrl((viewerProfile.pfpUrl ?? profile?.pfpUrl) || "");
+      const avatar = profileImageUrl(viewerProfile.pfpUrl || "");
       return (
         <div className="full-profile-avatar-element">
           {avatar ? <img src={avatar} alt="Avatar" className="full-profile-avatar-image" /> : getInitials(viewerProfile.displayName || viewerProfile.username || "U")}

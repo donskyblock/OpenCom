@@ -1923,6 +1923,7 @@ textarea { resize: vertical; min-height: clamp(80px, 13vw, 120px); font-size: 1e
   position: fixed;
   z-index: 50;
   min-width: clamp(140px, 14vw, 260px);
+  max-height: min(70vh, 460px);
   border-radius: calc(var(--radius) * 0.9);
   border: 1px solid var(--border-subtle);
   background: #0f1930;
@@ -1930,6 +1931,7 @@ textarea { resize: vertical; min-height: clamp(80px, 13vw, 120px); font-size: 1e
   padding: var(--space-xs);
   display: grid;
   gap: 4px;
+  overflow-y: auto;
 }
 .server-context-menu button { width: 100%; text-align: left; border-radius: calc(var(--radius) * 0.66); background: transparent; color: var(--text-main);}
 .server-context-menu button:hover { background: var(--bg-hover);}

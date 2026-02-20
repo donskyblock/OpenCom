@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, ipcMain } from "electron";
+import { app, BrowserWindow, shell, ipcMain, session, desktopCapturer } from "electron";
 import { createServer } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -156,6 +156,69 @@ log.transports.file.level = "info";
 
 // Vesktop-style approach: thin shell that runs the web client with minimal desktop glue.
 app.commandLine.appendSwitch("disable-features", "WidgetLayering");
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+app.commandLine.appendSwitch("disable-renderer-backgrounding");
+app.commandLine.appendSwitch("disable-background-timer-throttling");
+
+function getTrustedOrigins() {
+  const origins = new Set(["file://"]);
+  try {
+    const origin = new URL(REMOTE_FALLBACK_URL).origin;
+    if (origin) origins.add(origin);
+  } catch {}
+  return origins;
+}
+
+function isTrustedOrigin(value) {
+  const origin = String(value || "").trim();
+  if (!origin) return false;
+  if (origin.startsWith("file://")) return true;
+  return getTrustedOrigins().has(origin);
+}
+
+function installMediaHandlers() {
+  const ses = session.defaultSession;
+  if (!ses) return;
+  const allowedPermissions = new Set([
+    "media",
+    "audioCapture",
+    "videoCapture",
+    "display-capture",
+    "fullscreen"
+  ]);
+
+  ses.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
+    if (!isTrustedOrigin(requestingOrigin)) return false;
+    return allowedPermissions.has(permission);
+  });
+
+  ses.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    const origin = details?.requestingOrigin || "";
+    if (!isTrustedOrigin(origin)) return callback(false);
+    return callback(allowedPermissions.has(permission));
+  });
+
+  if (typeof ses.setDisplayMediaRequestHandler === "function") {
+    ses.setDisplayMediaRequestHandler(
+      async (_request, callback) => {
+        try {
+          const sources = await desktopCapturer.getSources({
+            types: ["screen", "window"],
+            thumbnailSize: { width: 640, height: 360 },
+            fetchWindowIcons: true
+          });
+          const picked = sources.find((source) => String(source.id || "").startsWith("screen:")) || sources[0];
+          if (!picked) return callback({});
+          callback({ video: picked, audio: "loopback" });
+        } catch (error) {
+          log.error("Display media request failed", error);
+          callback({});
+        }
+      },
+      { useSystemPicker: true }
+    );
+  }
+}
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -170,7 +233,8 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      spellcheck: false
+      spellcheck: false,
+      backgroundThrottling: false
     }
   });
 
@@ -354,7 +418,23 @@ ipcMain.handle("desktop:prompt", async (_event, payload = {}) => {
   return { value };
 });
 
+ipcMain.handle("desktop:display-sources:get", async () => {
+  const sources = await desktopCapturer.getSources({
+    types: ["screen", "window"],
+    thumbnailSize: { width: 480, height: 270 },
+    fetchWindowIcons: true
+  });
+  return {
+    sources: sources.map((source) => ({
+      id: source.id,
+      name: source.name,
+      type: String(source.id || "").startsWith("screen:") ? "screen" : "window"
+    }))
+  };
+});
+
 app.whenReady().then(() => {
+  installMediaHandlers();
   startLocalRpcBridge();
   createWindow();
 
