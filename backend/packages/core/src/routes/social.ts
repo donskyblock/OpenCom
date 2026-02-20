@@ -220,6 +220,23 @@ export async function socialRoutes(
     return { ok: true };
   });
 
+  app.post("/v1/social/requests/:requestId/cancel", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const { requestId } = z.object({ requestId: z.string().min(3) }).parse(req.params);
+
+    const pending = await q<{ sender_user_id: string }>(
+      `SELECT sender_user_id
+       FROM friend_requests
+       WHERE id=:requestId AND status='pending'
+       LIMIT 1`,
+      { requestId }
+    );
+    if (!pending.length || pending[0].sender_user_id !== userId) return rep.code(404).send({ error: "REQUEST_NOT_FOUND" });
+
+    await q(`DELETE FROM friend_requests WHERE id=:requestId`, { requestId });
+    return { ok: true };
+  });
+
   app.get("/v1/social/settings", { preHandler: [app.authenticate] } as any, async (req: any) => {
     const userId = req.user.sub as string;
     const rows = await q<{ allow_friend_requests: number }>(
