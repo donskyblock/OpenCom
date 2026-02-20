@@ -83,6 +83,20 @@ function clampProfilePercent(value, min, max, fallback) {
   return Math.max(min, Math.min(max, numeric));
 }
 
+function clampProfileElementRect(rect = {}, fallback = {}) {
+  const fallbackWidth = clampProfilePercent(fallback.w, 1, 100, 20);
+  const fallbackHeight = clampProfilePercent(fallback.h, 1, 100, 12);
+  const w = clampProfilePercent(rect.w, 1, 100, fallbackWidth);
+  const h = clampProfilePercent(rect.h, 1, 100, fallbackHeight);
+  const maxX = Math.max(0, 100 - w);
+  const maxY = Math.max(0, 100 - h);
+  const fallbackX = clampProfilePercent(fallback.x, 0, maxX, 0);
+  const fallbackY = clampProfilePercent(fallback.y, 0, maxY, 0);
+  const x = clampProfilePercent(rect.x, 0, maxX, fallbackX);
+  const y = clampProfilePercent(rect.y, 0, maxY, fallbackY);
+  return { x, y, w, h };
+}
+
 function getContextMenuPoint(clientX, clientY, options = {}) {
   const padding = Number.isFinite(Number(options.padding)) ? Math.max(0, Number(options.padding)) : 8;
   const menuWidth = Number.isFinite(Number(options.width)) ? Math.max(1, Number(options.width)) : 240;
@@ -129,13 +143,20 @@ function normalizeFullProfile(profileData = {}, fullProfileCandidate) {
     .map((item, index) => {
       const type = String(item.type || "").toLowerCase();
       if (!["avatar", "banner", "name", "bio", "links", "text"].includes(type)) return null;
+      const defaults = {
+        x: type === "banner" ? 0 : 5,
+        y: type === "banner" ? 0 : 5 + index * 8,
+        w: type === "banner" ? 100 : (type === "avatar" ? 20 : 80),
+        h: type === "banner" ? 34 : (type === "avatar" ? 31 : 12)
+      };
+      const rect = clampProfileElementRect(
+        { x: item.x, y: item.y, w: item.w, h: item.h },
+        defaults
+      );
       return {
         id: String(item.id || `${type}-${index + 1}`).slice(0, 40),
         type,
-        x: clampProfilePercent(item.x, 0, 100, type === "banner" ? 0 : 5),
-        y: clampProfilePercent(item.y, 0, 100, type === "banner" ? 0 : 5 + index * 8),
-        w: clampProfilePercent(item.w, 1, 100, type === "banner" ? 100 : (type === "avatar" ? 20 : 80)),
-        h: clampProfilePercent(item.h, 1, 100, type === "banner" ? 34 : (type === "avatar" ? 31 : 12)),
+        ...rect,
         order: Math.max(0, Math.min(100, Number.isFinite(Number(item.order)) ? Math.round(Number(item.order)) : index)),
         text: typeof item.text === "string" ? item.text.slice(0, 500) : ""
       };
@@ -847,6 +868,7 @@ export function App() {
   const [profileStudioScale, setProfileStudioScale] = useState(100);
   const [viewportSize, setViewportSize] = useState(() => ({ width: typeof window !== "undefined" ? window.innerWidth : 1280, height: typeof window !== "undefined" ? window.innerHeight : 720 }));
   const fullProfileDragOffsetRef = useRef({ x: 0, y: 0 });
+  const fullProfileElementsRef = useRef([]);
   const fullProfileEditorCanvasRef = useRef(null);
   const [rpcForm, setRpcForm] = useState({
     name: "",
@@ -1110,6 +1132,8 @@ export function App() {
   const activeChannelIdRef = useRef("");
   const activeGuildIdRef = useRef("");
   const profileCardDragOffsetRef = useRef({ x: 0, y: 0 });
+  const profileCardDragPointerIdRef = useRef(null);
+  const memberProfilePopoutRef = useRef(null);
   const downloadMenuRef = useRef(null);
   const preferredDownloadTarget = useMemo(() => getPreferredDownloadTarget(DOWNLOAD_TARGETS), []);
   const loadedClientExtensionIdsRef = useRef(new Set());
@@ -1124,6 +1148,14 @@ export function App() {
     dialogResolverRef.current = null;
     setDialogModal(null);
     if (resolver) resolver(value);
+  }
+
+  function getProfileCardClampOptions() {
+    const rect = memberProfilePopoutRef.current?.getBoundingClientRect?.();
+    return {
+      width: Number.isFinite(Number(rect?.width)) && Number(rect.width) > 0 ? Number(rect.width) : 320,
+      height: Number.isFinite(Number(rect?.height)) && Number(rect.height) > 0 ? Number(rect.height) : 280
+    };
   }
 
   function openDialog({ type = "alert", title = "OpenCom", message = "", defaultValue = "", confirmLabel = "OK", cancelLabel = "Cancel" }) {
@@ -2098,36 +2130,78 @@ export function App() {
   useEffect(() => {
     if (!draggingProfileCard) return;
     const onMove = (event) => {
+      if (
+        profileCardDragPointerIdRef.current != null
+        && Number.isFinite(Number(event.pointerId))
+        && event.pointerId !== profileCardDragPointerIdRef.current
+      ) return;
       const rawX = invertProfileDrag
         ? profileCardDragOffsetRef.current.x - event.clientX
         : event.clientX - profileCardDragOffsetRef.current.x;
       const rawY = invertProfileDrag
         ? profileCardDragOffsetRef.current.y - event.clientY
         : event.clientY - profileCardDragOffsetRef.current.y;
-      setProfileCardPosition(clampProfileCardPosition(rawX, rawY));
+      setProfileCardPosition(clampProfileCardPosition(rawX, rawY, getProfileCardClampOptions()));
     };
-    const onUp = () => setDraggingProfileCard(false);
+    const onUp = (event) => {
+      if (
+        profileCardDragPointerIdRef.current != null
+        && Number.isFinite(Number(event.pointerId))
+        && event.pointerId !== profileCardDragPointerIdRef.current
+      ) return;
+      profileCardDragPointerIdRef.current = null;
+      setDraggingProfileCard(false);
+    };
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
 
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
     return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
   }, [draggingProfileCard, invertProfileDrag]);
+
+  useEffect(() => {
+    if (!memberProfileCard) return;
+    const raf = window.requestAnimationFrame(() => {
+      setProfileCardPosition((current) => {
+        const next = clampProfileCardPosition(current.x, current.y, getProfileCardClampOptions());
+        return next.x === current.x && next.y === current.y ? current : next;
+      });
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [memberProfileCard?.id, viewportSize.width, viewportSize.height]);
+
+  useEffect(() => {
+    fullProfileElementsRef.current = fullProfileDraft?.elements || [];
+  }, [fullProfileDraft?.elements]);
 
   useEffect(() => {
     if (!fullProfileDraggingElementId) return;
     const onMove = (event) => {
       const canvas = fullProfileEditorCanvasRef.current;
       if (!canvas) return;
+      const activeElement = (fullProfileElementsRef.current || []).find((item) => item.id === fullProfileDraggingElementId);
+      if (!activeElement) return;
       const rect = canvas.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       const px = ((event.clientX - rect.left) / rect.width) * 100;
       const py = ((event.clientY - rect.top) / rect.height) * 100;
-      const x = Math.max(0, Math.min(100, px - fullProfileDragOffsetRef.current.x));
-      const y = Math.max(0, Math.min(100, py - fullProfileDragOffsetRef.current.y));
-      updateFullProfileElement(fullProfileDraggingElementId, { x, y });
+      const nextRect = clampProfileElementRect(
+        {
+          x: px - fullProfileDragOffsetRef.current.x,
+          y: py - fullProfileDragOffsetRef.current.y,
+          w: activeElement.w,
+          h: activeElement.h
+        },
+        activeElement
+      );
+      updateFullProfileElement(fullProfileDraggingElementId, { x: nextRect.x, y: nextRect.y });
     };
     const onUp = () => setFullProfileDraggingElementId("");
     window.addEventListener("mousemove", onMove);
@@ -2136,7 +2210,7 @@ export function App() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [fullProfileDraggingElementId, fullProfileDraft.elements]);
+  }, [fullProfileDraggingElementId]);
 
   useEffect(() => {
     const elements = fullProfileDraft?.elements || [];
@@ -4472,7 +4546,15 @@ export function App() {
     setFullProfileDraft((current) => ({
       ...current,
       mode: "custom",
-      elements: (current.elements || []).map((item) => item.id === elementId ? { ...item, ...patch } : item)
+      elements: (current.elements || []).map((item) => {
+        if (item.id !== elementId) return item;
+        const merged = { ...item, ...patch };
+        const rect = clampProfileElementRect(
+          { x: merged.x, y: merged.y, w: merged.w, h: merged.h },
+          item
+        );
+        return { ...merged, ...rect };
+      })
     }));
   }
 
@@ -4493,6 +4575,15 @@ export function App() {
               : { x: 8, y: 22, w: 58, h: 12 };
     setFullProfileDraft((current) => {
       const nextIndex = (current.elements || []).length + 1;
+      const placement = clampProfileElementRect(
+        {
+          x: Number(fallback.x || 0) + ((nextIndex - 1) % 5) * 3,
+          y: Number(fallback.y || 0) + ((nextIndex - 1) % 5) * 3,
+          w: fallback.w,
+          h: fallback.h
+        },
+        fallback
+      );
       return {
         ...current,
         mode: "custom",
@@ -4502,7 +4593,7 @@ export function App() {
           {
             id: nextId,
             type,
-            ...fallback,
+            ...placement,
             order: 10 + nextIndex,
             text: type === "text" ? `Custom text ${nextIndex}` : ""
           }
@@ -4569,11 +4660,17 @@ export function App() {
   function nudgeFullProfileElement(elementId, patch) {
     const element = (fullProfileDraft?.elements || []).find((item) => item.id === elementId);
     if (!element) return;
+    const rect = clampProfileElementRect(
+      {
+        x: patch.x ?? element.x,
+        y: patch.y ?? element.y,
+        w: patch.w ?? element.w,
+        h: patch.h ?? element.h
+      },
+      element
+    );
     updateFullProfileElement(elementId, {
-      x: clampProfilePercent(patch.x ?? element.x, 0, 100, element.x),
-      y: clampProfilePercent(patch.y ?? element.y, 0, 100, element.y),
-      w: clampProfilePercent(patch.w ?? element.w, 1, 100, element.w),
-      h: clampProfilePercent(patch.h ?? element.h, 1, 100, element.h),
+      ...rect,
       order: Math.max(0, Math.min(100, Number.isFinite(Number(patch.order)) ? Number(patch.order) : Number(element.order || 0)))
     });
   }
@@ -5221,7 +5318,9 @@ export function App() {
   }
 
   function startDraggingProfileCard(event) {
+    if (typeof event.button === "number" && event.button !== 0) return;
     event.preventDefault();
+    profileCardDragPointerIdRef.current = Number.isFinite(Number(event.pointerId)) ? event.pointerId : null;
     profileCardDragOffsetRef.current = invertProfileDrag
       ? {
           x: event.clientX + profileCardPosition.x,
@@ -6050,7 +6149,7 @@ export function App() {
 
   async function openMemberProfile(member, anchorPoint = null) {
     if (anchorPoint && Number.isFinite(Number(anchorPoint.x)) && Number.isFinite(Number(anchorPoint.y))) {
-      setProfileCardPosition(clampProfileCardPosition(Number(anchorPoint.x) + 12, Number(anchorPoint.y) + 12));
+      setProfileCardPosition(clampProfileCardPosition(Number(anchorPoint.x) + 12, Number(anchorPoint.y) + 12, getProfileCardClampOptions()));
     }
     try {
       const profileData = await api(`/v1/users/${member.id}/profile`, {
@@ -7566,6 +7665,23 @@ export function App() {
 
               <aside className="card profile-studio-panel">
                 <h4>Inspector</h4>
+                <div className="full-profile-layer-list">
+                  {(fullProfileDraft?.elements || [])
+                    .slice()
+                    .sort((a, b) => (b.order ?? 0) - (a.order ?? 0))
+                    .map((element) => (
+                      <button
+                        key={`layer-${element.id}`}
+                        type="button"
+                        className={`full-profile-layer-item ${profileStudioSelectedElementId === element.id ? "active" : ""}`}
+                        onClick={() => setProfileStudioSelectedElementId(element.id)}
+                      >
+                        <span>{element.type}</span>
+                        <small>{Math.round(Number(element.x) || 0)}%, {Math.round(Number(element.y) || 0)}%</small>
+                      </button>
+                    ))}
+                  {(!fullProfileDraft?.elements || fullProfileDraft.elements.length === 0) && <p className="hint">No elements on this canvas yet.</p>}
+                </div>
                 {selectedProfileStudioElement ? (
                   <>
                     <p className="hint">Editing: <strong>{selectedProfileStudioElement.type}</strong></p>
@@ -7916,12 +8032,13 @@ export function App() {
 
       {memberProfileCard && (
         <div
+          ref={memberProfilePopoutRef}
           className="member-profile-popout"
           style={{ left: profileCardPosition.x, top: profileCardPosition.y, right: "auto", bottom: "auto" }}
           onClick={(event) => event.stopPropagation()}
           onContextMenu={(event) => openMemberContextMenu(event, memberProfileCard)}
         >
-          <div className="popout-drag-handle" onMouseDown={startDraggingProfileCard}>Drag</div>
+          <div className="popout-drag-handle" onPointerDown={startDraggingProfileCard}>Drag</div>
           <div className="popout-banner" style={{ backgroundImage: memberProfileCard.bannerUrl ? `url(${profileImageUrl(memberProfileCard.bannerUrl)})` : undefined }} />
           <div className="popout-content">
             <div className="avatar popout-avatar">{memberProfileCard.pfpUrl ? <img src={profileImageUrl(memberProfileCard.pfpUrl)} alt="Profile avatar" className="avatar-image" /> : getInitials(memberProfileCard.displayName || memberProfileCard.username || "User")}</div>
