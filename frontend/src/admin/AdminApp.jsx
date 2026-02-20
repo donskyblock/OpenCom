@@ -5,9 +5,10 @@ const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://api.opencom.onlin
 const KNOWN_BADGES = ["PLATFORM_ADMIN", "PLATFORM_FOUNDER"];
 
 async function api(path, token, panelPassword, options = {}) {
+  const hasBody = options.body !== undefined && options.body !== null;
   const response = await fetch(`${CORE_API}${path}`, {
     headers: {
-      "Content-Type": "application/json",
+      ...(hasBody ? { "Content-Type": "application/json" } : {}),
       Authorization: `Bearer ${token}`,
       "x-admin-panel-password": panelPassword,
       ...(options.headers || {})

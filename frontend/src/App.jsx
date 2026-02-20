@@ -524,8 +524,9 @@ async function api(path, options = {}) {
   const retried = options.__retried === true;
   const nextOptions = { ...options };
   delete nextOptions.__retried;
+  const hasBody = nextOptions.body !== undefined && nextOptions.body !== null;
   const response = await fetch(`${CORE_API}${path}`, {
-    headers: { "Content-Type": "application/json", ...(nextOptions.headers || {}) },
+    headers: { ...(hasBody ? { "Content-Type": "application/json" } : {}), ...(nextOptions.headers || {}) },
     ...nextOptions
   });
 
