@@ -4034,7 +4034,9 @@ export function App() {
       ]);
       setFriendRequests({ incoming: requests.incoming || [], outgoing: requests.outgoing || [] });
       setFriends(friendsData.friends || []);
-      setStatus(action === "accept" ? "Friend request accepted." : "Friend request declined.");
+      if (action === "accept") setStatus("Friend request accepted.");
+      else if (action === "cancel") setStatus("Friend request canceled.");
+      else setStatus("Friend request declined.");
     } catch (error) {
       setStatus(`Request update failed: ${error.message}`);
     }
@@ -7531,6 +7533,9 @@ export function App() {
                   {friendRequests.outgoing.map((request) => (
                     <div key={request.id} className="friend-row">
                       <div className="friend-meta"><strong>{request.username}</strong><span>Pending</span></div>
+                      <div className="row-actions">
+                        <button className="ghost" onClick={() => respondToFriendRequest(request.id, "cancel")}>Cancel</button>
+                      </div>
                     </div>
                   ))}
                   {!friendRequests.incoming.length && !friendRequests.outgoing.length && <p className="hint">No pending friend requests.</p>}

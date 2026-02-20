@@ -38,6 +38,14 @@ function toSqlTimestamp(msFromEpoch: number): string {
   return new Date(msFromEpoch).toISOString().slice(0, 19).replace("T", " ");
 }
 
+async function isAccountBanned(userId: string): Promise<boolean> {
+  const rows = await q<{ user_id: string }>(
+    `SELECT user_id FROM account_bans WHERE user_id=:userId LIMIT 1`,
+    { userId }
+  );
+  return rows.length > 0;
+}
+
 async function issueEmailVerificationToken(userId: string): Promise<string> {
   const token = randomToken();
   const tokenHash = sha256Hex(token);
@@ -72,8 +80,19 @@ export async function authRoutes(app: FastifyInstance) {
     try {
       await request.jwtVerify();
     } catch {
-      reply.code(401).send({ error: "UNAUTHORIZED" });
+      return reply.code(401).send({ error: "UNAUTHORIZED" });
     }
+
+    const userId = request.user?.sub as string | undefined;
+    if (!userId) return reply.code(401).send({ error: "UNAUTHORIZED" });
+
+    const users = await q<{ id: string }>(
+      `SELECT id FROM users WHERE id=:userId LIMIT 1`,
+      { userId }
+    );
+    if (!users.length) return reply.code(401).send({ error: "ACCOUNT_NOT_FOUND" });
+
+    if (await isAccountBanned(userId)) return reply.code(403).send({ error: "ACCOUNT_BANNED" });
   });
 
   app.post("/v1/auth/register", async (req, rep) => {
@@ -119,13 +138,18 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.post("/v1/auth/login", async (req, rep) => {
     const body = parseBody(Login, req.body);
-    const users = await q<{ id: string; password_hash: string; username: string; email: string; email_verified_at: string | null }>(
-      `SELECT id,password_hash,username,email,email_verified_at FROM users WHERE email=:email`,
+    const users = await q<{ id: string; password_hash: string; username: string; email: string; email_verified_at: string | null; banned_at: string | null }>(
+      `SELECT u.id,u.password_hash,u.username,u.email,u.email_verified_at,ab.created_at AS banned_at
+       FROM users u
+       LEFT JOIN account_bans ab ON ab.user_id=u.id
+       WHERE u.email=:email
+       LIMIT 1`,
       { email: body.email }
     );
     if (!users.length) return rep.code(401).send({ error: "INVALID_CREDENTIALS" });
 
     const u = users[0];
+    if (u.banned_at) return rep.code(403).send({ error: "ACCOUNT_BANNED" });
     const ok = await verifyPassword(u.password_hash, body.password);
     if (!ok) return rep.code(401).send({ error: "INVALID_CREDENTIALS" });
     if (env.AUTH_REQUIRE_EMAIL_VERIFICATION && !u.email_verified_at) {
@@ -212,6 +236,14 @@ export async function authRoutes(app: FastifyInstance) {
     const rt = rows[0];
     if (rt.revoked_at) return rep.code(401).send({ error: "REFRESH_REVOKED" });
     if (new Date(rt.expires_at).getTime() < Date.now()) return rep.code(401).send({ error: "REFRESH_EXPIRED" });
+    if (await isAccountBanned(rt.user_id)) {
+      await q(
+        `UPDATE refresh_tokens SET revoked_at=NOW()
+         WHERE user_id=:userId AND revoked_at IS NULL`,
+        { userId: rt.user_id }
+      );
+      return rep.code(403).send({ error: "ACCOUNT_BANNED" });
+    }
 
     const nextRefresh = randomToken();
     const nextRefreshId = ulidLike();

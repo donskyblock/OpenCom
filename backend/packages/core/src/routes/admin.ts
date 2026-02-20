@@ -101,10 +101,11 @@ export async function adminRoutes(app: FastifyInstance) {
     const { query } = z.object({ query: z.string().min(1).max(64) }).parse(req.query);
 
     const users = await q<any>(
-      `SELECT id,username,email
-       FROM users
-       WHERE username LIKE :likeQ OR email LIKE :likeQ
-       ORDER BY created_at DESC
+      `SELECT u.id,u.username,u.email,IF(ab.user_id IS NULL, 0, 1) AS isBanned
+       FROM users u
+       LEFT JOIN account_bans ab ON ab.user_id=u.id
+       WHERE u.username LIKE :likeQ OR u.email LIKE :likeQ
+       ORDER BY u.created_at DESC
        LIMIT 20`,
       { likeQ: `%${query}%` }
     );
@@ -122,7 +123,14 @@ export async function adminRoutes(app: FastifyInstance) {
     }
 
     const { userId } = z.object({ userId: z.string().min(3) }).parse(req.params);
-    const userRows = await q<any>(`SELECT id,username,email,created_at FROM users WHERE id=:userId LIMIT 1`, { userId });
+    const userRows = await q<any>(
+      `SELECT u.id,u.username,u.email,u.created_at,ab.created_at AS banned_at
+       FROM users u
+       LEFT JOIN account_bans ab ON ab.user_id=u.id
+       WHERE u.id=:userId
+       LIMIT 1`,
+      { userId }
+    );
     if (!userRows.length) return rep.code(404).send({ error: "USER_NOT_FOUND" });
 
     const badges = await q<{ badge: string; created_at: string }>(
@@ -218,6 +226,84 @@ export async function adminRoutes(app: FastifyInstance) {
 
     await setBadge(userId, body.badge, body.enabled);
     return { ok: true };
+  });
+
+  app.post("/v1/admin/users/:userId/account-ban", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const actorId = req.user.sub as string;
+    try {
+      await requirePlatformStaff(actorId);
+    } catch {
+      return rep.code(403).send({ error: "FORBIDDEN" });
+    }
+
+    const { userId } = z.object({ userId: z.string().min(3) }).parse(req.params);
+    const body = parseBody(
+      z.object({
+        reason: z.string().trim().max(240).optional()
+      }),
+      req.body
+    );
+
+    if (userId === actorId) return rep.code(400).send({ error: "CANNOT_BAN_SELF" });
+
+    const target = await q<{ id: string }>(`SELECT id FROM users WHERE id=:userId`, { userId });
+    if (!target.length) return rep.code(404).send({ error: "USER_NOT_FOUND" });
+
+    const founder = await q<{ founder_user_id: string | null }>(`SELECT founder_user_id FROM platform_config WHERE id=1 LIMIT 1`);
+    if (founder[0]?.founder_user_id === userId) {
+      return rep.code(400).send({ error: "CANNOT_BAN_FOUNDER" });
+    }
+
+    await q(
+      `INSERT INTO account_bans (user_id,banned_by,reason)
+       VALUES (:userId,:actorId,:reason)
+       ON DUPLICATE KEY UPDATE
+         banned_by=VALUES(banned_by),
+         reason=VALUES(reason),
+         created_at=NOW()`,
+      { userId, actorId, reason: body.reason || null }
+    );
+    await q(
+      `UPDATE refresh_tokens
+       SET revoked_at=NOW()
+       WHERE user_id=:userId AND revoked_at IS NULL`,
+      { userId }
+    );
+
+    return { ok: true, userId, banned: true };
+  });
+
+  app.delete("/v1/admin/users/:userId/account-ban", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const actorId = req.user.sub as string;
+    try {
+      await requirePlatformStaff(actorId);
+    } catch {
+      return rep.code(403).send({ error: "FORBIDDEN" });
+    }
+
+    const { userId } = z.object({ userId: z.string().min(3) }).parse(req.params);
+    await q(`DELETE FROM account_bans WHERE user_id=:userId`, { userId });
+    return { ok: true, userId, banned: false };
+  });
+
+  app.delete("/v1/admin/users/:userId/account", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const actorId = req.user.sub as string;
+    const actorRole = await getPlatformRole(actorId);
+    if (actorRole !== "owner") return rep.code(403).send({ error: "ONLY_OWNER" });
+
+    const { userId } = z.object({ userId: z.string().min(3) }).parse(req.params);
+    if (userId === actorId) return rep.code(400).send({ error: "CANNOT_DELETE_SELF" });
+
+    const target = await q<{ id: string }>(`SELECT id FROM users WHERE id=:userId`, { userId });
+    if (!target.length) return rep.code(404).send({ error: "USER_NOT_FOUND" });
+
+    const founder = await q<{ founder_user_id: string | null }>(`SELECT founder_user_id FROM platform_config WHERE id=1 LIMIT 1`);
+    if (founder[0]?.founder_user_id === userId) {
+      return rep.code(400).send({ error: "CANNOT_DELETE_FOUNDER" });
+    }
+
+    await q(`DELETE FROM users WHERE id=:userId`, { userId });
+    return { ok: true, deletedUserId: userId };
   });
 
   app.get("/v1/admin/users/:userId/boost", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {

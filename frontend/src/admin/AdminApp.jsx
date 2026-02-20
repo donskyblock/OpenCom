@@ -33,6 +33,7 @@ export function AdminApp() {
   const [query, setQuery] = useState("");
   const [users, setUsers] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [userActionBusyId, setUserActionBusyId] = useState("");
   const [badgeUserId, setBadgeUserId] = useState("");
   const [badgeName, setBadgeName] = useState("");
   const [inspectedUser, setInspectedUser] = useState(null);
@@ -88,13 +89,24 @@ export function AdminApp() {
     setSearching(true);
     try {
       const data = await api(`/v1/admin/users?query=${encodeURIComponent(query.trim())}`, token, panelPassword);
-      setUsers(data.users || []);
+      setUsers((data.users || []).map((user) => ({ ...user, isBanned: user.isBanned === true || user.isBanned === 1 })));
       showStatus(`Found ${(data.users || []).length} users.`, "success");
     } catch (e) {
       showStatus(`Search failed: ${e.message}`, "error");
       setUsers([]);
     } finally {
       setSearching(false);
+    }
+  }
+
+  async function refreshUsersAfterAction() {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    try {
+      const data = await api(`/v1/admin/users?query=${encodeURIComponent(trimmed)}`, token, panelPassword);
+      setUsers((data.users || []).map((user) => ({ ...user, isBanned: user.isBanned === true || user.isBanned === 1 })));
+    } catch {
+      // keep previous list if refresh fails; action status already handled by caller
     }
   }
 
@@ -109,6 +121,67 @@ export function AdminApp() {
       showStatus(enabled ? "User is now platform admin." : "Platform admin removed.", "success");
     } catch (e) {
       showStatus(e.message || "Update failed.", "error");
+    }
+  }
+
+  async function setAccountBan(userId, shouldBan) {
+    if (!userId) return;
+    if (userActionBusyId) return;
+
+    if (shouldBan) {
+      const confirmed = window.confirm("Ban this account? They will be blocked from login and API access.");
+      if (!confirmed) return;
+    } else {
+      const confirmed = window.confirm("Unban this account?");
+      if (!confirmed) return;
+    }
+
+    let reason = "";
+    if (shouldBan) {
+      reason = window.prompt("Ban reason (optional):", "") || "";
+    }
+
+    setUserActionBusyId(userId);
+    try {
+      if (shouldBan) {
+        await api(`/v1/admin/users/${userId}/account-ban`, token, panelPassword, {
+          method: "POST",
+          body: JSON.stringify({ reason: reason.trim() || undefined })
+        });
+      } else {
+        await api(`/v1/admin/users/${userId}/account-ban`, token, panelPassword, {
+          method: "DELETE"
+        });
+      }
+      await refreshUsersAfterAction();
+      showStatus(shouldBan ? "Account banned." : "Account unbanned.", "success");
+    } catch (e) {
+      showStatus(e.message || (shouldBan ? "Failed to ban account." : "Failed to unban account."), "error");
+    } finally {
+      setUserActionBusyId("");
+    }
+  }
+
+  async function deleteUserAccount(userId) {
+    if (!userId) return;
+    if (userActionBusyId) return;
+
+    const confirmed = window.confirm("Delete this account permanently? This cannot be undone.");
+    if (!confirmed) return;
+
+    setUserActionBusyId(userId);
+    try {
+      await api(`/v1/admin/users/${userId}/account`, token, panelPassword, { method: "DELETE" });
+      await refreshUsersAfterAction();
+      if (inspectedUser?.id === userId) {
+        setInspectedUser(null);
+        setInspectedBadges([]);
+      }
+      showStatus("Account deleted.", "success");
+    } catch (e) {
+      showStatus(e.message || "Failed to delete account.", "error");
+    } finally {
+      setUserActionBusyId("");
     }
   }
 
@@ -325,7 +398,7 @@ export function AdminApp() {
         {tab === "users" && (
           <section className="admin-section">
             <h2>User search & admin actions</h2>
-            <p className="admin-hint">Search by username or email, then set founder, add/remove platform admins, or manage badges.</p>
+            <p className="admin-hint">Search by username or email, then set founder/admin, ban or unban accounts, delete accounts, or manage badges/boost.</p>
             <div className="admin-search-row">
               <input placeholder="Username or email" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && searchUsers()} />
               <button type="button" onClick={searchUsers} disabled={searching}>{searching ? "Searching…" : "Search"}</button>
@@ -338,6 +411,7 @@ export function AdminApp() {
                       <th>Username</th>
                       <th>Email</th>
                       <th>User ID</th>
+                      <th>Status</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
@@ -347,12 +421,23 @@ export function AdminApp() {
                         <td><strong>{u.username || "—"}</strong></td>
                         <td>{u.email || "—"}</td>
                         <td><code>{u.id}</code></td>
+                        <td>{u.isBanned ? <span className="text-dim">Banned</span> : <span className="text-dim">Active</span>}</td>
                         <td>
-                          {isOwner && <button type="button" className="btn-sm" onClick={() => setFounder(u.id)}>Set founder</button>}
-                          {isOwner && <button type="button" className="btn-sm" onClick={() => setAdmin(u.id, true)}>Make admin</button>}
-                          {isOwner && <button type="button" className="btn-sm danger" onClick={() => setAdmin(u.id, false)}>Remove admin</button>}
-                          <button type="button" className="btn-sm" onClick={() => { inspectUser(u.id); setTab("badges"); }}>Badges</button>
-                          <button type="button" className="btn-sm" onClick={() => { setBoostUserId(u.id); loadBoostState(u.id); setTab("boost"); }}>Boost</button>
+                          {isOwner && <button type="button" className="btn-sm" onClick={() => setFounder(u.id)} disabled={userActionBusyId === u.id}>Set founder</button>}
+                          {isOwner && <button type="button" className="btn-sm" onClick={() => setAdmin(u.id, true)} disabled={userActionBusyId === u.id}>Make admin</button>}
+                          {isOwner && <button type="button" className="btn-sm danger" onClick={() => setAdmin(u.id, false)} disabled={userActionBusyId === u.id}>Remove admin</button>}
+                          <button type="button" className="btn-sm" onClick={() => { inspectUser(u.id); setTab("badges"); }} disabled={userActionBusyId === u.id}>Badges</button>
+                          <button type="button" className="btn-sm" onClick={() => { setBoostUserId(u.id); loadBoostState(u.id); setTab("boost"); }} disabled={userActionBusyId === u.id}>Boost</button>
+                          {u.isBanned ? (
+                            <button type="button" className="btn-sm" onClick={() => setAccountBan(u.id, false)} disabled={userActionBusyId === u.id}>Unban</button>
+                          ) : (
+                            <button type="button" className="btn-sm danger" onClick={() => setAccountBan(u.id, true)} disabled={userActionBusyId === u.id}>Ban</button>
+                          )}
+                          {isOwner && (
+                            <button type="button" className="btn-sm danger" onClick={() => deleteUserAccount(u.id)} disabled={userActionBusyId === u.id}>
+                              Delete account
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
