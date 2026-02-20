@@ -644,17 +644,15 @@ function formatMessageTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "just now";
   const timeLabel = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = String(date.getFullYear());
+  const dateWithTimeLabel = `${day}/${month}/${year} {${timeLabel}}`;
   const now = new Date();
   const todayDayIndex = Math.floor(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000);
   const messageDayIndex = Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000);
   const dayDiff = todayDayIndex - messageDayIndex;
-  if (dayDiff === 1) return `${timeLabel} Yesterday`;
-  if (dayDiff > 1) {
-    const dateOptions = date.getFullYear() === now.getFullYear()
-      ? { month: "short", day: "numeric" }
-      : { year: "numeric", month: "short", day: "numeric" };
-    return `${timeLabel} ${date.toLocaleDateString(undefined, dateOptions)}`;
-  }
+  if (dayDiff >= 1) return dateWithTimeLabel;
   return timeLabel;
 }
 
