@@ -1716,6 +1716,47 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 .slash-command-item.active {
   background: rgba(125, 164, 255, 0.2);
 }
+.slash-command-params {
+  margin-bottom: 0.35em;
+  border: 1px solid rgba(123, 162, 255, 0.35);
+  border-radius: calc(var(--radius) * 0.8);
+  background: rgba(14, 24, 43, 0.95);
+  padding: 0.5em 0.55em;
+  display: grid;
+  gap: 0.45em;
+}
+.slash-command-params-header {
+  font-size: 0.76rem;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+}
+.slash-command-params-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.45em;
+}
+.slash-command-param-field {
+  display: grid;
+  gap: 0.2em;
+}
+.slash-command-param-field > span {
+  color: var(--text-main);
+  font-size: 0.75rem;
+}
+.slash-command-param-field input,
+.slash-command-param-field select {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(10, 18, 33, 0.9);
+  color: var(--text-main);
+  font: inherit;
+  padding: 0.35em 0.45em;
+}
+.slash-command-param-field small {
+  color: var(--text-dim);
+  font-size: 0.7rem;
+}
 .mention-suggestions {
   position: absolute;
   left: 0;

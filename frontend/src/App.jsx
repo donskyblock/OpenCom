@@ -679,8 +679,35 @@ function getMentionQuery(value = "") {
 function getSlashQuery(value = "") {
   const trimmed = value.trimStart();
   if (!trimmed.startsWith("/")) return null;
-  const commandToken = trimmed.slice(1).split(/\s+/)[0] || "";
-  return commandToken.toLowerCase();
+  const withoutPrefix = trimmed.slice(1);
+  if (!withoutPrefix.length) return "";
+  if (/\s/.test(withoutPrefix)) return null;
+  return withoutPrefix.toLowerCase();
+}
+
+function splitSlashInput(value = "") {
+  const trimmed = String(value || "").trim();
+  const withoutPrefix = trimmed.replace(/^\//, "").trim();
+  if (!withoutPrefix) return { commandToken: "", argText: "" };
+  const parts = withoutPrefix.split(/\s+/);
+  const commandToken = parts.shift() || "";
+  return { commandToken, argText: parts.join(" ") };
+}
+
+function resolveSlashCommand(commandName = "", commands = []) {
+  const normalized = String(commandName || "").trim();
+  if (!normalized) return { command: null, ambiguousMatches: [] };
+
+  let command = commands.find((item) => item?.name === normalized) || null;
+  if (command) return { command, ambiguousMatches: [] };
+
+  if (!normalized.includes(".")) {
+    const suffixMatches = commands.filter((item) => String(item?.name || "").split(".").pop() === normalized);
+    if (suffixMatches.length === 1) command = suffixMatches[0];
+    if (suffixMatches.length > 1) return { command: null, ambiguousMatches: suffixMatches };
+  }
+
+  return { command, ambiguousMatches: [] };
 }
 
 function parseCommandArgs(raw = "") {
@@ -707,6 +734,34 @@ function coerceCommandArg(value, optionType) {
     throw new Error(`Invalid boolean: ${value}`);
   }
   return value;
+}
+
+function parseCommandArgsByOptions(rawArgText = "", optionDefs = []) {
+  const tokens = parseCommandArgs(rawArgText || "");
+  const knownOptionNames = new Set((optionDefs || []).map((option) => String(option?.name || "")));
+  const namedTokens = {};
+  const positionalTokens = [];
+
+  for (const token of tokens) {
+    const match = String(token).match(/^([a-zA-Z0-9_-]+)=(.*)$/);
+    if (match && knownOptionNames.has(match[1])) {
+      namedTokens[match[1]] = match[2];
+      continue;
+    }
+    positionalTokens.push(token);
+  }
+
+  const args = {};
+  let positionalIndex = 0;
+  for (const option of optionDefs || []) {
+    if (!option?.name) continue;
+    const hasNamed = Object.prototype.hasOwnProperty.call(namedTokens, option.name);
+    const rawValue = hasNamed ? namedTokens[option.name] : positionalTokens[positionalIndex++];
+    if (rawValue == null || rawValue === "") continue;
+    args[option.name] = coerceCommandArg(rawValue, option.type || "string");
+  }
+
+  return args;
 }
 
 function contentMentionsSelf(content = "", selfId, selfNames = []) {
@@ -1104,6 +1159,7 @@ export function App() {
   const [clientExtensionLoadState, setClientExtensionLoadState] = useState({});
   const [serverExtensionCommands, setServerExtensionCommands] = useState([]);
   const [slashSelectionIndex, setSlashSelectionIndex] = useState(0);
+  const [slashCommandArgDrafts, setSlashCommandArgDrafts] = useState({});
 
   function applyNoiseSuppressionPreset(nextPresetRaw) {
     const nextPreset = normalizeNoiseSuppressionPresetForUi(nextPresetRaw);
@@ -1604,6 +1660,22 @@ export function App() {
     setSlashSelectionIndex(0);
   }, [messageText, serverExtensionCommands]);
 
+  useEffect(() => {
+    setSlashCommandArgDrafts((current) => {
+      const knownCommands = new Set((serverExtensionCommands || []).map((command) => String(command?.name || "")));
+      const next = {};
+      let changed = false;
+      for (const [commandName, draft] of Object.entries(current || {})) {
+        if (!knownCommands.has(commandName)) {
+          changed = true;
+          continue;
+        }
+        next[commandName] = draft;
+      }
+      return changed ? next : current;
+    });
+  }, [serverExtensionCommands]);
+
   async function loadClientExtensionSource({ extensionId, extensionName, devUrl }) {
     if (devUrl) {
       const response = await fetch(devUrl);
@@ -2026,6 +2098,27 @@ export function App() {
     return catalog.filter((command) => command.name.toLowerCase().includes(slashQuery)).slice(0, 10);
   }, [slashQuery, serverExtensionCommands]);
   const showingSlash = slashQuery != null;
+
+  const activeSlashCommandState = useMemo(() => {
+    if (navMode !== "servers") return { commandToken: "", command: null, ambiguousMatches: [] };
+    const { commandToken } = splitSlashInput(messageText);
+    if (!commandToken) return { commandToken: "", command: null, ambiguousMatches: [] };
+    const resolved = resolveSlashCommand(commandToken, serverExtensionCommands);
+    return {
+      commandToken,
+      command: resolved.command,
+      ambiguousMatches: resolved.ambiguousMatches
+    };
+  }, [messageText, navMode, serverExtensionCommands]);
+
+  const activeSlashCommand = activeSlashCommandState.command;
+  const activeSlashOptionDefs = Array.isArray(activeSlashCommand?.options) ? activeSlashCommand.options : [];
+  const activeSlashCommandDraft = useMemo(() => {
+    if (!activeSlashCommand?.name) return {};
+    const draft = slashCommandArgDrafts[activeSlashCommand.name];
+    if (!draft || typeof draft !== "object") return {};
+    return draft;
+  }, [activeSlashCommand?.name, slashCommandArgDrafts]);
 
   const memberByMentionToken = useMemo(() => {
     const map = new Map();
@@ -4184,43 +4277,72 @@ export function App() {
     }
   }
 
-  async function executeSlashCommand(rawInput) {
-    const trimmed = rawInput.trim();
-    const withoutPrefix = trimmed.replace(/^\//, "").trim();
-    const [commandName, ...argPieces] = withoutPrefix.split(/\s+/);
-    if (!commandName) return false;
+  function setSlashCommandDraftValue(commandName, optionName, value) {
+    if (!commandName || !optionName) return;
+    setSlashCommandArgDrafts((current) => {
+      const existingDraft = current?.[commandName] && typeof current[commandName] === "object" ? current[commandName] : {};
+      const nextDraft = { ...existingDraft };
+      if (value == null || value === "") delete nextDraft[optionName];
+      else nextDraft[optionName] = value;
 
-    let command = serverExtensionCommands.find((item) => item.name === commandName);
-    if (!command) {
-      const suffixMatches = serverExtensionCommands.filter((item) => String(item?.name || "").split(".").pop() === commandName);
-      if (suffixMatches.length === 1) {
-        command = suffixMatches[0];
-      } else if (suffixMatches.length > 1) {
-        setStatus(`Ambiguous command /${commandName}. Use one of: ${suffixMatches.map((item) => `/${item.name}`).join(", ")}`);
-        return true;
-      }
-    }
-    if (!command) {
-      setStatus(`Unknown command: /${commandName}`);
+      const next = { ...(current || {}) };
+      if (Object.keys(nextDraft).length === 0) delete next[commandName];
+      else next[commandName] = nextDraft;
+      return next;
+    });
+  }
+
+  function clearSlashCommandDraft(commandName) {
+    if (!commandName) return;
+    setSlashCommandArgDrafts((current) => {
+      if (!current || !Object.prototype.hasOwnProperty.call(current, commandName)) return current;
+      const next = { ...current };
+      delete next[commandName];
+      return next;
+    });
+  }
+
+  async function executeSlashCommand(rawInput) {
+    const { commandToken, argText } = splitSlashInput(rawInput);
+    if (!commandToken) return false;
+
+    const resolved = resolveSlashCommand(commandToken, serverExtensionCommands);
+    if (!resolved.command && resolved.ambiguousMatches.length > 1) {
+      setStatus(`Ambiguous command /${commandToken}. Use one of: ${resolved.ambiguousMatches.map((item) => `/${item.name}`).join(", ")}`);
       return true;
     }
-    const resolvedCommandName = command.name;
+    if (!resolved.command) {
+      setStatus(`Unknown command: /${commandToken}`);
+      return true;
+    }
 
+    const command = resolved.command;
+    const resolvedCommandName = command.name;
     const optionDefs = Array.isArray(command.options) ? command.options : [];
-    const rawArgs = parseCommandArgs(argPieces.join(" "));
     const args = {};
 
     try {
-      optionDefs.forEach((option, index) => {
-        const value = rawArgs[index];
-        if ((value == null || value === "") && option.required) {
+      Object.assign(args, parseCommandArgsByOptions(argText, optionDefs));
+
+      const draftArgs = slashCommandArgDrafts?.[resolvedCommandName];
+      if (draftArgs && typeof draftArgs === "object") {
+        optionDefs.forEach((option) => {
+          if (!option?.name) return;
+          if (Object.prototype.hasOwnProperty.call(args, option.name)) return;
+          const rawValue = draftArgs[option.name];
+          if (rawValue == null || rawValue === "") return;
+          args[option.name] = coerceCommandArg(rawValue, option.type || "string");
+        });
+      }
+
+      optionDefs.forEach((option) => {
+        if (!option?.required) return;
+        if (!Object.prototype.hasOwnProperty.call(args, option.name)) {
           throw new Error(`Missing required option: ${option.name}`);
         }
-        if (value == null || value === "") return;
-        args[option.name] = coerceCommandArg(value, option.type || "string");
       });
     } catch (error) {
-      setStatus(`/${commandName}: ${error.message}`);
+      setStatus(`/${commandToken}: ${error.message}`);
       return true;
     }
 
@@ -4245,6 +4367,7 @@ export function App() {
       } else {
         setStatus(`Executed /${resolvedCommandName}${result?.result != null ? ` → ${typeof result.result === "string" ? result.result : JSON.stringify(result.result)}` : ""}`);
       }
+      clearSlashCommandDraft(resolvedCommandName);
     } catch (error) {
       setMessageText(rawInput);
       setStatus(`Command failed: ${error.message}`);
@@ -7695,6 +7818,36 @@ export function App() {
                           </button>
                         </div>
                       ))}
+                    </div>
+                  )}
+                  {activeSlashCommand && activeSlashOptionDefs.length > 0 && (
+                    <div className="slash-command-params">
+                      <div className="slash-command-params-header">/{activeSlashCommand.name} options</div>
+                      <div className="slash-command-params-grid">
+                        {activeSlashOptionDefs.map((option) => (
+                          <label key={`${activeSlashCommand.name}:${option.name}`} className="slash-command-param-field">
+                            <span>{option.name}{option.required ? " *" : ""}</span>
+                            {option.type === "boolean" ? (
+                              <select
+                                value={activeSlashCommandDraft?.[option.name] ?? ""}
+                                onChange={(event) => setSlashCommandDraftValue(activeSlashCommand.name, option.name, event.target.value)}
+                              >
+                                <option value="">Unset</option>
+                                <option value="true">True</option>
+                                <option value="false">False</option>
+                              </select>
+                            ) : (
+                              <input
+                                type={option.type === "number" ? "number" : "text"}
+                                value={activeSlashCommandDraft?.[option.name] ?? ""}
+                                onChange={(event) => setSlashCommandDraftValue(activeSlashCommand.name, option.name, event.target.value)}
+                                placeholder={option.description || `${option.name}${option.required ? " (required)" : ""}`}
+                              />
+                            )}
+                            {option.description && <small>{option.description}</small>}
+                          </label>
+                        ))}
+                      </div>
                     </div>
                   )}
                   <textarea
