@@ -2,7 +2,7 @@ import { command, createServerContext, optionString } from "../../lib/opencom-ex
 
 
 async function getSkillLevel(username, skill) {
-    res = await fetch(`https://api.donskyblock.xyz/skill?name=${username}&skill=${skill}`, {
+    res = await fetch(`https://api.donskyblock.xyz/skill/${username}/${skill}`, {
         method: 'GET',
         headers: {
             'Content-Type': 'application/json'
@@ -18,7 +18,7 @@ async function getSkillLevel(username, skill) {
 
 
 async function getSlayerLevel(username, slayer) {
-    res = await fetch(`https://api.donskyblock.xyz/slayer?name=${username}&slayer=${slayer}`, {
+    res = await fetch(`https://api.donskyblock.xyz/${username}/${slayer}`, {
         method: 'GET',
         headers: {
             'Content-Type': 'application/json'
@@ -33,7 +33,7 @@ async function getSlayerLevel(username, slayer) {
 }
 
 async function getDungeonLevel(username) {
-    res = await fetch(`https://api.donskyblock.xyz/cata?name=${username}`, {
+    res = await fetch(`https://api.donskyblock.xyz/cata/${username}`, {
         method: 'GET',
         headers: {
             'Content-Type': 'application/json'
