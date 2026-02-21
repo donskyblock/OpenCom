@@ -112,6 +112,9 @@ export async function extensionRoutes(app: FastifyInstance) {
       if (error?.message === "COMMAND_NOT_FOUND") {
         return rep.code(404).send({ error: "COMMAND_NOT_FOUND" });
       }
+      if (error?.message === "COMMAND_AMBIGUOUS") {
+        return rep.code(409).send({ error: "COMMAND_AMBIGUOUS" });
+      }
       app.log.error({ err: error, serverId, userId, commandName }, "Extension command execution failed");
       return rep.code(500).send({ error: "COMMAND_EXECUTION_FAILED" });
     }

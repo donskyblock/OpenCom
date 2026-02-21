@@ -1093,6 +1093,10 @@ export function App() {
   const [serverVoiceGatewayPrefs, setServerVoiceGatewayPrefs] = useState(getStoredJson(SERVER_VOICE_GATEWAY_PREFS_KEY, {}));
   const [nodeGatewayUnavailableByServer, setNodeGatewayUnavailableByServer] = useState({});
   const [clientExtensionCatalog, setClientExtensionCatalog] = useState([]);
+  const [serverExtensionCatalog, setServerExtensionCatalog] = useState([]);
+  const [installedServerExtensions, setInstalledServerExtensions] = useState([]);
+  const [serverExtensionsLoading, setServerExtensionsLoading] = useState(false);
+  const [serverExtensionBusyById, setServerExtensionBusyById] = useState({});
   const [enabledClientExtensions, setEnabledClientExtensions] = useState(getStoredStringArray(CLIENT_EXTENSIONS_ENABLED_KEY));
   const [clientExtensionDevMode, setClientExtensionDevMode] = useState(localStorage.getItem(CLIENT_EXTENSIONS_DEV_MODE_KEY) === "1");
   const [clientExtensionDevUrls, setClientExtensionDevUrls] = useState(getStoredStringArray(CLIENT_EXTENSIONS_DEV_URLS_KEY));
@@ -1455,13 +1459,62 @@ export function App() {
   useEffect(() => {
     if (!accessToken || !me?.id) {
       setClientExtensionCatalog([]);
+      setServerExtensionCatalog([]);
       return;
     }
 
     api("/v1/extensions/catalog", { headers: { Authorization: `Bearer ${accessToken}` } })
-      .then((data) => setClientExtensionCatalog(data.clientExtensions || []))
-      .catch(() => setClientExtensionCatalog([]));
+      .then((data) => {
+        setClientExtensionCatalog(data.clientExtensions || []);
+        setServerExtensionCatalog(data.serverExtensions || []);
+      })
+      .catch(() => {
+        setClientExtensionCatalog([]);
+        setServerExtensionCatalog([]);
+      });
   }, [accessToken, me?.id]);
+
+  async function loadServerExtensionCommands(serverIdOverride = "") {
+    const selectedServerId = String(serverIdOverride || activeServerId || "");
+    const selectedServer = servers.find((server) => server.id === selectedServerId) || null;
+    if (!accessToken || !selectedServer) {
+      setServerExtensionCommands([]);
+      return [];
+    }
+
+    try {
+      const data = await nodeApi(selectedServer.baseUrl, "/v1/extensions/commands", selectedServer.membershipToken);
+      const commands = Array.isArray(data.commands) ? data.commands : [];
+      setServerExtensionCommands(commands);
+      return commands;
+    } catch {
+      setServerExtensionCommands([]);
+      return [];
+    }
+  }
+
+  async function loadInstalledServerExtensions(serverIdOverride = "") {
+    const selectedServerId = String(serverIdOverride || activeServerId || "");
+    if (!accessToken || !selectedServerId) {
+      setInstalledServerExtensions([]);
+      return [];
+    }
+
+    setServerExtensionsLoading(true);
+    try {
+      const data = await api(`/v1/servers/${selectedServerId}/extensions`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const extensions = Array.isArray(data.extensions) ? data.extensions : [];
+      setInstalledServerExtensions(extensions);
+      return extensions;
+    } catch {
+      setInstalledServerExtensions([]);
+      return [];
+    } finally {
+      setServerExtensionsLoading(false);
+    }
+  }
 
   useEffect(() => {
     const selectedServer = servers.find((server) => server.id === activeServerId) || null;
@@ -1469,11 +1522,25 @@ export function App() {
       setServerExtensionCommands([]);
       return;
     }
-
-    nodeApi(selectedServer.baseUrl, "/v1/extensions/commands", selectedServer.membershipToken)
-      .then((data) => setServerExtensionCommands(Array.isArray(data.commands) ? data.commands : []))
-      .catch(() => setServerExtensionCommands([]));
+    loadServerExtensionCommands(selectedServer.id).catch(() => {});
   }, [accessToken, activeServerId, servers]);
+
+  useEffect(() => {
+    const selectedServer = servers.find((server) => server.id === activeServerId) || null;
+    if (!accessToken || !selectedServer) {
+      setInstalledServerExtensions([]);
+      return;
+    }
+    loadInstalledServerExtensions(selectedServer.id).catch(() => {});
+  }, [accessToken, activeServerId, servers]);
+
+  useEffect(() => {
+    if (!accessToken || !activeServerId) return;
+    const timer = window.setInterval(() => {
+      loadServerExtensionCommands(activeServerId).catch(() => {});
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, [accessToken, activeServerId]);
 
   useEffect(() => {
     if (!accessToken || servers.length === 0) return;
@@ -1645,6 +1712,39 @@ export function App() {
     });
   }
 
+  async function refreshServerExtensions(serverIdOverride = "") {
+    const selectedServerId = String(serverIdOverride || activeServerId || "");
+    if (!selectedServerId) return;
+    await Promise.all([
+      loadInstalledServerExtensions(selectedServerId),
+      loadServerExtensionCommands(selectedServerId)
+    ]);
+  }
+
+  async function toggleServerExtension(extensionId, enabled) {
+    const selectedServerId = String(activeServerId || "");
+    if (!accessToken || !selectedServerId || !extensionId) return;
+
+    setServerExtensionBusyById((current) => ({ ...current, [extensionId]: true }));
+    try {
+      await api(`/v1/servers/${selectedServerId}/extensions/${encodeURIComponent(extensionId)}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ enabled: !!enabled })
+      });
+      await refreshServerExtensions(selectedServerId);
+      setStatus(`${enabled ? "Enabled" : "Disabled"} server extension: ${extensionId}`);
+    } catch (error) {
+      setStatus(`Server extension update failed: ${error.message}`);
+    } finally {
+      setServerExtensionBusyById((current) => {
+        const next = { ...current };
+        delete next[extensionId];
+        return next;
+      });
+    }
+  }
+
   function addClientDevExtensionUrl() {
     const trimmed = newClientExtensionDevUrl.trim();
     if (!trimmed) return;
@@ -1736,6 +1836,32 @@ export function App() {
   }, [channels, voiceConnectedChannelId]);
   const activeChannel = useMemo(() => channels.find((channel) => channel.id === activeChannelId) || null, [channels, activeChannelId]);
   const activeDm = useMemo(() => dms.find((dm) => dm.id === activeDmId) || null, [dms, activeDmId]);
+  const installedServerExtensionById = useMemo(
+    () => new Map((installedServerExtensions || []).map((item) => [item?.extensionId, item])),
+    [installedServerExtensions]
+  );
+  const serverExtensionsForDisplay = useMemo(() => {
+    const catalog = Array.isArray(serverExtensionCatalog) ? serverExtensionCatalog : [];
+    const merged = catalog.map((ext) => ({
+      ...ext,
+      installed: installedServerExtensionById.get(ext.id) || null,
+      enabled: !!installedServerExtensionById.get(ext.id)?.enabled
+    }));
+    const knownIds = new Set(merged.map((item) => item.id));
+    for (const installed of installedServerExtensions || []) {
+      if (!installed?.extensionId || knownIds.has(installed.extensionId)) continue;
+      const manifest = installed.manifest || {};
+      merged.push({
+        id: installed.extensionId,
+        name: manifest.name || installed.extensionId,
+        version: manifest.version || "0.1.0",
+        description: manifest.description || "",
+        installed,
+        enabled: !!installed.enabled
+      });
+    }
+    return merged.sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || "")));
+  }, [serverExtensionCatalog, installedServerExtensionById, installedServerExtensions]);
 
   const myGuildPermissions = useMemo(() => {
     const roles = guildState?.roles || [];
@@ -4064,11 +4190,21 @@ export function App() {
     const [commandName, ...argPieces] = withoutPrefix.split(/\s+/);
     if (!commandName) return false;
 
-    const command = serverExtensionCommands.find((item) => item.name === commandName);
+    let command = serverExtensionCommands.find((item) => item.name === commandName);
+    if (!command) {
+      const suffixMatches = serverExtensionCommands.filter((item) => String(item?.name || "").split(".").pop() === commandName);
+      if (suffixMatches.length === 1) {
+        command = suffixMatches[0];
+      } else if (suffixMatches.length > 1) {
+        setStatus(`Ambiguous command /${commandName}. Use one of: ${suffixMatches.map((item) => `/${item.name}`).join(", ")}`);
+        return true;
+      }
+    }
     if (!command) {
       setStatus(`Unknown command: /${commandName}`);
       return true;
     }
+    const resolvedCommandName = command.name;
 
     const optionDefs = Array.isArray(command.options) ? command.options : [];
     const rawArgs = parseCommandArgs(argPieces.join(" "));
@@ -4090,7 +4226,7 @@ export function App() {
 
     try {
       setMessageText("");
-      const result = await nodeApi(activeServer.baseUrl, `/v1/extensions/commands/${encodeURIComponent(commandName)}/execute`, activeServer.membershipToken, {
+      const result = await nodeApi(activeServer.baseUrl, `/v1/extensions/commands/${encodeURIComponent(resolvedCommandName)}/execute`, activeServer.membershipToken, {
         method: "POST",
         body: JSON.stringify({ args })
       });
@@ -4099,15 +4235,15 @@ export function App() {
         await nodeApi(activeServer.baseUrl, `/v1/channels/${activeChannelId}/messages`, activeServer.membershipToken, {
           method: "POST",
           body: JSON.stringify({
-            content: String(commandResult.content || `/${commandName}`),
+            content: String(commandResult.content || `/${resolvedCommandName}`),
             embeds: Array.isArray(commandResult.embeds) ? commandResult.embeds : []
           })
         });
         const data = await nodeApi(activeServer.baseUrl, `/v1/channels/${activeChannelId}/messages`, activeServer.membershipToken);
         setMessages((data.messages || []).slice().reverse());
-        setStatus(`Executed /${commandName}`);
+        setStatus(`Executed /${resolvedCommandName}`);
       } else {
-        setStatus(`Executed /${commandName}${result?.result != null ? ` → ${typeof result.result === "string" ? result.result : JSON.stringify(result.result)}` : ""}`);
+        setStatus(`Executed /${resolvedCommandName}${result?.result != null ? ` → ${typeof result.result === "string" ? result.result : JSON.stringify(result.result)}` : ""}`);
       }
     } catch (error) {
       setMessageText(rawInput);
@@ -9122,6 +9258,56 @@ export function App() {
 
               {settingsTab === "extensions" && (
                 <>
+                  <section className="card">
+                    <h4>Server Extensions</h4>
+                    {!activeServer ? (
+                      <p className="hint">Select a server first.</p>
+                    ) : !canManageServer ? (
+                      <p className="hint">You need owner/admin permissions in this server to manage server-side extensions.</p>
+                    ) : (
+                      <>
+                        <p className="hint">Enable server-side extensions for this server. Commands can be run as <code>/extension.command</code> (and short names when unique).</p>
+                        <div className="row-actions" style={{ marginBottom: "8px" }}>
+                          <button className="ghost" onClick={() => refreshServerExtensions()} disabled={serverExtensionsLoading}>Refresh</button>
+                        </div>
+                        {serverExtensionsLoading && <p className="hint">Loading server extensions…</p>}
+                        {!serverExtensionsForDisplay.length ? (
+                          <p className="hint">No server extensions found in catalog.</p>
+                        ) : (
+                          <ul className="channel-perms-role-list">
+                            {serverExtensionsForDisplay.map((ext) => {
+                              const busy = !!serverExtensionBusyById[ext.id];
+                              const checked = !!ext.enabled;
+                              return (
+                                <li key={ext.id}>
+                                  <label>
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      disabled={busy || serverExtensionsLoading}
+                                      onChange={(event) => toggleServerExtension(ext.id, event.target.checked)}
+                                    />
+                                    <strong>{ext.name}</strong>
+                                    <span className="hint"> · {ext.id} · {ext.version || "0.1.0"}</span>
+                                    <span className="hint" style={{ marginLeft: "6px", color: checked ? "#4ec97e" : "#f0a4a4" }}>
+                                      {busy ? "Syncing…" : checked ? "Enabled" : "Disabled"}
+                                    </span>
+                                  </label>
+                                  {ext.description && <p className="hint" style={{ margin: "4px 0 0 24px" }}>{ext.description}</p>}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                        {serverExtensionCommands.length > 0 ? (
+                          <p className="hint">Active commands: {serverExtensionCommands.slice(0, 8).map((command) => `/${command.name}`).join(", ")}{serverExtensionCommands.length > 8 ? ` +${serverExtensionCommands.length - 8} more` : ""}</p>
+                        ) : (
+                          <p className="hint">No active server commands detected yet.</p>
+                        )}
+                      </>
+                    )}
+                  </section>
+
                   <section className="card">
                     <h4>Client Extensions</h4>
                     <p className="hint">Enable reviewed client-only extensions from the catalog. Extensions run in your client session.</p>

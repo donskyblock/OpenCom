@@ -323,7 +323,16 @@ export async function executeRegisteredCommand(input: {
   authToken?: string;
 }) {
   const registry = commandRegistryByServer.get(input.serverId) || new Map<string, RegisteredCommand>();
-  const found = registry.get(input.commandName);
+  let found = registry.get(input.commandName);
+  if (!found && !input.commandName.includes(".")) {
+    const suffixMatches = Array.from(registry.entries())
+      .filter(([name]) => name.split(".").pop() === input.commandName);
+    if (suffixMatches.length === 1) {
+      found = suffixMatches[0][1];
+    } else if (suffixMatches.length > 1) {
+      throw new Error("COMMAND_AMBIGUOUS");
+    }
+  }
   if (!found) throw new Error("COMMAND_NOT_FOUND");
 
   const nodeBaseUrl = `http://127.0.0.1:${env.NODE_PORT}`;
