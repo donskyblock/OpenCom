@@ -1830,7 +1830,7 @@ export function App() {
     (guildState?.members || []).forEach((m) => m.id && ids.add(m.id));
     messages.forEach((msg) => {
       const id = msg.author_id || msg.authorId;
-      if (id) ids.add(id);
+      if (id && !String(id).startsWith("ext:")) ids.add(id);
     });
     if (me?.id) ids.add(me.id);
     const toFetch = [...ids].filter((id) => !userCache[id] && !userCacheFetchingRef.current.has(id));
@@ -3178,6 +3178,8 @@ export function App() {
                     id: created.id,
                     author_id: created.authorId,
                     authorId: created.authorId,
+                    username: created.username || created.authorId,
+                    pfp_url: created.pfp_url ?? null,
                     content: created.content || "",
                     embeds: created.embeds || [],
                     linkEmbeds: created.linkEmbeds || [],
@@ -4304,19 +4306,14 @@ export function App() {
       setMessageText("");
       const result = await nodeApi(activeServer.baseUrl, `/v1/extensions/commands/${encodeURIComponent(resolvedCommandName)}/execute`, activeServer.membershipToken, {
         method: "POST",
-        body: JSON.stringify({ args })
+        body: JSON.stringify({ args, channelId: activeChannelId || undefined })
       });
       const commandResult = result?.result;
-      if (commandResult && typeof commandResult === "object" && (commandResult.content || Array.isArray(commandResult.embeds))) {
-        await nodeApi(activeServer.baseUrl, `/v1/channels/${activeChannelId}/messages`, activeServer.membershipToken, {
-          method: "POST",
-          body: JSON.stringify({
-            content: String(commandResult.content || `/${resolvedCommandName}`),
-            embeds: Array.isArray(commandResult.embeds) ? commandResult.embeds : []
-          })
-        });
+      if (result?.postedMessage?.id && activeChannelId) {
         const data = await nodeApi(activeServer.baseUrl, `/v1/channels/${activeChannelId}/messages`, activeServer.membershipToken);
         setMessages((data.messages || []).slice().reverse());
+        setStatus(`Executed /${resolvedCommandName}`);
+      } else if (commandResult && typeof commandResult === "object" && (commandResult.content || Array.isArray(commandResult.embeds))) {
         setStatus(`Executed /${resolvedCommandName}`);
       } else {
         setStatus(`Executed /${resolvedCommandName}${result?.result != null ? ` → ${typeof result.result === "string" ? result.result : JSON.stringify(result.result)}` : ""}`);

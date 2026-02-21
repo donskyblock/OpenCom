@@ -53,6 +53,29 @@ export function optionBoolean(name, description, required = false) {
   return { type: "boolean", name, description, required };
 }
 
+export function extensionSender(name, avatarUrl = "") {
+  const senderName = typeof name === "string" ? name.trim() : "";
+  if (!senderName) throw new Error("extensionSender requires a non-empty name");
+  const next = { name: senderName };
+  if (typeof avatarUrl === "string" && avatarUrl.trim()) next.avatarUrl = avatarUrl.trim();
+  return next;
+}
+
+export function commandResponse({ content = "", embeds = [], sender = null } = {}) {
+  const next = {};
+  if (content != null) next.content = String(content);
+  if (Array.isArray(embeds)) next.embeds = embeds;
+  if (sender && typeof sender === "object") next.sender = sender;
+  return next;
+}
+
+export function responderConfigDefaults({ senderName = "", senderAvatarUrl = "" } = {}) {
+  const next = {};
+  if (typeof senderName === "string" && senderName.trim()) next.senderName = senderName.trim();
+  if (typeof senderAvatarUrl === "string" && senderAvatarUrl.trim()) next.senderAvatarUrl = senderAvatarUrl.trim();
+  return next;
+}
+
 export function createServerContext(ctx) {
   return {
     ...ctx,

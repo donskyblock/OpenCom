@@ -18,6 +18,8 @@ type ExtensionManifest = {
   description?: string;
   scope: ExtensionScope;
   entry?: string;
+  iconUrl?: string;
+  logoUrl?: string;
   permissions?: string[];
   configDefaults?: Record<string, unknown>;
 };
@@ -71,6 +73,8 @@ async function readExtensionCatalog(): Promise<{ clientExtensions: ExtensionMani
           description: parsed?.description,
           scope: parsed?.scope || scope,
           entry: parsed?.entry || "index.js",
+          iconUrl: typeof parsed?.iconUrl === "string" ? parsed.iconUrl : undefined,
+          logoUrl: typeof parsed?.logoUrl === "string" ? parsed.logoUrl : undefined,
           permissions: Array.isArray(parsed?.permissions) ? parsed?.permissions : ["all"],
           configDefaults: parsed?.configDefaults && typeof parsed.configDefaults === "object" ? parsed.configDefaults as Record<string, unknown> : {}
         } as ExtensionManifest;

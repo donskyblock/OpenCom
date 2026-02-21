@@ -123,7 +123,7 @@ export async function messageRoutes(
     if (!has(perms, Perm.VIEW_CHANNEL)) return rep.code(403).send({ error: "MISSING_PERMS" });
 
     const rows = await q<any>(
-      `SELECT p.message_id, p.pinned_by, p.pinned_at, m.author_id, m.content, m.created_at
+      `SELECT p.message_id, p.pinned_by, p.pinned_at, m.author_id, m.author_name, m.content, m.created_at
        FROM channel_pins p
        JOIN messages m ON m.id = p.message_id
        WHERE p.channel_id=:channelId
@@ -135,7 +135,7 @@ export async function messageRoutes(
     return rep.send({
       pins: rows.map((row) => ({
         id: row.message_id,
-        author: row.author_id,
+        author: row.author_name || row.author_id,
         content: row.content,
         pinnedBy: row.pinned_by,
         pinnedAt: row.pinned_at,
@@ -231,7 +231,7 @@ export async function messageRoutes(
     let rows: any[];
     if (qs.before) {
       rows = await q<any>(
-        `SELECT m.id, m.author_id, m.content, m.embeds_json, m.created_at
+        `SELECT m.id, m.author_id, m.author_name, m.author_avatar_url, m.content, m.embeds_json, m.created_at
          FROM messages m
          WHERE m.channel_id=:channelId AND m.created_at < :before
          ORDER BY m.created_at DESC
@@ -240,7 +240,7 @@ export async function messageRoutes(
       );
     } else {
       rows = await q<any>(
-        `SELECT m.id, m.author_id, m.content, m.embeds_json, m.created_at
+        `SELECT m.id, m.author_id, m.author_name, m.author_avatar_url, m.content, m.embeds_json, m.created_at
          FROM messages m
          WHERE m.channel_id=:channelId
          ORDER BY m.created_at DESC
@@ -258,8 +258,8 @@ export async function messageRoutes(
       }
       return {
         ...r,
-        username: r.author_id,
-        pfp_url: null,
+        username: r.author_name || r.author_id,
+        pfp_url: r.author_avatar_url || null,
         embeds: Array.isArray(embeds) ? embeds : [],
         linkEmbeds: extractLinkEmbeds(r.content || ""),
         ...mentionMeta
@@ -352,12 +352,14 @@ export async function messageRoutes(
     const embeds = (body.embeds || []) as MessageEmbed[];
 
     await q(
-      `INSERT INTO messages (id,channel_id,author_id,content,embeds_json,created_at)
-       VALUES (:id,:channelId,:authorId,:content,:embedsJson,:createdAt)`,
+      `INSERT INTO messages (id,channel_id,author_id,author_name,author_avatar_url,content,embeds_json,created_at)
+       VALUES (:id,:channelId,:authorId,:authorName,:authorAvatarUrl,:content,:embedsJson,:createdAt)`,
       {
         id,
         channelId,
         authorId: authorId,
+        authorName: null,
+        authorAvatarUrl: null,
         content: body.content,
         embedsJson: JSON.stringify(embeds),
         createdAt: createdAt.slice(0, 19).replace("T", " ")
@@ -378,6 +380,8 @@ export async function messageRoutes(
       message: {
         id,
         authorId,
+        username: authorId,
+        pfp_url: null,
         content: body.content,
         embeds,
         linkEmbeds: extractLinkEmbeds(body.content || ""),
