@@ -56,7 +56,7 @@ await overwriteRoutes(app, gw.broadcastGuild);
 await memberRoutes(app, gw.broadcastGuild);
 await meRoutes(app);
 await discordCompatRoutes(app);
-await extensionRoutes(app);
+await extensionRoutes(app, gw.broadcastToChannel);
 
 await attachmentRoutes(app);
 startAttachmentCleanupLoop();

@@ -11,6 +11,8 @@ export type ServerExtensionManifest = {
   author?: string;
   description?: string;
   entry?: string;
+  iconUrl?: string;
+  logoUrl?: string;
   scope?: "server" | "client" | "both";
   permissions?: string[];
   configDefaults?: Record<string, unknown>;
@@ -44,6 +46,7 @@ type ExtensionCommand = {
     };
     meta: {
       extensionId: string;
+      extensionName: string;
       commandName: string;
     };
   }) => Promise<unknown> | unknown;
@@ -115,6 +118,8 @@ function normalizeManifest(raw: any): ServerExtensionManifest | null {
     author: typeof raw.author === "string" ? raw.author : undefined,
     description: typeof raw.description === "string" ? raw.description : undefined,
     entry: typeof raw.entry === "string" && raw.entry.trim() ? raw.entry : "index.js",
+    iconUrl: typeof raw.iconUrl === "string" && raw.iconUrl.trim() ? raw.iconUrl.trim() : undefined,
+    logoUrl: typeof raw.logoUrl === "string" && raw.logoUrl.trim() ? raw.logoUrl.trim() : undefined,
     scope,
     permissions: Array.isArray(raw.permissions) ? raw.permissions.filter((item: unknown) => typeof item === "string") : ["all"],
     configDefaults: raw.configDefaults && typeof raw.configDefaults === "object" && !Array.isArray(raw.configDefaults)
@@ -382,7 +387,7 @@ export async function executeRegisteredCommand(input: {
     version: "0.1.0"
   });
 
-  return found.command.execute({
+  const result = await found.command.execute({
     userId: input.userId,
     serverId: input.serverId,
     args: input.args || {},
@@ -390,9 +395,21 @@ export async function executeRegisteredCommand(input: {
     apis,
     meta: {
       extensionId: found.extensionId,
+      extensionName: found.extensionName,
       commandName: input.commandName
     }
   });
+
+  return {
+    result,
+    extensionId: found.extensionId,
+    extensionName: found.extensionName,
+    manifest: loaded?.manifest || {
+      id: found.extensionId,
+      name: found.extensionName,
+      version: "0.1.0"
+    }
+  };
 }
 
 export async function activateExtensionForServer(serverId: string, manifest: ServerExtensionManifest, authToken?: string) {
@@ -540,6 +557,8 @@ export async function readServerExtensionCatalog() {
           author: parsed.author,
           description: parsed.description,
           entry: parsed.entry || "index.js",
+          iconUrl: typeof parsed.iconUrl === "string" ? parsed.iconUrl : undefined,
+          logoUrl: typeof parsed.logoUrl === "string" ? parsed.logoUrl : undefined,
           scope: parsed.scope || "server",
           permissions: Array.isArray(parsed.permissions) ? parsed.permissions : ["all"],
           configDefaults: parsed.configDefaults && typeof parsed.configDefaults === "object" ? parsed.configDefaults : {}
@@ -551,6 +570,8 @@ export async function readServerExtensionCatalog() {
           version: "0.1.0",
           scope: "server",
           entry: "index.js",
+          iconUrl: undefined,
+          logoUrl: undefined,
           permissions: ["all"],
           configDefaults: {}
         } as ServerExtensionManifest;
