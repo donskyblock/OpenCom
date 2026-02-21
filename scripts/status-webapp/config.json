@@ -14,7 +14,7 @@
     {
       "id": "api",
       "name": "API",
-      "url": "https://api.opencom.online/health",
+      "url": "https://api.opencom.online/",
       "method": "GET"
     },
     {
