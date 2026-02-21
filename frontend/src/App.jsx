@@ -764,6 +764,22 @@ function parseCommandArgsByOptions(rawArgText = "", optionDefs = []) {
   return args;
 }
 
+function buildSlashCommandTemplate(command = null) {
+  if (!command?.name) return { text: "/", cursor: 1 };
+  const options = Array.isArray(command.options) ? command.options : [];
+  if (!options.length) {
+    const text = `/${command.name} `;
+    return { text, cursor: text.length };
+  }
+
+  const tokens = options
+    .filter((option) => option?.name)
+    .map((option) => `${option.name}=`);
+  const text = `/${command.name} ${tokens.join(" ")}`;
+  const firstEquals = text.indexOf("=");
+  return { text, cursor: firstEquals >= 0 ? firstEquals + 1 : text.length };
+}
+
 function contentMentionsSelf(content = "", selfId, selfNames = []) {
   if (!content || !selfId) return false;
   if (/@everyone\b/i.test(content)) return true;
@@ -1159,7 +1175,6 @@ export function App() {
   const [clientExtensionLoadState, setClientExtensionLoadState] = useState({});
   const [serverExtensionCommands, setServerExtensionCommands] = useState([]);
   const [slashSelectionIndex, setSlashSelectionIndex] = useState(0);
-  const [slashCommandArgDrafts, setSlashCommandArgDrafts] = useState({});
 
   function applyNoiseSuppressionPreset(nextPresetRaw) {
     const nextPreset = normalizeNoiseSuppressionPresetForUi(nextPresetRaw);
@@ -1660,22 +1675,6 @@ export function App() {
     setSlashSelectionIndex(0);
   }, [messageText, serverExtensionCommands]);
 
-  useEffect(() => {
-    setSlashCommandArgDrafts((current) => {
-      const knownCommands = new Set((serverExtensionCommands || []).map((command) => String(command?.name || "")));
-      const next = {};
-      let changed = false;
-      for (const [commandName, draft] of Object.entries(current || {})) {
-        if (!knownCommands.has(commandName)) {
-          changed = true;
-          continue;
-        }
-        next[commandName] = draft;
-      }
-      return changed ? next : current;
-    });
-  }, [serverExtensionCommands]);
-
   async function loadClientExtensionSource({ extensionId, extensionName, devUrl }) {
     if (devUrl) {
       const response = await fetch(devUrl);
@@ -2098,27 +2097,6 @@ export function App() {
     return catalog.filter((command) => command.name.toLowerCase().includes(slashQuery)).slice(0, 10);
   }, [slashQuery, serverExtensionCommands]);
   const showingSlash = slashQuery != null;
-
-  const activeSlashCommandState = useMemo(() => {
-    if (navMode !== "servers") return { commandToken: "", command: null, ambiguousMatches: [] };
-    const { commandToken } = splitSlashInput(messageText);
-    if (!commandToken) return { commandToken: "", command: null, ambiguousMatches: [] };
-    const resolved = resolveSlashCommand(commandToken, serverExtensionCommands);
-    return {
-      commandToken,
-      command: resolved.command,
-      ambiguousMatches: resolved.ambiguousMatches
-    };
-  }, [messageText, navMode, serverExtensionCommands]);
-
-  const activeSlashCommand = activeSlashCommandState.command;
-  const activeSlashOptionDefs = Array.isArray(activeSlashCommand?.options) ? activeSlashCommand.options : [];
-  const activeSlashCommandDraft = useMemo(() => {
-    if (!activeSlashCommand?.name) return {};
-    const draft = slashCommandArgDrafts[activeSlashCommand.name];
-    if (!draft || typeof draft !== "object") return {};
-    return draft;
-  }, [activeSlashCommand?.name, slashCommandArgDrafts]);
 
   const memberByMentionToken = useMemo(() => {
     const map = new Map();
@@ -4277,28 +4255,15 @@ export function App() {
     }
   }
 
-  function setSlashCommandDraftValue(commandName, optionName, value) {
-    if (!commandName || !optionName) return;
-    setSlashCommandArgDrafts((current) => {
-      const existingDraft = current?.[commandName] && typeof current[commandName] === "object" ? current[commandName] : {};
-      const nextDraft = { ...existingDraft };
-      if (value == null || value === "") delete nextDraft[optionName];
-      else nextDraft[optionName] = value;
-
-      const next = { ...(current || {}) };
-      if (Object.keys(nextDraft).length === 0) delete next[commandName];
-      else next[commandName] = nextDraft;
-      return next;
-    });
-  }
-
-  function clearSlashCommandDraft(commandName) {
-    if (!commandName) return;
-    setSlashCommandArgDrafts((current) => {
-      if (!current || !Object.prototype.hasOwnProperty.call(current, commandName)) return current;
-      const next = { ...current };
-      delete next[commandName];
-      return next;
+  function applySlashCommandTemplate(command) {
+    const template = buildSlashCommandTemplate(command);
+    setMessageText(template.text);
+    window.requestAnimationFrame(() => {
+      const input = composerInputRef.current;
+      if (!input) return;
+      input.focus();
+      const cursor = Math.max(0, Math.min(template.cursor, template.text.length));
+      input.setSelectionRange(cursor, cursor);
     });
   }
 
@@ -4323,17 +4288,6 @@ export function App() {
 
     try {
       Object.assign(args, parseCommandArgsByOptions(argText, optionDefs));
-
-      const draftArgs = slashCommandArgDrafts?.[resolvedCommandName];
-      if (draftArgs && typeof draftArgs === "object") {
-        optionDefs.forEach((option) => {
-          if (!option?.name) return;
-          if (Object.prototype.hasOwnProperty.call(args, option.name)) return;
-          const rawValue = draftArgs[option.name];
-          if (rawValue == null || rawValue === "") return;
-          args[option.name] = coerceCommandArg(rawValue, option.type || "string");
-        });
-      }
 
       optionDefs.forEach((option) => {
         if (!option?.required) return;
@@ -4367,7 +4321,6 @@ export function App() {
       } else {
         setStatus(`Executed /${resolvedCommandName}${result?.result != null ? ` → ${typeof result.result === "string" ? result.result : JSON.stringify(result.result)}` : ""}`);
       }
-      clearSlashCommandDraft(resolvedCommandName);
     } catch (error) {
       setMessageText(rawInput);
       setStatus(`Command failed: ${error.message}`);
@@ -7820,36 +7773,6 @@ export function App() {
                       ))}
                     </div>
                   )}
-                  {activeSlashCommand && activeSlashOptionDefs.length > 0 && (
-                    <div className="slash-command-params">
-                      <div className="slash-command-params-header">/{activeSlashCommand.name} options</div>
-                      <div className="slash-command-params-grid">
-                        {activeSlashOptionDefs.map((option) => (
-                          <label key={`${activeSlashCommand.name}:${option.name}`} className="slash-command-param-field">
-                            <span>{option.name}{option.required ? " *" : ""}</span>
-                            {option.type === "boolean" ? (
-                              <select
-                                value={activeSlashCommandDraft?.[option.name] ?? ""}
-                                onChange={(event) => setSlashCommandDraftValue(activeSlashCommand.name, option.name, event.target.value)}
-                              >
-                                <option value="">Unset</option>
-                                <option value="true">True</option>
-                                <option value="false">False</option>
-                              </select>
-                            ) : (
-                              <input
-                                type={option.type === "number" ? "number" : "text"}
-                                value={activeSlashCommandDraft?.[option.name] ?? ""}
-                                onChange={(event) => setSlashCommandDraftValue(activeSlashCommand.name, option.name, event.target.value)}
-                                placeholder={option.description || `${option.name}${option.required ? " (required)" : ""}`}
-                              />
-                            )}
-                            {option.description && <small>{option.description}</small>}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                   <textarea
                     ref={composerInputRef}
                     value={messageText}
@@ -7881,7 +7804,7 @@ export function App() {
                         event.preventDefault();
                         const selected = slashCommandSuggestions[Math.min(slashSelectionIndex, slashCommandSuggestions.length - 1)] || slashCommandSuggestions[0];
                         if (!selected) return;
-                        setMessageText(`/${selected.name} `);
+                        applySlashCommandTemplate(selected);
                         return;
                       }
                       if (event.key === "Enter" && !event.shiftKey) {
@@ -7912,9 +7835,8 @@ export function App() {
                             className={`slash-command-item ${index === slashSelectionIndex ? "active" : ""}`}
                             onClick={(event) => {
                               event.stopPropagation();
-                              setMessageText(`/${command.name} `);
+                              applySlashCommandTemplate(command);
                               setSlashSelectionIndex(index);
-                              composerInputRef.current?.focus();
                             }}
                           >
                             <div>
