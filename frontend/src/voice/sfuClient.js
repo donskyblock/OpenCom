@@ -1,6 +1,11 @@
 import * as mediasoupClient from "mediasoup-client";
 
 const DEFAULT_TIMEOUT_MS = 10000;
+const DEFAULT_MIC_GAIN_PERCENT = 100;
+const NOISE_GATE_OPEN_RMS = 0.012;
+const NOISE_GATE_CLOSE_RMS = 0.008;
+const NOISE_GATE_ATTACK = 0.45;
+const NOISE_GATE_RELEASE = 0.08;
 
 export function createSfuVoiceClient({
   selfUserId,
@@ -31,8 +36,12 @@ export function createSfuVoiceClient({
     isMuted: false,
     isDeafened: false,
     noiseSuppression: true,
+    micGainPercent: DEFAULT_MIC_GAIN_PERCENT,
     audioInputDeviceId: "",
     audioOutputDeviceId: "",
+    rawLocalStream: null,
+    localAudioContext: null,
+    localAudioNodes: null,
     pendingAudioStartByProducerId: new Map(),
     userAudioPrefsByUserId: new Map()
   };
@@ -100,8 +109,226 @@ export function createSfuVoiceClient({
     return getSelfUserId?.() || selfUserId || "";
   }
 
+  function normalizeMicGainPercent(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return DEFAULT_MIC_GAIN_PERCENT;
+    return Math.max(0, Math.min(200, numeric));
+  }
+
+  function getRequestedAudioConstraints() {
+    return {
+      echoCancellation: true,
+      noiseSuppression: !!state.noiseSuppression,
+      autoGainControl: true,
+      ...(state.audioInputDeviceId ? { deviceId: { exact: state.audioInputDeviceId } } : {})
+    };
+  }
+
+  function stopStreamTracks(stream) {
+    if (!stream) return;
+    for (const track of stream.getTracks?.() || []) {
+      try { track.stop(); } catch {}
+    }
+  }
+
+  function getAudioContextConstructor() {
+    if (typeof window === "undefined") return null;
+    return window.AudioContext || window.webkitAudioContext || null;
+  }
+
+  function setNoiseGateEnabled(enabled) {
+    const noiseGateState = state.localAudioNodes?.noiseGateState;
+    if (!noiseGateState) return;
+    noiseGateState.enabled = !!enabled;
+  }
+
+  function applyMicGainToProcessingNode() {
+    const gainNode = state.localAudioNodes?.gainNode;
+    if (!gainNode?.gain) return;
+    const nextGain = normalizeMicGainPercent(state.micGainPercent) / 100;
+    const now = state.localAudioContext?.currentTime ?? 0;
+    try {
+      gainNode.gain.cancelScheduledValues(now);
+      gainNode.gain.setTargetAtTime(nextGain, now, 0.015);
+    } catch {
+      gainNode.gain.value = nextGain;
+    }
+  }
+
+  function setAudioParamValue(param, value, audioContextOverride = null) {
+    if (!param || !Number.isFinite(value)) return;
+    const now = audioContextOverride?.currentTime ?? state.localAudioContext?.currentTime ?? 0;
+    try {
+      param.cancelScheduledValues(now);
+      param.setTargetAtTime(value, now, 0.02);
+    } catch {
+      param.value = value;
+    }
+  }
+
+  function applyNoiseProcessingTuning({ audioContext = state.localAudioContext, nodes = state.localAudioNodes } = {}) {
+    const highpassNode = nodes?.highpassNode;
+    const lowpassNode = nodes?.lowpassNode;
+    const compressorNode = nodes?.compressorNode;
+    if (!highpassNode || !lowpassNode || !compressorNode) return;
+
+    if (state.noiseSuppression) {
+      setAudioParamValue(highpassNode.frequency, 120, audioContext);
+      setAudioParamValue(highpassNode.Q, 0.71, audioContext);
+      setAudioParamValue(lowpassNode.frequency, 7800, audioContext);
+      setAudioParamValue(lowpassNode.Q, 0.71, audioContext);
+      setAudioParamValue(compressorNode.threshold, -45, audioContext);
+      setAudioParamValue(compressorNode.knee, 28, audioContext);
+      setAudioParamValue(compressorNode.ratio, 10, audioContext);
+      setAudioParamValue(compressorNode.attack, 0.004, audioContext);
+      setAudioParamValue(compressorNode.release, 0.2, audioContext);
+      return;
+    }
+
+    // Neutral mode when suppression is disabled.
+    setAudioParamValue(highpassNode.frequency, 20, audioContext);
+    setAudioParamValue(highpassNode.Q, 0.01, audioContext);
+    setAudioParamValue(lowpassNode.frequency, 20000, audioContext);
+    setAudioParamValue(lowpassNode.Q, 0.01, audioContext);
+    setAudioParamValue(compressorNode.threshold, 0, audioContext);
+    setAudioParamValue(compressorNode.knee, 0, audioContext);
+    setAudioParamValue(compressorNode.ratio, 1, audioContext);
+    setAudioParamValue(compressorNode.attack, 0.003, audioContext);
+    setAudioParamValue(compressorNode.release, 0.05, audioContext);
+  }
+
+  function buildProcessedAudioStream(rawStream) {
+    const rawTrack = rawStream?.getAudioTracks?.()?.[0] || null;
+    if (!rawTrack) return { stream: null, track: null, audioContext: null, nodes: null };
+
+    const AudioContextCtor = getAudioContextConstructor();
+    if (!AudioContextCtor) {
+      return {
+        stream: rawStream,
+        track: rawTrack,
+        audioContext: null,
+        nodes: null
+      };
+    }
+
+    const audioContext = new AudioContextCtor();
+    if (audioContext.state === "suspended") {
+      audioContext.resume().catch(() => {});
+    }
+
+    const sourceNode = audioContext.createMediaStreamSource(rawStream);
+    const highpassNode = audioContext.createBiquadFilter();
+    highpassNode.type = "highpass";
+
+    const lowpassNode = audioContext.createBiquadFilter();
+    lowpassNode.type = "lowpass";
+
+    const compressorNode = audioContext.createDynamicsCompressor();
+
+    const gainNode = audioContext.createGain();
+    gainNode.gain.value = normalizeMicGainPercent(state.micGainPercent) / 100;
+
+    const noiseGateState = {
+      enabled: !!state.noiseSuppression,
+      gate: 1,
+      isOpen: true
+    };
+    const gateNode = typeof audioContext.createScriptProcessor === "function"
+      ? audioContext.createScriptProcessor(1024, 1, 1)
+      : null;
+    if (gateNode) {
+      gateNode.onaudioprocess = (event) => {
+        const input = event.inputBuffer.getChannelData(0);
+        const output = event.outputBuffer.getChannelData(0);
+        if (!noiseGateState.enabled) {
+          output.set(input);
+          noiseGateState.gate = 1;
+          noiseGateState.isOpen = true;
+          return;
+        }
+
+        let sum = 0;
+        for (let i = 0; i < input.length; i += 1) {
+          sum += input[i] * input[i];
+        }
+        const rms = Math.sqrt(sum / input.length);
+        if (noiseGateState.isOpen) {
+          if (rms < NOISE_GATE_CLOSE_RMS) noiseGateState.isOpen = false;
+        } else if (rms > NOISE_GATE_OPEN_RMS) {
+          noiseGateState.isOpen = true;
+        }
+
+        const target = noiseGateState.isOpen ? 1 : 0;
+        const smoothing = target > noiseGateState.gate ? NOISE_GATE_ATTACK : NOISE_GATE_RELEASE;
+        noiseGateState.gate += (target - noiseGateState.gate) * smoothing;
+        for (let i = 0; i < input.length; i += 1) {
+          output[i] = input[i] * noiseGateState.gate;
+        }
+      };
+    }
+
+    const destination = audioContext.createMediaStreamDestination();
+    sourceNode.connect(highpassNode);
+    highpassNode.connect(lowpassNode);
+    lowpassNode.connect(compressorNode);
+    compressorNode.connect(gainNode);
+    if (gateNode) {
+      gainNode.connect(gateNode);
+      gateNode.connect(destination);
+    } else {
+      gainNode.connect(destination);
+    }
+
+    const processedTrack = destination.stream.getAudioTracks?.()?.[0] || null;
+    if (!processedTrack) {
+      try { audioContext.close(); } catch {}
+      return {
+        stream: rawStream,
+        track: rawTrack,
+        audioContext: null,
+        nodes: null
+      };
+    }
+
+    const built = {
+      stream: destination.stream,
+      track: processedTrack,
+      audioContext,
+      nodes: {
+        sourceNode,
+        highpassNode,
+        lowpassNode,
+        compressorNode,
+        gainNode,
+        gateNode,
+        destination,
+        noiseGateState
+      }
+    };
+    applyNoiseProcessingTuning({ audioContext: built.audioContext, nodes: built.nodes });
+    return built;
+  }
+
+  async function closeLocalAudioPipeline({ stopLocalStream = true, stopRawStream = true } = {}) {
+    if (state.localAudioContext) {
+      try { await state.localAudioContext.close(); } catch {}
+    }
+    state.localAudioContext = null;
+    state.localAudioNodes = null;
+    if (stopLocalStream) {
+      stopStreamTracks(state.localStream);
+      state.localStream = null;
+    }
+    if (stopRawStream) {
+      stopStreamTracks(state.rawLocalStream);
+      state.rawLocalStream = null;
+    }
+  }
+
   function emitLocalAudioProcessingInfo(localTrack) {
-    const trackSettings = localTrack && typeof localTrack.getSettings === "function" ? localTrack.getSettings() : {};
+    const rawTrack = state.rawLocalStream?.getAudioTracks?.()?.[0] || null;
+    const trackForSettings = rawTrack || localTrack;
+    const trackSettings = trackForSettings && typeof trackForSettings.getSettings === "function" ? trackForSettings.getSettings() : {};
     const supportedConstraints = navigator.mediaDevices?.getSupportedConstraints?.() || {};
     onLocalAudioProcessingInfo?.({
       requested: {
@@ -118,62 +345,112 @@ export function createSfuVoiceClient({
         noiseSuppression: !!supportedConstraints.noiseSuppression,
         echoCancellation: !!supportedConstraints.echoCancellation,
         autoGainControl: !!supportedConstraints.autoGainControl
+      },
+      client: {
+        processingActive: !!state.localAudioNodes,
+        noiseGateActive: !!state.localAudioNodes?.noiseGateState?.enabled,
+        micGainPercent: normalizeMicGainPercent(state.micGainPercent)
       }
     });
   }
 
-  async function replaceLocalAudioTrack(newTrack) {
-    if (!newTrack) return;
-    const oldTrack = state.localStream?.getAudioTracks?.()?.[0] || null;
-    const nextStream = new MediaStream([newTrack]);
-    state.localStream = nextStream;
+  async function rebuildLocalAudioTrack({ reacquireInput = false } = {}) {
+    const previousLocalStream = state.localStream;
+    const previousRawStream = state.rawLocalStream;
+    const previousAudioContext = state.localAudioContext;
+
+    let nextRawStream = previousRawStream;
+    if (reacquireInput || !nextRawStream?.getAudioTracks?.()?.[0]) {
+      nextRawStream = await navigator.mediaDevices.getUserMedia({
+        audio: getRequestedAudioConstraints()
+      });
+    }
+
+    const built = buildProcessedAudioStream(nextRawStream);
+    const nextTrack = built.track || null;
+    if (!nextTrack) {
+      if (nextRawStream !== previousRawStream) stopStreamTracks(nextRawStream);
+      if (built.audioContext) {
+        try { await built.audioContext.close(); } catch {}
+      }
+      throw new Error("MIC_TRACK_NOT_FOUND");
+    }
+
+    try {
+      if (state.localAudioProducer) {
+        await state.localAudioProducer.replaceTrack({ track: nextTrack });
+      }
+    } catch (error) {
+      if (built.audioContext) {
+        try { await built.audioContext.close(); } catch {}
+      }
+      if (nextRawStream !== previousRawStream) stopStreamTracks(nextRawStream);
+      if (built.stream && built.stream !== nextRawStream) stopStreamTracks(built.stream);
+      throw error;
+    }
+
+    state.rawLocalStream = nextRawStream;
+    state.localAudioContext = built.audioContext;
+    state.localAudioNodes = built.nodes;
+    state.localStream = built.stream || new MediaStream([nextTrack]);
+    applyMicGainToProcessingNode();
+    setNoiseGateEnabled(state.noiseSuppression);
+    applyNoiseProcessingTuning();
+
     if (state.localAudioProducer) {
-      await state.localAudioProducer.replaceTrack({ track: newTrack });
       if (state.isMuted) {
         state.localAudioProducer.pause();
-        newTrack.enabled = false;
+        nextTrack.enabled = false;
       } else {
         state.localAudioProducer.resume();
-        newTrack.enabled = true;
+        nextTrack.enabled = true;
       }
+    } else {
+      nextTrack.enabled = !state.isMuted;
     }
-    if (oldTrack && oldTrack !== newTrack) {
-      try { oldTrack.stop(); } catch {}
+
+    if (previousAudioContext && previousAudioContext !== state.localAudioContext) {
+      try { await previousAudioContext.close(); } catch {}
     }
-    emitLocalAudioProcessingInfo(newTrack);
+    if (previousLocalStream && previousLocalStream !== state.localStream) {
+      stopStreamTracks(previousLocalStream);
+    }
+    if (previousRawStream && previousRawStream !== state.rawLocalStream) {
+      stopStreamTracks(previousRawStream);
+    }
+
+    emitLocalAudioProcessingInfo(nextTrack);
+    return nextTrack;
+  }
+
+  function setMicGain(nextMicGainPercent) {
+    state.micGainPercent = normalizeMicGainPercent(nextMicGainPercent);
+    applyMicGainToProcessingNode();
+    const localTrack = state.localStream?.getAudioTracks?.()?.[0] || null;
+    if (localTrack) emitLocalAudioProcessingInfo(localTrack);
   }
 
   async function setNoiseSuppression(nextNoiseSuppression) {
     state.noiseSuppression = !!nextNoiseSuppression;
+    setNoiseGateEnabled(state.noiseSuppression);
+    applyNoiseProcessingTuning();
     const currentTrack = state.localStream?.getAudioTracks?.()?.[0];
     if (!currentTrack) return;
-
-    const requestedConstraints = {
-      echoCancellation: true,
-      noiseSuppression: !!state.noiseSuppression,
-      autoGainControl: true
-    };
+    const rawTrack = state.rawLocalStream?.getAudioTracks?.()?.[0] || null;
+    const requestedConstraints = getRequestedAudioConstraints();
 
     try {
-      if (typeof currentTrack.applyConstraints === "function") {
-        await currentTrack.applyConstraints(requestedConstraints);
+      if (rawTrack && typeof rawTrack.applyConstraints === "function") {
+        await rawTrack.applyConstraints(requestedConstraints);
       }
       emitLocalAudioProcessingInfo(currentTrack);
       return;
     } catch {
-      // Some devices/browsers ignore or fail applyConstraints; reacquire and replace track.
+      // If constraints can't be updated in place, rebuild from a fresh capture.
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          ...requestedConstraints,
-          ...(state.audioInputDeviceId ? { deviceId: { exact: state.audioInputDeviceId } } : {})
-        }
-      });
-      const nextTrack = stream.getAudioTracks?.()[0];
-      if (!nextTrack) return;
-      await replaceLocalAudioTrack(nextTrack);
+      await rebuildLocalAudioTrack({ reacquireInput: true });
     } catch {
       emitLocalAudioProcessingInfo(currentTrack);
     }
@@ -185,17 +462,7 @@ export function createSfuVoiceClient({
     if (!currentTrack) return;
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: !!state.noiseSuppression,
-          autoGainControl: true,
-          ...(state.audioInputDeviceId ? { deviceId: { exact: state.audioInputDeviceId } } : {})
-        }
-      });
-      const nextTrack = stream.getAudioTracks?.()[0];
-      if (!nextTrack) return;
-      await replaceLocalAudioTrack(nextTrack);
+      await rebuildLocalAudioTrack({ reacquireInput: true });
     } catch {
       emitLocalAudioProcessingInfo(currentTrack);
     }
@@ -341,6 +608,7 @@ export function createSfuVoiceClient({
     guildId,
     channelId,
     audioInputDeviceId,
+    micGain = DEFAULT_MIC_GAIN_PERCENT,
     noiseSuppression = true,
     isMuted = false,
     isDeafened = false,
@@ -354,6 +622,7 @@ export function createSfuVoiceClient({
     state.isMuted = !!isMuted;
     state.isDeafened = !!isDeafened;
     state.noiseSuppression = !!noiseSuppression;
+    state.micGainPercent = normalizeMicGainPercent(micGain);
     state.audioInputDeviceId = audioInputDeviceId || "";
     state.audioOutputDeviceId = audioOutputDeviceId || "";
 
@@ -417,16 +686,8 @@ export function createSfuVoiceClient({
       }
     });
 
-    const audioConstraints = {
-      echoCancellation: true,
-      noiseSuppression: !!state.noiseSuppression,
-      autoGainControl: true,
-      ...(state.audioInputDeviceId ? { deviceId: { exact: state.audioInputDeviceId } } : {})
-    };
-    state.localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-    const localTrack = state.localStream.getAudioTracks()[0];
+    const localTrack = await rebuildLocalAudioTrack({ reacquireInput: true });
     if (!localTrack) throw new Error("MIC_TRACK_NOT_FOUND");
-    emitLocalAudioProcessingInfo(localTrack);
     state.localAudioProducer = await state.sendTransport.produce({ track: localTrack });
     if (state.isMuted) {
       state.localAudioProducer.pause();
@@ -564,10 +825,7 @@ export function createSfuVoiceClient({
     await stopScreenShare({ notifyServer: false }).catch(() => {});
     try { state.localAudioProducer?.close(); } catch {}
     state.localAudioProducer = null;
-    if (state.localStream) {
-      state.localStream.getTracks().forEach((track) => track.stop());
-      state.localStream = null;
-    }
+    await closeLocalAudioPipeline({ stopLocalStream: true, stopRawStream: true });
     try { state.sendTransport?.close(); } catch {}
     state.sendTransport = null;
     try { state.recvTransport?.close(); } catch {}
@@ -665,6 +923,7 @@ export function createSfuVoiceClient({
     closeConsumersForUser,
     setMuted,
     setDeafened,
+    setMicGain,
     setNoiseSuppression,
     setAudioInputDevice,
     setUserAudioPreference,

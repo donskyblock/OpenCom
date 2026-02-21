@@ -3419,6 +3419,10 @@ export function App() {
   }, [micGain]);
 
   useEffect(() => {
+    voiceSfuRef.current?.setMicGain?.(micGain);
+  }, [micGain]);
+
+  useEffect(() => {
     localStorage.setItem(MIC_SENSITIVITY_KEY, String(micSensitivity));
   }, [micSensitivity]);
 
@@ -3567,6 +3571,7 @@ export function App() {
           guildId: voiceConnectedGuildId,
           channelId: voiceConnectedChannelId,
           audioInputDeviceId,
+          micGain,
           noiseSuppression: noiseSuppressionEnabled,
           isMuted,
           isDeafened,
@@ -3652,6 +3657,7 @@ export function App() {
     activeServer,
     isDisconnectingVoice,
     audioInputDeviceId,
+    micGain,
     noiseSuppressionEnabled,
     isMuted,
     isDeafened,
@@ -5954,6 +5960,7 @@ export function App() {
         guildId: activeGuildId,
         channelId: channel.id,
         audioInputDeviceId,
+        micGain,
         noiseSuppression: noiseSuppressionEnabled,
         isMuted,
         isDeafened,
@@ -9029,6 +9036,9 @@ export function App() {
                       {" · "}
                       applied: {localAudioProcessingInfo.applied?.noiseSuppression == null ? "Unknown" : localAudioProcessingInfo.applied.noiseSuppression ? "On" : "Off"}
                       {!localAudioProcessingInfo.supported?.noiseSuppression ? " (not supported by this browser/device)" : ""}
+                      {localAudioProcessingInfo.client?.processingActive
+                        ? ` · client filter: on · gain: ${Math.round(Number(localAudioProcessingInfo.client?.micGainPercent || 100))}%`
+                        : ""}
                     </p>
                   )}
                   <p className="hint">Hotkeys: Ctrl/Cmd+Shift+M mute, Ctrl/Cmd+Shift+D deafen, Ctrl/Cmd+Shift+V screen share, Ctrl/Cmd+Shift+X disconnect, Ctrl/Cmd+Shift+, settings.</p>
