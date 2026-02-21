@@ -6,6 +6,7 @@ import { z } from "zod";
 import { q } from "../db.js";
 import { signMembershipToken } from "../membershipToken.js";
 import { parseBody } from "../validation.js";
+import { env } from "../env.js";
 
 type ExtensionScope = "client" | "server" | "both";
 
@@ -94,6 +95,58 @@ async function getPlatformRole(userId: string): Promise<"user" | "admin" | "owne
   return "user";
 }
 
+function uniqueRoles(roles: string[]) {
+  return Array.from(new Set((roles || []).filter((role) => typeof role === "string" && role.trim())));
+}
+
+function buildNodeScopedRoles(input: {
+  memberRoles: string[];
+  userId: string;
+  serverOwnerUserId: string;
+  platformRole: "user" | "admin" | "owner";
+}) {
+  const roles = uniqueRoles(input.memberRoles || []);
+  if (input.serverOwnerUserId === input.userId && !roles.includes("owner")) roles.push("owner");
+  if (input.platformRole === "admin" && !roles.includes("platform_admin")) roles.push("platform_admin");
+  if (input.platformRole === "owner") {
+    if (!roles.includes("platform_admin")) roles.push("platform_admin");
+    if (!roles.includes("platform_owner")) roles.push("platform_owner");
+  }
+  return uniqueRoles(roles);
+}
+
+function resolveNodeServerId(serverId: string, baseUrl: string) {
+  if (env.OFFICIAL_NODE_BASE_URL && env.OFFICIAL_NODE_SERVER_ID && baseUrl === env.OFFICIAL_NODE_BASE_URL) {
+    return env.OFFICIAL_NODE_SERVER_ID;
+  }
+  return serverId;
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithRetry(url: string, init: RequestInit, attempts = 3) {
+  let lastError: any = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, init);
+      if (response.ok) return response;
+
+      const text = await response.text().catch(() => "");
+      const message = `NODE_HTTP_${response.status}${text ? `:${text.slice(0, 300)}` : ""}`;
+      const retryable = response.status >= 500 || response.status === 429;
+      if (!retryable || attempt >= attempts) throw new Error(message);
+      lastError = new Error(message);
+    } catch (error: any) {
+      lastError = error;
+      if (attempt >= attempts) throw error;
+    }
+    await delay(150 * attempt);
+  }
+  throw lastError || new Error("NODE_REQUEST_FAILED");
+}
+
 export async function extensionRoutes(app: FastifyInstance) {
   app.get("/v1/extensions/catalog", { preHandler: [app.authenticate] } as any, async () => {
     return readExtensionCatalog();
@@ -154,19 +207,22 @@ export async function extensionRoutes(app: FastifyInstance) {
     );
     if (!memberRows.length) return rep.code(403).send({ error: "NOT_A_MEMBER" });
 
-    const serverRows = await q<{ base_url: string }>(`SELECT base_url FROM servers WHERE id=:serverId LIMIT 1`, { serverId });
+    const serverRows = await q<{ base_url: string; owner_user_id: string }>(
+      `SELECT base_url, owner_user_id FROM servers WHERE id=:serverId LIMIT 1`,
+      { serverId }
+    );
     const baseUrl = serverRows[0]?.base_url;
     if (!baseUrl) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
 
     const memberRoles: string[] = JSON.parse(memberRows[0].roles || "[]");
     const platformRole = await getPlatformRole(userId);
-    const token = await signMembershipToken(serverId, userId, memberRoles, platformRole, serverId);
+    const nodeServerId = resolveNodeServerId(serverId, baseUrl);
+    const token = await signMembershipToken(nodeServerId, userId, memberRoles, platformRole, serverId);
 
     try {
-      const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/extensions/${encodeURIComponent(extensionId)}/config`, {
+      const response = await fetchWithRetry(`${baseUrl.replace(/\/$/, "")}/v1/extensions/${encodeURIComponent(extensionId)}/config`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (!response.ok) return rep.code(response.status).send({ error: "NODE_CONFIG_FETCH_FAILED" });
       return response.json();
     } catch (error) {
       app.log.warn({ err: error, serverId, extensionId }, "Failed to fetch extension config from node");
@@ -187,16 +243,26 @@ export async function extensionRoutes(app: FastifyInstance) {
 
     const memberRoles: string[] = JSON.parse(memberRows[0].roles || "[]");
     const platformRole = await getPlatformRole(userId);
-    const isOwnerOrStaff = memberRoles.includes("owner") || platformRole === "admin" || platformRole === "owner";
-    if (!isOwnerOrStaff) return rep.code(403).send({ error: "NOT_OWNER" });
-
-    const serverRows = await q<{ base_url: string }>(`SELECT base_url FROM servers WHERE id=:serverId LIMIT 1`, { serverId });
+    const serverRows = await q<{ base_url: string; owner_user_id: string }>(
+      `SELECT base_url, owner_user_id FROM servers WHERE id=:serverId LIMIT 1`,
+      { serverId }
+    );
     const baseUrl = serverRows[0]?.base_url;
     if (!baseUrl) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
+    const isServerOwner = serverRows[0]?.owner_user_id === userId;
+    const isOwnerOrStaff = memberRoles.includes("owner") || isServerOwner || platformRole === "admin" || platformRole === "owner";
+    if (!isOwnerOrStaff) return rep.code(403).send({ error: "NOT_OWNER" });
 
-    const token = await signMembershipToken(serverId, userId, memberRoles, platformRole, serverId);
+    const effectiveRoles = buildNodeScopedRoles({
+      memberRoles,
+      userId,
+      serverOwnerUserId: serverRows[0].owner_user_id,
+      platformRole
+    });
+    const nodeServerId = resolveNodeServerId(serverId, baseUrl);
+    const token = await signMembershipToken(nodeServerId, userId, effectiveRoles, platformRole, serverId);
     try {
-      const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/extensions/${encodeURIComponent(extensionId)}/config`, {
+      const response = await fetchWithRetry(`${baseUrl.replace(/\/$/, "")}/v1/extensions/${encodeURIComponent(extensionId)}/config`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -204,7 +270,6 @@ export async function extensionRoutes(app: FastifyInstance) {
         },
         body: JSON.stringify(body)
       });
-      if (!response.ok) return rep.code(response.status).send({ error: "NODE_CONFIG_UPDATE_FAILED" });
       return response.json();
     } catch (error) {
       app.log.warn({ err: error, serverId, extensionId }, "Failed to update extension config on node");
@@ -225,8 +290,16 @@ export async function extensionRoutes(app: FastifyInstance) {
 
     const memberRoles: string[] = JSON.parse(memberRows[0].roles || "[]");
     const platformRole = await getPlatformRole(userId);
-    const isOwnerOrStaff = memberRoles.includes("owner") || platformRole === "admin" || platformRole === "owner";
+    const serverRows = await q<{ base_url: string; owner_user_id: string }>(
+      `SELECT base_url, owner_user_id FROM servers WHERE id=:serverId LIMIT 1`,
+      { serverId }
+    );
+    if (!serverRows.length) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
+    const isServerOwner = serverRows[0].owner_user_id === userId;
+    const isOwnerOrStaff = memberRoles.includes("owner") || isServerOwner || platformRole === "admin" || platformRole === "owner";
     if (!isOwnerOrStaff) return rep.code(403).send({ error: "NOT_OWNER" });
+    const baseUrl = serverRows[0].base_url;
+    if (!baseUrl) return rep.code(502).send({ error: "NODE_UNREACHABLE" });
 
     const catalog = await readExtensionCatalog();
     const manifest = catalog.serverExtensions.find((ext) => ext.id === safeId(extensionId));
@@ -244,47 +317,54 @@ export async function extensionRoutes(app: FastifyInstance) {
       }
     );
 
-    const serverRows = await q<{ base_url: string }>(`SELECT base_url FROM servers WHERE id=:serverId LIMIT 1`, { serverId });
-    const baseUrl = serverRows[0]?.base_url;
-    if (baseUrl) {
-      try {
-        const token = await signMembershipToken(serverId, userId, memberRoles, platformRole, serverId);
-        if (body.enabled) {
-          await fetch(`${baseUrl.replace(/\/$/, "")}/v1/extensions/activate`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`
-            },
-            body: JSON.stringify({ extension: manifest })
-          });
-        } else {
-          await fetch(`${baseUrl.replace(/\/$/, "")}/v1/extensions/${encodeURIComponent(manifest.id)}/deactivate`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`
-            },
-            body: "{}"
-          });
-        }
-
-        // Keep node state coherent by forcing a full sync after point updates.
-        const activeRows = await q<{ manifest_json: string }>(
-          `SELECT manifest_json FROM server_extensions WHERE server_id=:serverId AND enabled=1`,
-          { serverId }
-        );
-        await fetch(`${baseUrl.replace(/\/$/, "")}/v1/extensions/sync`, {
+    try {
+      const effectiveRoles = buildNodeScopedRoles({
+        memberRoles,
+        userId,
+        serverOwnerUserId: serverRows[0].owner_user_id,
+        platformRole
+      });
+      const nodeServerId = resolveNodeServerId(serverId, baseUrl);
+      const token = await signMembershipToken(nodeServerId, userId, effectiveRoles, platformRole, serverId);
+      const activateBody = JSON.stringify({ extension: manifest });
+      const deactivateBody = "{}";
+      if (body.enabled) {
+        await fetchWithRetry(`${baseUrl.replace(/\/$/, "")}/v1/extensions/activate`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`
           },
-          body: JSON.stringify({ extensions: activeRows.map((row) => JSON.parse(row.manifest_json || "{}")) })
+          body: activateBody
         });
-      } catch (error) {
-        app.log.warn({ err: error, serverId }, "Failed to sync extension state to server node");
+      } else {
+        await fetchWithRetry(`${baseUrl.replace(/\/$/, "")}/v1/extensions/${encodeURIComponent(manifest.id)}/deactivate`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+          },
+          body: deactivateBody
+        });
       }
+
+      // Keep node state coherent by forcing a full sync after point updates.
+      const activeRows = await q<{ manifest_json: string }>(
+        `SELECT manifest_json FROM server_extensions WHERE server_id=:serverId AND enabled=1`,
+        { serverId }
+      );
+      const syncBody = JSON.stringify({ extensions: activeRows.map((row) => JSON.parse(row.manifest_json || "{}")) });
+      await fetchWithRetry(`${baseUrl.replace(/\/$/, "")}/v1/extensions/sync`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: syncBody
+      });
+    } catch (error) {
+      app.log.warn({ err: error, serverId }, "Failed to sync extension state to server node");
+      return rep.code(502).send({ error: "NODE_EXTENSION_SYNC_FAILED" });
     }
 
     return { ok: true, extensionId: manifest.id, enabled: body.enabled };
