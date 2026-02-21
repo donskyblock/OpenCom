@@ -1653,10 +1653,12 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 .composer-input-wrap {
   position: relative;
   height: 100%;
+  width: 100%;
+  min-width: 0;
 }
 .composer-icon { min-width: clamp(20px, 1.8vw, 36px); }
-.server-composer { grid-template-columns: auto 1fr auto auto; }
-.dm-composer { grid-template-columns: 1fr auto; }
+.server-composer { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.dm-composer { grid-template-columns: auto minmax(0, 1fr) auto; }
 .chat-main > .messages,
 .chat-main > .reply-banner {
   min-height: 0;
