@@ -2,10 +2,48 @@ import * as mediasoupClient from "mediasoup-client";
 
 const DEFAULT_TIMEOUT_MS = 10000;
 const DEFAULT_MIC_GAIN_PERCENT = 100;
-const NOISE_GATE_OPEN_RMS = 0.012;
-const NOISE_GATE_CLOSE_RMS = 0.008;
-const NOISE_GATE_ATTACK = 0.45;
-const NOISE_GATE_RELEASE = 0.08;
+export const VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET = "strict";
+export const VOICE_NOISE_SUPPRESSION_PRESETS = Object.freeze({
+  strict: Object.freeze({
+    gateOpenRms: 0.022,
+    gateCloseRms: 0.016,
+    gateAttack: 0.62,
+    gateRelease: 0.05,
+    highpassHz: 150,
+    lowpassHz: 6800,
+    compressorThreshold: -50,
+    compressorKnee: 20,
+    compressorRatio: 12,
+    compressorAttack: 0.003,
+    compressorRelease: 0.24
+  }),
+  balanced: Object.freeze({
+    gateOpenRms: 0.014,
+    gateCloseRms: 0.01,
+    gateAttack: 0.48,
+    gateRelease: 0.08,
+    highpassHz: 120,
+    lowpassHz: 7800,
+    compressorThreshold: -45,
+    compressorKnee: 28,
+    compressorRatio: 10,
+    compressorAttack: 0.004,
+    compressorRelease: 0.2
+  }),
+  light: Object.freeze({
+    gateOpenRms: 0.009,
+    gateCloseRms: 0.0065,
+    gateAttack: 0.35,
+    gateRelease: 0.12,
+    highpassHz: 80,
+    lowpassHz: 9800,
+    compressorThreshold: -38,
+    compressorKnee: 24,
+    compressorRatio: 6,
+    compressorAttack: 0.005,
+    compressorRelease: 0.16
+  })
+});
 
 export function createSfuVoiceClient({
   selfUserId,
@@ -36,6 +74,8 @@ export function createSfuVoiceClient({
     isMuted: false,
     isDeafened: false,
     noiseSuppression: true,
+    noiseSuppressionPreset: VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET,
+    noiseSuppressionConfig: { ...VOICE_NOISE_SUPPRESSION_PRESETS[VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET] },
     micGainPercent: DEFAULT_MIC_GAIN_PERCENT,
     audioInputDeviceId: "",
     audioOutputDeviceId: "",
@@ -115,6 +155,59 @@ export function createSfuVoiceClient({
     return Math.max(0, Math.min(200, numeric));
   }
 
+  function clampNoiseValue(value, min, max, fallback) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return fallback;
+    return Math.max(min, Math.min(max, numeric));
+  }
+
+  function normalizeNoiseSuppressionPreset(value) {
+    const key = String(value || "").trim().toLowerCase();
+    if (key === "custom") return "custom";
+    if (VOICE_NOISE_SUPPRESSION_PRESETS[key]) return key;
+    return VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET;
+  }
+
+  function getNoiseSuppressionPresetConfig(preset) {
+    const presetKey = normalizeNoiseSuppressionPreset(preset);
+    if (presetKey === "custom") return VOICE_NOISE_SUPPRESSION_PRESETS[VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET];
+    return VOICE_NOISE_SUPPRESSION_PRESETS[presetKey] || VOICE_NOISE_SUPPRESSION_PRESETS[VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET];
+  }
+
+  function normalizeNoiseSuppressionConfig(config = {}, fallbackConfig = null) {
+    const base = fallbackConfig || state.noiseSuppressionConfig || getNoiseSuppressionPresetConfig(state.noiseSuppressionPreset);
+    const normalized = {
+      gateOpenRms: clampNoiseValue(config.gateOpenRms, 0.004, 0.06, base.gateOpenRms),
+      gateCloseRms: clampNoiseValue(config.gateCloseRms, 0.002, 0.05, base.gateCloseRms),
+      gateAttack: clampNoiseValue(config.gateAttack, 0.05, 0.95, base.gateAttack),
+      gateRelease: clampNoiseValue(config.gateRelease, 0.01, 0.8, base.gateRelease),
+      highpassHz: clampNoiseValue(config.highpassHz, 40, 300, base.highpassHz),
+      lowpassHz: clampNoiseValue(config.lowpassHz, 4200, 14000, base.lowpassHz),
+      compressorThreshold: clampNoiseValue(config.compressorThreshold, -70, -8, base.compressorThreshold),
+      compressorKnee: clampNoiseValue(config.compressorKnee, 0, 40, base.compressorKnee),
+      compressorRatio: clampNoiseValue(config.compressorRatio, 1, 20, base.compressorRatio),
+      compressorAttack: clampNoiseValue(config.compressorAttack, 0.001, 0.05, base.compressorAttack),
+      compressorRelease: clampNoiseValue(config.compressorRelease, 0.04, 0.8, base.compressorRelease)
+    };
+    if (normalized.gateCloseRms >= normalized.gateOpenRms) {
+      normalized.gateCloseRms = Math.max(0.002, normalized.gateOpenRms * 0.8);
+    }
+    if (normalized.lowpassHz <= normalized.highpassHz + 250) {
+      normalized.lowpassHz = Math.min(14000, normalized.highpassHz + 250);
+    }
+    return normalized;
+  }
+
+  function applyNoiseSuppressionProfile({ preset, config } = {}) {
+    const nextPreset = normalizeNoiseSuppressionPreset(preset || state.noiseSuppressionPreset);
+    const presetConfig = getNoiseSuppressionPresetConfig(nextPreset);
+    state.noiseSuppressionPreset = nextPreset;
+    state.noiseSuppressionConfig = normalizeNoiseSuppressionConfig(config || {}, presetConfig);
+    if (state.localAudioNodes?.noiseGateState) {
+      state.localAudioNodes.noiseGateState.config = state.noiseSuppressionConfig;
+    }
+  }
+
   function getRequestedAudioConstraints() {
     return {
       echoCancellation: true,
@@ -171,17 +264,18 @@ export function createSfuVoiceClient({
     const lowpassNode = nodes?.lowpassNode;
     const compressorNode = nodes?.compressorNode;
     if (!highpassNode || !lowpassNode || !compressorNode) return;
+    const config = state.noiseSuppressionConfig || getNoiseSuppressionPresetConfig(state.noiseSuppressionPreset);
 
     if (state.noiseSuppression) {
-      setAudioParamValue(highpassNode.frequency, 120, audioContext);
+      setAudioParamValue(highpassNode.frequency, config.highpassHz, audioContext);
       setAudioParamValue(highpassNode.Q, 0.71, audioContext);
-      setAudioParamValue(lowpassNode.frequency, 7800, audioContext);
+      setAudioParamValue(lowpassNode.frequency, config.lowpassHz, audioContext);
       setAudioParamValue(lowpassNode.Q, 0.71, audioContext);
-      setAudioParamValue(compressorNode.threshold, -45, audioContext);
-      setAudioParamValue(compressorNode.knee, 28, audioContext);
-      setAudioParamValue(compressorNode.ratio, 10, audioContext);
-      setAudioParamValue(compressorNode.attack, 0.004, audioContext);
-      setAudioParamValue(compressorNode.release, 0.2, audioContext);
+      setAudioParamValue(compressorNode.threshold, config.compressorThreshold, audioContext);
+      setAudioParamValue(compressorNode.knee, config.compressorKnee, audioContext);
+      setAudioParamValue(compressorNode.ratio, config.compressorRatio, audioContext);
+      setAudioParamValue(compressorNode.attack, config.compressorAttack, audioContext);
+      setAudioParamValue(compressorNode.release, config.compressorRelease, audioContext);
       return;
     }
 
@@ -230,6 +324,7 @@ export function createSfuVoiceClient({
 
     const noiseGateState = {
       enabled: !!state.noiseSuppression,
+      config: state.noiseSuppressionConfig || getNoiseSuppressionPresetConfig(state.noiseSuppressionPreset),
       gate: 1,
       isOpen: true
     };
@@ -246,6 +341,7 @@ export function createSfuVoiceClient({
           noiseGateState.isOpen = true;
           return;
         }
+        const gateConfig = noiseGateState.config || state.noiseSuppressionConfig || getNoiseSuppressionPresetConfig(state.noiseSuppressionPreset);
 
         let sum = 0;
         for (let i = 0; i < input.length; i += 1) {
@@ -253,13 +349,13 @@ export function createSfuVoiceClient({
         }
         const rms = Math.sqrt(sum / input.length);
         if (noiseGateState.isOpen) {
-          if (rms < NOISE_GATE_CLOSE_RMS) noiseGateState.isOpen = false;
-        } else if (rms > NOISE_GATE_OPEN_RMS) {
+          if (rms < gateConfig.gateCloseRms) noiseGateState.isOpen = false;
+        } else if (rms > gateConfig.gateOpenRms) {
           noiseGateState.isOpen = true;
         }
 
         const target = noiseGateState.isOpen ? 1 : 0;
-        const smoothing = target > noiseGateState.gate ? NOISE_GATE_ATTACK : NOISE_GATE_RELEASE;
+        const smoothing = target > noiseGateState.gate ? gateConfig.gateAttack : gateConfig.gateRelease;
         noiseGateState.gate += (target - noiseGateState.gate) * smoothing;
         for (let i = 0; i < input.length; i += 1) {
           output[i] = input[i] * noiseGateState.gate;
@@ -349,7 +445,9 @@ export function createSfuVoiceClient({
       client: {
         processingActive: !!state.localAudioNodes,
         noiseGateActive: !!state.localAudioNodes?.noiseGateState?.enabled,
-        micGainPercent: normalizeMicGainPercent(state.micGainPercent)
+        micGainPercent: normalizeMicGainPercent(state.micGainPercent),
+        noisePreset: state.noiseSuppressionPreset,
+        noiseConfig: state.noiseSuppressionConfig
       }
     });
   }
@@ -426,6 +524,18 @@ export function createSfuVoiceClient({
   function setMicGain(nextMicGainPercent) {
     state.micGainPercent = normalizeMicGainPercent(nextMicGainPercent);
     applyMicGainToProcessingNode();
+    const localTrack = state.localStream?.getAudioTracks?.()?.[0] || null;
+    if (localTrack) emitLocalAudioProcessingInfo(localTrack);
+  }
+
+  function setNoiseSuppressionConfig(nextProfile = {}) {
+    const nextPreset = normalizeNoiseSuppressionPreset(nextProfile?.preset || state.noiseSuppressionPreset);
+    const nextConfigInput = nextProfile && typeof nextProfile === "object" && nextProfile.config && typeof nextProfile.config === "object"
+      ? nextProfile.config
+      : nextProfile;
+    applyNoiseSuppressionProfile({ preset: nextPreset, config: nextConfigInput });
+    setNoiseGateEnabled(state.noiseSuppression);
+    applyNoiseProcessingTuning();
     const localTrack = state.localStream?.getAudioTracks?.()?.[0] || null;
     if (localTrack) emitLocalAudioProcessingInfo(localTrack);
   }
@@ -610,6 +720,8 @@ export function createSfuVoiceClient({
     audioInputDeviceId,
     micGain = DEFAULT_MIC_GAIN_PERCENT,
     noiseSuppression = true,
+    noiseSuppressionPreset = VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET,
+    noiseSuppressionConfig = null,
     isMuted = false,
     isDeafened = false,
     audioOutputDeviceId = ""
@@ -623,6 +735,10 @@ export function createSfuVoiceClient({
     state.isDeafened = !!isDeafened;
     state.noiseSuppression = !!noiseSuppression;
     state.micGainPercent = normalizeMicGainPercent(micGain);
+    applyNoiseSuppressionProfile({
+      preset: noiseSuppressionPreset,
+      config: noiseSuppressionConfig || getNoiseSuppressionPresetConfig(noiseSuppressionPreset)
+    });
     state.audioInputDeviceId = audioInputDeviceId || "";
     state.audioOutputDeviceId = audioOutputDeviceId || "";
 
@@ -925,6 +1041,7 @@ export function createSfuVoiceClient({
     setDeafened,
     setMicGain,
     setNoiseSuppression,
+    setNoiseSuppressionConfig,
     setAudioInputDevice,
     setUserAudioPreference,
     setAudioOutputDevice,

@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createSfuVoiceClient } from "./voice/sfuClient";
+import {
+  createSfuVoiceClient,
+  VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET,
+  VOICE_NOISE_SUPPRESSION_PRESETS
+} from "./voice/sfuClient";
 import { LandingPage } from "./components/LandingPage";
 import { AuthShell } from "./components/AuthShell";
 import { TermsPage } from "./components/TermsPage";
@@ -226,6 +230,8 @@ const MIC_SENSITIVITY_KEY = "opencom_mic_sensitivity";
 const AUDIO_INPUT_DEVICE_KEY = "opencom_audio_input_device";
 const AUDIO_OUTPUT_DEVICE_KEY = "opencom_audio_output_device";
 const NOISE_SUPPRESSION_KEY = "opencom_noise_suppression";
+const NOISE_SUPPRESSION_PRESET_KEY = "opencom_noise_suppression_preset";
+const NOISE_SUPPRESSION_CONFIG_KEY = "opencom_noise_suppression_config";
 const VOICE_MEMBER_AUDIO_PREFS_KEY = "opencom_voice_member_audio_prefs";
 // Kept for backward compatibility with any persisted/runtime references from older bundles.
 const SERVER_VOICE_GATEWAY_PREFS_KEY = "opencom_server_voice_gateway_prefs";
@@ -606,6 +612,49 @@ function getStoredStringArray(key) {
   return Array.isArray(value) ? value.filter((item) => typeof item === "string" && item.trim()) : [];
 }
 
+function clampVoiceNoiseValue(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(max, numeric));
+}
+
+function normalizeNoiseSuppressionPresetForUi(value) {
+  const key = String(value || "").trim().toLowerCase();
+  if (key === "custom") return "custom";
+  if (VOICE_NOISE_SUPPRESSION_PRESETS[key]) return key;
+  return VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET;
+}
+
+function getNoiseSuppressionPresetConfigForUi(preset) {
+  const key = normalizeNoiseSuppressionPresetForUi(preset);
+  if (key === "custom") return VOICE_NOISE_SUPPRESSION_PRESETS[VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET];
+  return VOICE_NOISE_SUPPRESSION_PRESETS[key] || VOICE_NOISE_SUPPRESSION_PRESETS[VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET];
+}
+
+function normalizeNoiseSuppressionConfigForUi(config = {}, preset = VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET) {
+  const base = getNoiseSuppressionPresetConfigForUi(preset);
+  const normalized = {
+    gateOpenRms: clampVoiceNoiseValue(config.gateOpenRms, 0.004, 0.06, base.gateOpenRms),
+    gateCloseRms: clampVoiceNoiseValue(config.gateCloseRms, 0.002, 0.05, base.gateCloseRms),
+    gateAttack: clampVoiceNoiseValue(config.gateAttack, 0.05, 0.95, base.gateAttack),
+    gateRelease: clampVoiceNoiseValue(config.gateRelease, 0.01, 0.8, base.gateRelease),
+    highpassHz: clampVoiceNoiseValue(config.highpassHz, 40, 300, base.highpassHz),
+    lowpassHz: clampVoiceNoiseValue(config.lowpassHz, 4200, 14000, base.lowpassHz),
+    compressorThreshold: clampVoiceNoiseValue(config.compressorThreshold, -70, -8, base.compressorThreshold),
+    compressorKnee: clampVoiceNoiseValue(config.compressorKnee, 0, 40, base.compressorKnee),
+    compressorRatio: clampVoiceNoiseValue(config.compressorRatio, 1, 20, base.compressorRatio),
+    compressorAttack: clampVoiceNoiseValue(config.compressorAttack, 0.001, 0.05, base.compressorAttack),
+    compressorRelease: clampVoiceNoiseValue(config.compressorRelease, 0.04, 0.8, base.compressorRelease)
+  };
+  if (normalized.gateCloseRms >= normalized.gateOpenRms) {
+    normalized.gateCloseRms = Math.max(0.002, normalized.gateOpenRms * 0.8);
+  }
+  if (normalized.lowpassHz <= normalized.highpassHz + 250) {
+    normalized.lowpassHz = Math.min(14000, normalized.highpassHz + 250);
+  }
+  return normalized;
+}
+
 function getInitials(value = "") {
   const cleaned = value.trim();
   if (!cleaned) return "OC";
@@ -931,6 +980,16 @@ export function App() {
   const [audioInputDeviceId, setAudioInputDeviceId] = useState(localStorage.getItem(AUDIO_INPUT_DEVICE_KEY) || "");
   const [audioOutputDeviceId, setAudioOutputDeviceId] = useState(localStorage.getItem(AUDIO_OUTPUT_DEVICE_KEY) || "");
   const [noiseSuppressionEnabled, setNoiseSuppressionEnabled] = useState(localStorage.getItem(NOISE_SUPPRESSION_KEY) !== "0");
+  const [noiseSuppressionPreset, setNoiseSuppressionPreset] = useState(() => {
+    const storedPreset = localStorage.getItem(NOISE_SUPPRESSION_PRESET_KEY);
+    return normalizeNoiseSuppressionPresetForUi(storedPreset || VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET);
+  });
+  const [noiseSuppressionConfig, setNoiseSuppressionConfig] = useState(() => {
+    const storedPreset = localStorage.getItem(NOISE_SUPPRESSION_PRESET_KEY);
+    const normalizedPreset = normalizeNoiseSuppressionPresetForUi(storedPreset || VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET);
+    const storedConfig = getStoredJson(NOISE_SUPPRESSION_CONFIG_KEY, null);
+    return normalizeNoiseSuppressionConfigForUi(storedConfig || {}, normalizedPreset);
+  });
   const [localAudioProcessingInfo, setLocalAudioProcessingInfo] = useState(null);
   const [audioInputDevices, setAudioInputDevices] = useState([]);
   const [audioOutputDevices, setAudioOutputDevices] = useState([]);
@@ -1020,6 +1079,21 @@ export function App() {
   const [clientExtensionLoadState, setClientExtensionLoadState] = useState({});
   const [serverExtensionCommands, setServerExtensionCommands] = useState([]);
   const [slashSelectionIndex, setSlashSelectionIndex] = useState(0);
+
+  function applyNoiseSuppressionPreset(nextPresetRaw) {
+    const nextPreset = normalizeNoiseSuppressionPresetForUi(nextPresetRaw);
+    setNoiseSuppressionPreset(nextPreset);
+    if (nextPreset === "custom") return;
+    setNoiseSuppressionConfig(normalizeNoiseSuppressionConfigForUi({}, nextPreset));
+  }
+
+  function updateNoiseSuppressionConfig(patch = {}) {
+    setNoiseSuppressionPreset("custom");
+    setNoiseSuppressionConfig((current) => normalizeNoiseSuppressionConfigForUi({
+      ...(current || {}),
+      ...(patch || {})
+    }, noiseSuppressionPreset));
+  }
 
   const messagesRef = useRef(null);
   const gatewayWsRef = useRef(null);
@@ -3446,6 +3520,21 @@ export function App() {
   }, [noiseSuppressionEnabled]);
 
   useEffect(() => {
+    localStorage.setItem(NOISE_SUPPRESSION_PRESET_KEY, noiseSuppressionPreset);
+  }, [noiseSuppressionPreset]);
+
+  useEffect(() => {
+    localStorage.setItem(NOISE_SUPPRESSION_CONFIG_KEY, JSON.stringify(noiseSuppressionConfig));
+  }, [noiseSuppressionConfig]);
+
+  useEffect(() => {
+    voiceSfuRef.current?.setNoiseSuppressionConfig?.({
+      preset: noiseSuppressionPreset,
+      config: noiseSuppressionConfig
+    });
+  }, [noiseSuppressionPreset, noiseSuppressionConfig]);
+
+  useEffect(() => {
     if (!isInVoiceChannel) return;
     voiceSfuRef.current?.setNoiseSuppression?.(noiseSuppressionEnabled).catch((error) => {
       const reason = String(error?.message || "").trim();
@@ -3573,6 +3662,8 @@ export function App() {
           audioInputDeviceId,
           micGain,
           noiseSuppression: noiseSuppressionEnabled,
+          noiseSuppressionPreset,
+          noiseSuppressionConfig,
           isMuted,
           isDeafened,
           audioOutputDeviceId
@@ -3659,6 +3750,8 @@ export function App() {
     audioInputDeviceId,
     micGain,
     noiseSuppressionEnabled,
+    noiseSuppressionPreset,
+    noiseSuppressionConfig,
     isMuted,
     isDeafened,
     audioOutputDeviceId
@@ -5962,6 +6055,8 @@ export function App() {
         audioInputDeviceId,
         micGain,
         noiseSuppression: noiseSuppressionEnabled,
+        noiseSuppressionPreset,
+        noiseSuppressionConfig,
         isMuted,
         isDeafened,
         audioOutputDeviceId
@@ -9030,6 +9125,132 @@ export function App() {
                     {" "}
                     Noise Suppression
                   </label>
+                  <label>Noise Preset
+                    <select
+                      value={noiseSuppressionPreset}
+                      onChange={(event) => applyNoiseSuppressionPreset(event.target.value)}
+                    >
+                      <option value="strict">Strict (default)</option>
+                      <option value="balanced">Balanced</option>
+                      <option value="light">Light</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                  </label>
+                  <div className="row-actions" style={{ width: "100%" }}>
+                    <button type="button" className="ghost" onClick={() => applyNoiseSuppressionPreset("strict")}>Use Strict</button>
+                    <button type="button" className="ghost" onClick={() => applyNoiseSuppressionPreset("balanced")}>Use Balanced</button>
+                    <button type="button" className="ghost" onClick={() => applyNoiseSuppressionPreset("light")}>Use Light</button>
+                  </div>
+                  <label>Gate Open Threshold ({Number(noiseSuppressionConfig.gateOpenRms || 0).toFixed(3)})
+                    <input
+                      type="range"
+                      min="0.004"
+                      max="0.06"
+                      step="0.001"
+                      value={noiseSuppressionConfig.gateOpenRms}
+                      onChange={(event) => updateNoiseSuppressionConfig({ gateOpenRms: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label>Gate Close Threshold ({Number(noiseSuppressionConfig.gateCloseRms || 0).toFixed(3)})
+                    <input
+                      type="range"
+                      min="0.002"
+                      max="0.05"
+                      step="0.001"
+                      value={noiseSuppressionConfig.gateCloseRms}
+                      onChange={(event) => updateNoiseSuppressionConfig({ gateCloseRms: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label>Gate Attack ({Math.round(Number(noiseSuppressionConfig.gateAttack || 0) * 100)}%)
+                    <input
+                      type="range"
+                      min="0.05"
+                      max="0.95"
+                      step="0.01"
+                      value={noiseSuppressionConfig.gateAttack}
+                      onChange={(event) => updateNoiseSuppressionConfig({ gateAttack: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label>Gate Release ({Math.round(Number(noiseSuppressionConfig.gateRelease || 0) * 1000)} ms factor)
+                    <input
+                      type="range"
+                      min="0.01"
+                      max="0.8"
+                      step="0.01"
+                      value={noiseSuppressionConfig.gateRelease}
+                      onChange={(event) => updateNoiseSuppressionConfig({ gateRelease: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label>High-pass Cutoff ({Math.round(Number(noiseSuppressionConfig.highpassHz || 0))} Hz)
+                    <input
+                      type="range"
+                      min="40"
+                      max="300"
+                      step="5"
+                      value={noiseSuppressionConfig.highpassHz}
+                      onChange={(event) => updateNoiseSuppressionConfig({ highpassHz: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label>Low-pass Cutoff ({Math.round(Number(noiseSuppressionConfig.lowpassHz || 0))} Hz)
+                    <input
+                      type="range"
+                      min="4200"
+                      max="14000"
+                      step="100"
+                      value={noiseSuppressionConfig.lowpassHz}
+                      onChange={(event) => updateNoiseSuppressionConfig({ lowpassHz: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label>Compressor Threshold ({Math.round(Number(noiseSuppressionConfig.compressorThreshold || 0))} dB)
+                    <input
+                      type="range"
+                      min="-70"
+                      max="-8"
+                      step="1"
+                      value={noiseSuppressionConfig.compressorThreshold}
+                      onChange={(event) => updateNoiseSuppressionConfig({ compressorThreshold: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label>Compressor Knee ({Math.round(Number(noiseSuppressionConfig.compressorKnee || 0))} dB)
+                    <input
+                      type="range"
+                      min="0"
+                      max="40"
+                      step="1"
+                      value={noiseSuppressionConfig.compressorKnee}
+                      onChange={(event) => updateNoiseSuppressionConfig({ compressorKnee: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label>Compressor Ratio ({Number(noiseSuppressionConfig.compressorRatio || 0).toFixed(1)}:1)
+                    <input
+                      type="range"
+                      min="1"
+                      max="20"
+                      step="0.5"
+                      value={noiseSuppressionConfig.compressorRatio}
+                      onChange={(event) => updateNoiseSuppressionConfig({ compressorRatio: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label>Compressor Attack ({Number(noiseSuppressionConfig.compressorAttack || 0).toFixed(3)} s)
+                    <input
+                      type="range"
+                      min="0.001"
+                      max="0.05"
+                      step="0.001"
+                      value={noiseSuppressionConfig.compressorAttack}
+                      onChange={(event) => updateNoiseSuppressionConfig({ compressorAttack: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label>Compressor Release ({Number(noiseSuppressionConfig.compressorRelease || 0).toFixed(3)} s)
+                    <input
+                      type="range"
+                      min="0.04"
+                      max="0.8"
+                      step="0.01"
+                      value={noiseSuppressionConfig.compressorRelease}
+                      onChange={(event) => updateNoiseSuppressionConfig({ compressorRelease: Number(event.target.value) })}
+                    />
+                  </label>
                   {localAudioProcessingInfo && (
                     <p className="hint">
                       Noise suppression requested: {localAudioProcessingInfo.requested?.noiseSuppression ? "On" : "Off"}
@@ -9037,7 +9258,7 @@ export function App() {
                       applied: {localAudioProcessingInfo.applied?.noiseSuppression == null ? "Unknown" : localAudioProcessingInfo.applied.noiseSuppression ? "On" : "Off"}
                       {!localAudioProcessingInfo.supported?.noiseSuppression ? " (not supported by this browser/device)" : ""}
                       {localAudioProcessingInfo.client?.processingActive
-                        ? ` · client filter: on · gain: ${Math.round(Number(localAudioProcessingInfo.client?.micGainPercent || 100))}%`
+                        ? ` · client filter: on (${localAudioProcessingInfo.client?.noisePreset || "strict"}) · gain: ${Math.round(Number(localAudioProcessingInfo.client?.micGainPercent || 100))}%`
                         : ""}
                     </p>
                   )}
