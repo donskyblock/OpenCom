@@ -39,6 +39,12 @@ const Env = z.object({
   PROFILE_IMAGE_STORAGE_DIR: z.string().default("./storage/profiles"),
   PROFILE_IMAGE_BASE_URL: z.string().default("/v1/profile-images"),
 
+  // General attachment storage (channel + social DM uploads)
+  ATTACHMENT_MAX_BYTES: z.coerce.number().int().min(1024).default(50 * 1024 * 1024),
+  ATTACHMENT_BOOST_MAX_BYTES: z.coerce.number().int().min(1024).default(100 * 1024 * 1024),
+  ATTACHMENT_TTL_DAYS: z.coerce.number().int().min(1).default(365),
+  ATTACHMENT_STORAGE_DIR: z.string().default("./data/attachments"),
+
   // Official server node (one server per user hosted by the platform)
   OFFICIAL_NODE_BASE_URL: z.string().url().optional(),
   /** Must match NODE_SERVER_ID on that node so the node accepts the membership token */

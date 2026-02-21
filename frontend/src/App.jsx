@@ -844,6 +844,26 @@ function normalizeAttachmentFile(file, prefix = "upload") {
   }
 }
 
+function extractFilesFromClipboardData(clipboardData) {
+  if (!clipboardData) return [];
+
+  const filesFromList = Array.from(clipboardData.files || []).filter((file) => file && file.size > 0);
+  const filesFromItems = Array.from(clipboardData.items || [])
+    .filter((item) => item && item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file) => file && file.size > 0);
+
+  const out = [];
+  const seen = new Set();
+  for (const file of [...filesFromList, ...filesFromItems]) {
+    const key = `${file.name || ""}:${file.size}:${file.type || ""}:${file.lastModified || 0}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(file);
+  }
+  return out;
+}
+
 function normalizeImageUrlInput(value = "") {
   const trimmed = String(value || "").trim();
   if (!trimmed) return "";
@@ -898,6 +918,7 @@ export function App() {
   const [newServerEmoteName, setNewServerEmoteName] = useState("");
   const [newServerEmoteUrl, setNewServerEmoteUrl] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [pendingDmAttachments, setPendingDmAttachments] = useState([]);
   const [invitePendingCode, setInvitePendingCode] = useState(() => {
     try {
       return sessionStorage.getItem(PENDING_INVITE_CODE_KEY) || "";
@@ -1209,6 +1230,7 @@ export function App() {
   const dmMessagesRef = useRef(null);
   const composerInputRef = useRef(null);
   const attachmentInputRef = useRef(null);
+  const dmAttachmentInputRef = useRef(null);
   const dmComposerInputRef = useRef(null);
   const isAtBottomRef = useRef(true);
   const isServerAtBottomRef = useRef(true);
@@ -3238,9 +3260,12 @@ export function App() {
   }, [accessToken, messages, dms, activeDmId, linkPreviewByUrl]);
 
   useEffect(() => {
-    if (!activeServer?.baseUrl || !activeServer?.membershipToken) return;
     const candidates = [];
-    for (const message of messages || []) {
+    const visibleMessages = [
+      ...(messages || []),
+      ...((dms.find((item) => item.id === activeDmId)?.messages) || [])
+    ];
+    for (const message of visibleMessages) {
       for (const attachment of message?.attachments || []) {
         if (!attachment?.id || !isImageMimeType(attachment.contentType)) continue;
         if (attachmentPreviewUrlById[attachment.id]) continue;
@@ -3252,12 +3277,27 @@ export function App() {
     for (const attachment of candidates) {
       attachmentPreviewFetchInFlightRef.current.add(attachment.id);
       const source = String(attachment.url || "");
+      const isDmAttachment = /\/v1\/social\/dms\/attachments\//.test(source);
+      const authToken = isDmAttachment ? accessToken : activeServer?.membershipToken;
+      if (!authToken) {
+        attachmentPreviewFetchInFlightRef.current.delete(attachment.id);
+        continue;
+      }
+
       const requestUrl = source.startsWith("http")
         ? source
-        : `${activeServer.baseUrl}${source.startsWith("/") ? "" : "/"}${source}`;
+        : isDmAttachment
+          ? `${CORE_API}${source.startsWith("/") ? "" : "/"}${source}`
+          : activeServer?.baseUrl
+            ? `${activeServer.baseUrl}${source.startsWith("/") ? "" : "/"}${source}`
+            : "";
+      if (!requestUrl) {
+        attachmentPreviewFetchInFlightRef.current.delete(attachment.id);
+        continue;
+      }
 
       fetch(requestUrl, {
-        headers: { Authorization: `Bearer ${activeServer.membershipToken}` }
+        headers: { Authorization: `Bearer ${authToken}` }
       })
         .then((response) => response.ok ? response.blob() : null)
         .then((blob) => {
@@ -3274,7 +3314,7 @@ export function App() {
           attachmentPreviewFetchInFlightRef.current.delete(attachment.id);
         });
     }
-  }, [messages, activeServer?.baseUrl, activeServer?.membershipToken, attachmentPreviewUrlById]);
+  }, [messages, dms, activeDmId, activeServer?.baseUrl, activeServer?.membershipToken, accessToken, attachmentPreviewUrlById]);
 
   useEffect(() => {
     const old = attachmentPreviewUrlByIdRef.current || {};
@@ -3832,6 +3872,11 @@ export function App() {
   }, [activeServerId, activeChannelId]);
 
   useEffect(() => {
+    setPendingDmAttachments([]);
+    if (dmAttachmentInputRef.current) dmAttachmentInputRef.current.value = "";
+  }, [activeDmId]);
+
+  useEffect(() => {
     if (navMode !== "servers" || !accessToken || !activeGuildId || gatewayConnected) return;
 
     let cancelled = false;
@@ -4072,7 +4117,7 @@ export function App() {
     return true;
   }
 
-  async function uploadAttachment(file) {
+  async function uploadServerAttachment(file) {
     if (!activeServer || !activeGuildId || !activeChannelId || !file) return null;
     const nextFile = normalizeAttachmentFile(file, "attachment") || file;
     const form = new FormData();
@@ -4091,11 +4136,30 @@ export function App() {
     return response.json();
   }
 
-  async function uploadAttachments(files, source = "files") {
+  async function uploadDmAttachment(file, threadId) {
+    if (!threadId || !file || !accessToken) return null;
+    const nextFile = normalizeAttachmentFile(file, "dm-attachment") || file;
+    const form = new FormData();
+    form.append("file", nextFile, nextFile.name || "upload.bin");
+    const response = await fetch(`${CORE_API}/v1/social/dms/${threadId}/attachments/upload`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: form
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP_${response.status}`);
+    }
+    return response.json();
+  }
+
+  async function uploadAttachments(files, source = "files", scope = "server") {
     const selected = Array.from(files || []).filter(Boolean);
     if (!selected.length) return;
+    const isDmScope = scope === "dm";
+    const pending = isDmScope ? pendingDmAttachments : pendingAttachments;
 
-    const availableSlots = Math.max(0, 10 - pendingAttachments.length);
+    const availableSlots = Math.max(0, 10 - pending.length);
     if (!availableSlots) {
       setStatus("You can attach up to 10 files per message.");
       return;
@@ -4108,9 +4172,12 @@ export function App() {
     for (const file of queue) {
       try {
         // eslint-disable-next-line no-await-in-loop
-        const data = await uploadAttachment(file);
+        const data = isDmScope
+          ? await uploadDmAttachment(file, activeDm?.id)
+          : await uploadServerAttachment(file);
         if (data) {
-          setPendingAttachments((current) => [...current, data]);
+          if (isDmScope) setPendingDmAttachments((current) => [...current, data]);
+          else setPendingAttachments((current) => [...current, data]);
           uploaded += 1;
         }
       } catch (error) {
@@ -4131,13 +4198,19 @@ export function App() {
   }
 
   async function openMessageAttachment(attachment) {
-    if (!attachment?.url || !activeServer?.baseUrl || !activeServer?.membershipToken) return;
+    if (!attachment?.url) return;
     try {
-      const url = attachment.url.startsWith("http")
-        ? attachment.url
-        : `${activeServer.baseUrl}${attachment.url}`;
+      const rawUrl = String(attachment.url || "");
+      const isDmAttachment = /\/v1\/social\/dms\/attachments\//.test(rawUrl);
+      const url = rawUrl.startsWith("http")
+        ? rawUrl
+        : `${isDmAttachment ? CORE_API : (activeServer?.baseUrl || "")}${rawUrl}`;
+      if (!url) return;
+
+      const authToken = isDmAttachment ? accessToken : activeServer?.membershipToken;
+      const headers = authToken ? { Authorization: `Bearer ${authToken}` } : {};
       const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${activeServer.membershipToken}` }
+        headers
       });
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
@@ -4191,7 +4264,7 @@ export function App() {
     }
   }
   async function sendDm() {
-    if (!activeDm || !dmText.trim()) return;
+    if (!activeDm || (!dmText.trim() && pendingDmAttachments.length === 0)) return;
 
     const content = `${dmReplyTarget ? `> replying to ${dmReplyTarget.author}: ${dmReplyTarget.content}\n` : ""}${dmText.trim()}`;
     setDmText("");
@@ -4200,7 +4273,10 @@ export function App() {
       await api(`/v1/social/dms/${activeDm.id}/messages`, {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ content })
+        body: JSON.stringify({
+          content: content || "Attachment",
+          attachmentIds: pendingDmAttachments.map((attachment) => attachment.attachmentId || attachment.id).filter(Boolean)
+        })
       });
 
       const data = await api(`/v1/social/dms/${activeDm.id}/messages`, {
@@ -4209,6 +4285,8 @@ export function App() {
 
       setDms((current) => current.map((item) => item.id === activeDm.id ? { ...item, messages: data.messages || [] } : item));
       setDmReplyTarget(null);
+      setPendingDmAttachments([]);
+      if (dmAttachmentInputRef.current) dmAttachmentInputRef.current.value = "";
     } catch (error) {
       setDmText(content);
       setStatus(`DM send failed: ${error.message}`);
@@ -7488,7 +7566,7 @@ export function App() {
                     value={messageText}
                     onChange={(event) => setMessageText(event.target.value)}
                     onPaste={(event) => {
-                      const files = Array.from(event.clipboardData?.files || []).filter((file) => file && file.size > 0);
+                      const files = extractFilesFromClipboardData(event.clipboardData);
                       if (!files.length) return;
                       event.preventDefault();
                       uploadAttachments(files, "clipboard").catch(() => {});
@@ -7775,11 +7853,57 @@ export function App() {
               </div>
             )}
             <footer className="composer dm-composer" onClick={() => dmComposerInputRef.current?.focus()}>
+              <button
+                className="ghost composer-icon"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  dmAttachmentInputRef.current?.click();
+                }}
+                title="Attach files"
+              >
+                ＋
+              </button>
+              <input
+                ref={dmAttachmentInputRef}
+                type="file"
+                multiple
+                style={{ display: "none" }}
+                onChange={async (event) => {
+                  const files = Array.from(event.target.files || []);
+                  await uploadAttachments(files, "file picker", "dm");
+                }}
+              />
+              <div className="composer-input-wrap">
+                {pendingDmAttachments.length > 0 && (
+                  <div className="mention-suggestions">
+                    {pendingDmAttachments.map((attachment, index) => (
+                      <div key={`pending-dm-att-${index}`} className="mention-suggestion" style={{ display: "flex", justifyContent: "space-between", width: "100%" }}>
+                        <span>{attachment.fileName || "attachment"}</span>
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setPendingDmAttachments((current) => current.filter((_, i) => i !== index));
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               <textarea
                 ref={dmComposerInputRef}
                 value={dmText}
                 onChange={(event) => setDmText(event.target.value)}
                 placeholder={`Message ${activeDm?.name || "friend"}`}
+                onPaste={(event) => {
+                  const files = extractFilesFromClipboardData(event.clipboardData);
+                  if (!files.length) return;
+                  event.preventDefault();
+                  uploadAttachments(files, "clipboard", "dm").catch(() => {});
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
@@ -7787,7 +7911,8 @@ export function App() {
                   }
                 }}
               />
-              <button className="send-btn" onClick={sendDm} disabled={!activeDm || !dmText.trim()}>Send</button>
+              </div>
+              <button className="send-btn" onClick={sendDm} disabled={!activeDm || (!dmText.trim() && pendingDmAttachments.length === 0)}>Send</button>
             </footer>
           </section>
         )}

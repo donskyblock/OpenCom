@@ -3,10 +3,17 @@ import { z } from "zod";
 import { ulidLike } from "@ods/shared/ids.js";
 import { q } from "../db.js";
 import { parseBody } from "../validation.js";
+import { env } from "../env.js";
+import fs from "node:fs";
+import path from "node:path";
+import { ensureDir, randomId } from "../storage.js";
 
 const AddFriend = z.object({ username: z.string().min(2).max(32) });
 const OpenDm = z.object({ friendId: z.string().min(3) });
-const SendDm = z.object({ content: z.string().min(1).max(4000) });
+const SendDm = z.object({
+  content: z.string().max(4000).optional(),
+  attachmentIds: z.array(z.string().min(3)).max(10).optional()
+});
 const UpdateSocialSettings = z.object({ allowFriendRequests: z.boolean() });
 const DmMessageParams = z.object({ threadId: z.string().min(3), messageId: z.string().min(3) });
 const DmCallSignalParams = z.object({ threadId: z.string().min(3) });
@@ -19,6 +26,36 @@ const DmCallSignalBody = z.object({
 
 function sortPair(a: string, b: string) {
   return a < b ? [a, b] as const : [b, a] as const;
+}
+
+function toMariaTimestamp(d: Date) {
+  return d.toISOString().slice(0, 19).replace("T", " ");
+}
+
+function safeAttachmentFileName(rawName: string) {
+  const cleaned = String(rawName || "file")
+    .replace(/[\\/:*?"<>|]+/g, "_")
+    .replace(/[\u0000-\u001f]+/g, "")
+    .trim()
+    .slice(0, 220);
+  return cleaned || "file";
+}
+
+async function streamToFileWithLimit(stream: NodeJS.ReadableStream, absPath: string, maxBytes: number): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    const out = fs.createWriteStream(absPath, { flags: "w" });
+    stream.pipe(out);
+    stream.once("error", reject);
+    out.once("error", reject);
+    out.once("finish", () => resolve());
+  });
+  const stat = await fs.promises.stat(absPath);
+  const size = Number(stat?.size || 0);
+  if (size > maxBytes) {
+    try { await fs.promises.unlink(absPath); } catch {}
+    throw new Error("TOO_LARGE");
+  }
+  return size;
 }
 
 async function createFriendshipPair(userId: string, friendId: string) {
@@ -61,6 +98,31 @@ export async function socialRoutes(
   broadcastCallSignal?: (targetUserId: string, signal: any) => Promise<void>,
   broadcastToUser?: (targetUserId: string, t: string, d: any) => Promise<void>
 ) {
+  async function getDmMessageAttachmentsByMessageIds(messageIds: string[]) {
+    if (!messageIds.length) return new Map<string, any[]>();
+    const params: Record<string, any> = {};
+    const inList = messageIds.map((id, index) => (params[`m${index}`] = id, `:m${index}`)).join(",");
+    const rows = await q<any>(
+      `SELECT id,message_id,file_name,content_type,size_bytes,expires_at
+       FROM social_dm_attachments
+       WHERE message_id IN (${inList})`,
+      params
+    );
+    const byMessage = new Map<string, any[]>();
+    for (const row of rows) {
+      if (!byMessage.has(row.message_id)) byMessage.set(row.message_id, []);
+      byMessage.get(row.message_id)!.push({
+        id: row.id,
+        fileName: row.file_name,
+        contentType: row.content_type,
+        sizeBytes: row.size_bytes,
+        expiresAt: new Date(row.expires_at).toISOString(),
+        url: `/v1/social/dms/attachments/${row.id}`
+      });
+    }
+    return byMessage;
+  }
+
   app.get("/v1/social/friends", { preHandler: [app.authenticate] } as any, async (req: any) => {
     const userId = req.user.sub as string;
 
@@ -317,6 +379,126 @@ export async function socialRoutes(
     };
   });
 
+  app.post("/v1/social/dms/:threadId/attachments/upload", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const { threadId } = z.object({ threadId: z.string().min(3) }).parse(req.params);
+
+    const thread = await q<{ id: string }>(
+      `SELECT id FROM social_dm_threads WHERE id=:threadId AND (user_a=:userId OR user_b=:userId) LIMIT 1`,
+      { threadId, userId }
+    );
+    if (!thread.length) return rep.code(404).send({ error: "THREAD_NOT_FOUND" });
+
+    let filePart: any = null;
+    for await (const part of req.parts()) {
+      if (part.type !== "file") continue;
+      if (!filePart) {
+        filePart = part;
+      } else {
+        part.file.resume();
+      }
+    }
+    if (!filePart) return rep.code(400).send({ error: "FILE_REQUIRED" });
+
+    const hasBoost = !!(await q<{ user_id: string }>(
+      `SELECT user_id FROM user_badges WHERE user_id=:userId AND badge='boost' LIMIT 1`,
+      { userId }
+    )).length;
+    const tier = hasBoost ? "boost" : "default";
+    const maxUploadBytes = hasBoost ? env.ATTACHMENT_BOOST_MAX_BYTES : env.ATTACHMENT_MAX_BYTES;
+
+    const attachmentId = ulidLike();
+    const originalName = safeAttachmentFileName(filePart.filename);
+    const contentType = String(filePart.mimetype || "application/octet-stream").slice(0, 255);
+    const expiresAt = new Date(Date.now() + (env.ATTACHMENT_TTL_DAYS * 24 * 60 * 60 * 1000));
+
+    const rootDir = path.resolve(env.ATTACHMENT_STORAGE_DIR, "social-dms");
+    const threadDir = path.resolve(rootDir, threadId);
+    ensureDir(rootDir);
+    ensureDir(threadDir);
+
+    const relPath = path.join(threadId, `${attachmentId}_${randomId(8)}_${originalName}`);
+    const absPath = path.resolve(rootDir, relPath);
+    if (!absPath.startsWith(threadDir + path.sep)) {
+      return rep.code(400).send({ error: "BAD_FILE_PATH" });
+    }
+
+    let sizeBytes = 0;
+    try {
+      sizeBytes = await streamToFileWithLimit(filePart.file, absPath, maxUploadBytes);
+    } catch (error: any) {
+      try { fs.unlinkSync(absPath); } catch {}
+      if (String(error?.message || "") === "TOO_LARGE") {
+        return rep.code(413).send({ error: "TOO_LARGE", maxBytes: maxUploadBytes });
+      }
+      return rep.code(500).send({ error: "UPLOAD_FAILED" });
+    }
+
+    await q(
+      `INSERT INTO social_dm_attachments
+        (id,thread_id,message_id,uploader_user_id,object_key,file_name,content_type,size_bytes,expires_at)
+       VALUES
+        (:id,:threadId,NULL,:uploaderUserId,:objectKey,:fileName,:contentType,:sizeBytes,:expiresAt)`,
+      {
+        id: attachmentId,
+        threadId,
+        uploaderUserId: userId,
+        objectKey: relPath,
+        fileName: originalName,
+        contentType,
+        sizeBytes,
+        expiresAt: toMariaTimestamp(expiresAt)
+      }
+    );
+
+    return rep.send({
+      attachmentId,
+      fileName: originalName,
+      contentType,
+      sizeBytes,
+      tier,
+      maxBytes: maxUploadBytes,
+      expiresAt: expiresAt.toISOString(),
+      url: `/v1/social/dms/attachments/${attachmentId}`
+    });
+  });
+
+  app.get("/v1/social/dms/attachments/:attachmentId", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const userId = req.user.sub as string;
+    const { attachmentId } = z.object({ attachmentId: z.string().min(3) }).parse(req.params);
+
+    const rows = await q<{
+      id: string;
+      thread_id: string;
+      object_key: string;
+      file_name: string;
+      content_type: string;
+      size_bytes: number;
+      expires_at: string;
+    }>(
+      `SELECT a.id,a.thread_id,a.object_key,a.file_name,a.content_type,a.size_bytes,a.expires_at
+       FROM social_dm_attachments a
+       JOIN social_dm_threads t ON t.id=a.thread_id
+       WHERE a.id=:attachmentId
+         AND (t.user_a=:userId OR t.user_b=:userId)
+       LIMIT 1`,
+      { attachmentId, userId }
+    );
+
+    if (!rows.length) return rep.code(404).send({ error: "NOT_FOUND" });
+    const attachment = rows[0];
+    if (new Date(attachment.expires_at).getTime() < Date.now()) return rep.code(410).send({ error: "EXPIRED" });
+
+    const rootDir = path.resolve(env.ATTACHMENT_STORAGE_DIR, "social-dms");
+    const absPath = path.resolve(rootDir, attachment.object_key);
+    if (!absPath.startsWith(rootDir + path.sep)) return rep.code(400).send({ error: "BAD_FILE_PATH" });
+    if (!fs.existsSync(absPath)) return rep.code(404).send({ error: "FILE_MISSING" });
+
+    rep.header("Content-Type", attachment.content_type || "application/octet-stream");
+    rep.header("Content-Disposition", `inline; filename="${attachment.file_name || "attachment"}"`);
+    return rep.send(fs.createReadStream(absPath));
+  });
+
   app.get("/v1/social/dms/:threadId/messages", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const userId = req.user.sub as string;
     const { threadId } = z.object({ threadId: z.string().min(3) }).parse(req.params);
@@ -336,6 +518,8 @@ export async function socialRoutes(
       { threadId }
     );
 
+    const attachmentsByMessageId = await getDmMessageAttachmentsByMessageIds(rows.map((row) => row.id));
+
     return {
       messages: rows.map((row) => ({
         id: row.id,
@@ -343,7 +527,8 @@ export async function socialRoutes(
         author: row.sender_display_name || row.sender_name,
         pfp_url: row.sender_pfp_url,
         content: row.content,
-        createdAt: row.created_at
+        createdAt: row.created_at,
+        attachments: attachmentsByMessageId.get(row.id) || []
       }))
     };
   });
@@ -361,11 +546,72 @@ export async function socialRoutes(
     if (!thread.length) return rep.code(404).send({ error: "THREAD_NOT_FOUND" });
 
     const id = ulidLike();
-    const content = body.content.trim();
+    const attachmentIds = body.attachmentIds || [];
+    const content = String(body.content || "").trim();
+    if (!content && !attachmentIds.length) return rep.code(400).send({ error: "EMPTY_MESSAGE" });
+
+    let resolvedAttachments: Array<{
+      id: string;
+      fileName: string;
+      contentType: string;
+      sizeBytes: number;
+      expiresAt: string;
+      url: string;
+    }> = [];
+
+    if (attachmentIds.length) {
+      const params: Record<string, any> = { threadId };
+      const inList = attachmentIds.map((attId, index) => (params[`a${index}`] = attId, `:a${index}`)).join(",");
+      const attachmentRows = await q<{
+        id: string;
+        thread_id: string;
+        uploader_user_id: string;
+        message_id: string | null;
+        file_name: string;
+        content_type: string;
+        size_bytes: number;
+        expires_at: string;
+      }>(
+        `SELECT id,thread_id,uploader_user_id,message_id,file_name,content_type,size_bytes,expires_at
+         FROM social_dm_attachments
+         WHERE thread_id=:threadId
+           AND id IN (${inList})`,
+        params
+      );
+
+      if (attachmentRows.length !== attachmentIds.length) return rep.code(400).send({ error: "BAD_ATTACHMENT" });
+
+      for (const attachment of attachmentRows) {
+        if (attachment.thread_id !== threadId) return rep.code(400).send({ error: "BAD_ATTACHMENT_SCOPE" });
+        if (attachment.uploader_user_id !== userId) return rep.code(403).send({ error: "BAD_ATTACHMENT_OWNER" });
+        if (attachment.message_id) return rep.code(400).send({ error: "ATTACHMENT_ALREADY_LINKED" });
+        if (new Date(attachment.expires_at).getTime() < Date.now()) return rep.code(410).send({ error: "ATTACHMENT_EXPIRED" });
+      }
+
+      resolvedAttachments = attachmentRows.map((attachment) => ({
+        id: attachment.id,
+        fileName: attachment.file_name,
+        contentType: attachment.content_type,
+        sizeBytes: attachment.size_bytes,
+        expiresAt: new Date(attachment.expires_at).toISOString(),
+        url: `/v1/social/dms/attachments/${attachment.id}`
+      }));
+    }
+
+    const finalContent = content || "Attachment";
     await q(
       `INSERT INTO social_dm_messages (id,thread_id,sender_user_id,content) VALUES (:id,:threadId,:userId,:content)`,
-      { id, threadId, userId, content }
+      { id, threadId, userId, content: finalContent }
     );
+
+    for (const attachmentId of attachmentIds) {
+      await q(
+        `UPDATE social_dm_attachments
+         SET message_id=:messageId
+         WHERE id=:attachmentId`,
+        { messageId: id, attachmentId }
+      );
+    }
 
     await q(`UPDATE social_dm_threads SET last_message_at=NOW() WHERE id=:threadId`, { threadId });
 
@@ -383,8 +629,9 @@ export async function socialRoutes(
           authorId: userId,
           author: sender[0]?.display_name || sender[0]?.username || userId,
           pfp_url: sender[0]?.pfp_url ?? null,
-          content,
-          createdAt
+          content: finalContent,
+          createdAt,
+          attachments: resolvedAttachments
         }
       };
       await broadcastToUser(userId, "SOCIAL_DM_MESSAGE_CREATE", payload);

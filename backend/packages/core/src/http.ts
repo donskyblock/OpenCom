@@ -9,17 +9,22 @@ import fs from "node:fs";
 import path from "node:path";
 
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // 25MB for raw image uploads
+const MAX_MULTIPART_BYTES = Math.max(
+  MAX_IMAGE_BYTES,
+  env.ATTACHMENT_MAX_BYTES,
+  env.ATTACHMENT_BOOST_MAX_BYTES
+);
 
 export function buildHttp() {
   const app = Fastify({
     logger: { level: env.CORE_LOG_LEVEL },
-    bodyLimit: MAX_IMAGE_BYTES,
+    bodyLimit: MAX_MULTIPART_BYTES,
     disableRequestLogging: true
   });
 
   app.register(cors, { origin: true, credentials: true });
   app.register(rateLimit, { max: 240, timeWindow: "1 minute" });
-  app.register(multipart, { limits: { fileSize: MAX_IMAGE_BYTES } });
+  app.register(multipart, { limits: { fileSize: MAX_MULTIPART_BYTES } });
 
   app.register(jwt, { secret: env.CORE_JWT_ACCESS_SECRET });
 
