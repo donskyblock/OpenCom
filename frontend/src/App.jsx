@@ -148,12 +148,12 @@ function normalizeFullProfile(profileData = {}, fullProfileCandidate) {
     .slice(0, 24)
     .map((item, index) => {
       const type = String(item.type || "").toLowerCase();
-      if (!["avatar", "banner", "name", "bio", "links", "text"].includes(type)) return null;
+      if (!["avatar", "banner", "name", "bio", "links", "text", "music"].includes(type)) return null;
       const defaults = {
-        x: type === "banner" ? 0 : 5,
+        x: type === "banner" ? 0 : (type === "music" ? 74 : 5),
         y: type === "banner" ? 0 : 5 + index * 8,
-        w: type === "banner" ? 100 : (type === "avatar" ? 20 : 80),
-        h: type === "banner" ? 34 : (type === "avatar" ? 31 : 12)
+        w: type === "banner" ? 100 : (type === "avatar" ? 20 : (type === "music" ? 22 : 80)),
+        h: type === "banner" ? 34 : (type === "avatar" ? 31 : (type === "music" ? 9 : 12))
       };
       const rect = clampProfileElementRect(
         { x: item.x, y: item.y, w: item.w, h: item.h },
@@ -161,7 +161,7 @@ function normalizeFullProfile(profileData = {}, fullProfileCandidate) {
       );
       const alignRaw = String(item.align || "").trim().toLowerCase();
       const align = alignRaw === "center" || alignRaw === "right" ? alignRaw : "left";
-      const defaultFontSize = type === "name" ? 22 : (type === "bio" ? 14 : (type === "links" ? 14 : 16));
+      const defaultFontSize = type === "name" ? 22 : (type === "bio" ? 14 : (type === "links" ? 14 : (type === "music" ? 12 : 16)));
       return {
         id: String(item.id || `${type}-${index + 1}`).slice(0, 40),
         type,
@@ -877,12 +877,14 @@ export function App() {
   const [profileForm, setProfileForm] = useState({ displayName: "", bio: "", pfpUrl: "", bannerUrl: "" });
   const [fullProfileDraft, setFullProfileDraft] = useState(createBasicFullProfile({}));
   const [fullProfileViewer, setFullProfileViewer] = useState(null);
+  const [fullProfileViewerMusicPlaying, setFullProfileViewerMusicPlaying] = useState(false);
   const [fullProfileDraggingElementId, setFullProfileDraggingElementId] = useState("");
   const [profileStudioSelectedElementId, setProfileStudioSelectedElementId] = useState("");
   const [viewportSize, setViewportSize] = useState(() => ({ width: typeof window !== "undefined" ? window.innerWidth : 1280, height: typeof window !== "undefined" ? window.innerHeight : 720 }));
   const fullProfileDragOffsetRef = useRef({ x: 0, y: 0 });
   const fullProfileElementsRef = useRef([]);
   const fullProfileEditorCanvasRef = useRef(null);
+  const fullProfileViewerMusicAudioRef = useRef(null);
   const [rpcForm, setRpcForm] = useState({
     name: "",
     details: "",
@@ -1865,6 +1867,14 @@ export function App() {
     if (!remoteScreenShares.length) return null;
     return remoteScreenShares.find((share) => share.producerId === selectedScreenShareProducerId) || remoteScreenShares[0];
   }, [remoteScreenShares, selectedScreenShareProducerId]);
+  const fullProfileViewerHasMusicElement = useMemo(() => {
+    const elements = fullProfileViewer?.fullProfile?.elements;
+    return Array.isArray(elements) && elements.some((element) => String(element?.type || "").toLowerCase() === "music");
+  }, [fullProfileViewer?.fullProfile?.elements]);
+  const fullProfileViewerHasPlayableMusic = useMemo(
+    () => fullProfileViewerHasMusicElement && !!String(fullProfileViewer?.fullProfile?.music?.url || "").trim(),
+    [fullProfileViewerHasMusicElement, fullProfileViewer?.fullProfile?.music?.url]
+  );
   const activeVoiceMemberAudioPrefs = useMemo(() => {
     if (!activeGuildId) return {};
     const scoped = voiceMemberAudioPrefsByGuild?.[activeGuildId];
@@ -2449,6 +2459,37 @@ export function App() {
   useEffect(() => {
     if (remoteScreenShares.length) setScreenShareOverlayOpen(true);
   }, [remoteScreenShares.length]);
+
+  useEffect(() => {
+    setFullProfileViewerMusicPlaying(false);
+    const audio = fullProfileViewerMusicAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+  }, [fullProfileViewer?.id]);
+
+  useEffect(() => {
+    const audio = fullProfileViewerMusicAudioRef.current;
+    if (!audio || !fullProfileViewer) return;
+    try {
+      audio.volume = Math.max(0, Math.min(1, Number(fullProfileViewer.fullProfile?.music?.volume ?? 60) / 100));
+      audio.loop = fullProfileViewer.fullProfile?.music?.loop !== false;
+    } catch {
+      // ignore
+    }
+  }, [fullProfileViewer]);
+
+  useEffect(() => {
+    if (!fullProfileViewerHasPlayableMusic || !fullProfileViewer?.fullProfile?.music?.autoplay) return;
+    const audio = fullProfileViewerMusicAudioRef.current;
+    if (!audio) return;
+    audio.play().then(() => {
+      setFullProfileViewerMusicPlaying(true);
+    }).catch(() => {
+      setFullProfileViewerMusicPlaying(false);
+    });
+  }, [fullProfileViewerHasPlayableMusic, fullProfileViewer?.fullProfile?.music?.autoplay, fullProfileViewer?.fullProfile?.music?.url]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -4646,7 +4687,7 @@ export function App() {
 
   function addFullProfileElement(elementType) {
     const type = String(elementType || "").toLowerCase();
-    if (!["avatar", "banner", "name", "bio", "links", "text"].includes(type)) return;
+    if (!["avatar", "banner", "name", "bio", "links", "text", "music"].includes(type)) return;
     const nextId = `${type}-${Date.now()}`;
     const fallback = type === "banner"
       ? { x: 0, y: 0, w: 100, h: 34 }
@@ -4658,6 +4699,8 @@ export function App() {
             ? { x: 4, y: 54, w: 92, h: 22 }
             : type === "links"
               ? { x: 4, y: 76, w: 56, h: 20 }
+              : type === "music"
+                ? { x: 74, y: 6, w: 22, h: 9 }
               : { x: 8, y: 22, w: 58, h: 12 };
     setFullProfileDraft((current) => {
       const nextIndex = (current.elements || []).length + 1;
@@ -4684,7 +4727,7 @@ export function App() {
             text: type === "text" ? `Custom text ${nextIndex}` : "",
             radius: type === "avatar" ? 18 : (type === "banner" ? 0 : 8),
             opacity: 100,
-            fontSize: type === "name" ? 22 : (type === "bio" ? 14 : (type === "links" ? 14 : 16)),
+            fontSize: type === "name" ? 22 : (type === "bio" ? 14 : (type === "links" ? 14 : (type === "music" ? 12 : 16))),
             align: "left",
             color: ""
           }
@@ -6296,6 +6339,26 @@ export function App() {
     }
   }
 
+  async function toggleFullProfileViewerMusicPlayback() {
+    if (!fullProfileViewerHasPlayableMusic) return;
+    const audio = fullProfileViewerMusicAudioRef.current;
+    if (!audio) return;
+    try {
+      audio.volume = Math.max(0, Math.min(1, Number(fullProfileViewer?.fullProfile?.music?.volume ?? 60) / 100));
+      audio.loop = fullProfileViewer?.fullProfile?.music?.loop !== false;
+      if (audio.paused) {
+        await audio.play();
+        setFullProfileViewerMusicPlaying(true);
+      } else {
+        audio.pause();
+        setFullProfileViewerMusicPlaying(false);
+      }
+    } catch (error) {
+      setStatus(`Profile music error: ${error?.message || "AUDIO_PLAYBACK_FAILED"}`);
+      setFullProfileViewerMusicPlaying(false);
+    }
+  }
+
   function getBadgePresentation(badge) {
     if (badge && typeof badge === "object" && (badge.bgColor || badge.icon || badge.name)) {
       return {
@@ -6341,7 +6404,7 @@ export function App() {
     };
   }
 
-  function renderFullProfileElement(element, viewerProfile) {
+  function renderFullProfileElement(element, viewerProfile, options = {}) {
     if (!element || !viewerProfile) return null;
     const type = String(element.type || "").toLowerCase();
     const alignRaw = String(element.align || "").trim().toLowerCase();
@@ -6382,6 +6445,12 @@ export function App() {
           ))}
         </div>
       );
+    }
+    if (type === "music") {
+      const hasMusicUrl = !!String(viewerProfile.fullProfile?.music?.url || "").trim();
+      if (!hasMusicUrl) return <span className="full-profile-music-pill muted">♪ No track</span>;
+      const isPlaying = !!options.musicPlaying;
+      return <span className={`full-profile-music-pill ${isPlaying ? "playing" : ""}`}>{isPlaying ? "⏸ Music" : "▶ Music"}</span>;
     }
     return <span className="full-profile-rich-text" style={textStyle}>{element.text || "Custom text"}</span>;
   }
@@ -7729,6 +7798,15 @@ export function App() {
                   <button type="button" className="ghost" onClick={() => addFullProfileElement("name")}>Name</button>
                   <button type="button" className="ghost" onClick={() => addFullProfileElement("bio")}>Bio</button>
                   <button type="button" className="ghost" onClick={() => addFullProfileElement("links")}>Links</button>
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => addFullProfileElement("music")}
+                    disabled={!String(fullProfileDraft?.music?.url || "").trim()}
+                    title={String(fullProfileDraft?.music?.url || "").trim() ? "Add music button element" : "Set Music URL first"}
+                  >
+                    Music
+                  </button>
                   <button type="button" className="ghost" onClick={addFullProfileTextBlock}>Text</button>
                 </div>
                 {!hasBoostForFullProfiles && <p className="hint">Boost is required to save custom layouts.</p>}
@@ -7833,7 +7911,7 @@ export function App() {
                         onChange={(event) => updateFullProfileElement(selectedProfileStudioElement.id, { radius: Number(event.target.value) })}
                       />
                     </label>
-                    {["name", "bio", "links", "text"].includes(selectedProfileStudioElement.type) && (
+                    {["name", "bio", "links", "text", "music"].includes(selectedProfileStudioElement.type) && (
                       <>
                         <label>Font Size ({Math.max(10, Math.min(72, Number(selectedProfileStudioElement.fontSize ?? 16)))}px)
                           <input
@@ -8348,31 +8426,28 @@ export function App() {
                       key={element.id}
                       className={`full-profile-element full-profile-element-${element.type}`}
                       style={getFullProfileElementFrameStyle(element)}
+                      onClick={(event) => {
+                        if (String(element.type || "").toLowerCase() !== "music") return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        toggleFullProfileViewerMusicPlayback().catch(() => {});
+                      }}
                     >
-                      {renderFullProfileElement(element, fullProfileViewer)}
+                      {renderFullProfileElement(element, fullProfileViewer, { musicPlaying: fullProfileViewerMusicPlaying })}
                     </div>
                   ))}
               </div>
             </div>
-            {fullProfileViewer.fullProfile?.music?.url && (
-              <div className="full-profile-viewer-audio">
-                <strong>Profile Music</strong>
-                <audio
-                  controls
-                  src={profileImageUrl(fullProfileViewer.fullProfile.music.url) || fullProfileViewer.fullProfile.music.url}
-                  autoPlay={!!fullProfileViewer.fullProfile.music.autoplay}
-                  loop={fullProfileViewer.fullProfile.music.loop !== false}
-                  preload="metadata"
-                  style={{ width: "100%" }}
-                  onLoadedMetadata={(event) => {
-                    try {
-                      event.currentTarget.volume = Math.max(0, Math.min(1, Number(fullProfileViewer.fullProfile?.music?.volume ?? 60) / 100));
-                    } catch {
-                      // ignore
-                    }
-                  }}
-                />
-              </div>
+            {fullProfileViewerHasPlayableMusic && (
+              <audio
+                ref={fullProfileViewerMusicAudioRef}
+                src={profileImageUrl(fullProfileViewer.fullProfile.music.url) || fullProfileViewer.fullProfile.music.url}
+                preload="metadata"
+                onPlay={() => setFullProfileViewerMusicPlaying(true)}
+                onPause={() => setFullProfileViewerMusicPlaying(false)}
+                onEnded={() => setFullProfileViewerMusicPlaying(false)}
+                style={{ display: "none" }}
+              />
             )}
           </div>
         </div>

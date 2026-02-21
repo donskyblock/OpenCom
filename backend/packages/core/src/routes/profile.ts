@@ -52,7 +52,7 @@ const UpdateProfile = z.object({
 
 const FullProfileElementInput = z.object({
   id: z.string().min(1).max(40).optional(),
-  type: z.enum(["avatar", "banner", "name", "bio", "links", "text"]),
+  type: z.enum(["avatar", "banner", "name", "bio", "links", "text", "music"]),
   x: z.number().min(0).max(100),
   y: z.number().min(0).max(100),
   w: z.number().min(1).max(100),
@@ -206,17 +206,17 @@ function normalizeFullProfile(raw: any, fallbackUser: { display_name: string | n
     .slice(0, 24)
     .map((item: any, index: number) => {
       const type = String(item.type || "").toLowerCase();
-      if (!["avatar", "banner", "name", "bio", "links", "text"].includes(type)) return null;
+      if (!["avatar", "banner", "name", "bio", "links", "text", "music"].includes(type)) return null;
       const alignRaw = String(item.align || "").trim().toLowerCase();
       const align = alignRaw === "center" || alignRaw === "right" ? alignRaw : "left";
-      const defaultFontSize = type === "name" ? 22 : (type === "bio" ? 14 : (type === "links" ? 14 : 16));
+      const defaultFontSize = type === "name" ? 22 : (type === "bio" ? 14 : (type === "links" ? 14 : (type === "music" ? 12 : 16)));
       return {
         id: typeof item.id === "string" && item.id.trim() ? item.id.trim().slice(0, 40) : `${type}-${index + 1}`,
         type,
-        x: clampNumber(item.x, 0, 100, type === "banner" ? 0 : 5),
+        x: clampNumber(item.x, 0, 100, type === "banner" ? 0 : (type === "music" ? 74 : 5)),
         y: clampNumber(item.y, 0, 100, type === "banner" ? 0 : 5 + index * 8),
-        w: clampNumber(item.w, 1, 100, type === "banner" ? 100 : (type === "avatar" ? 20 : 80)),
-        h: clampNumber(item.h, 1, 100, type === "banner" ? 34 : (type === "avatar" ? 31 : 12)),
+        w: clampNumber(item.w, 1, 100, type === "banner" ? 100 : (type === "avatar" ? 20 : (type === "music" ? 22 : 80))),
+        h: clampNumber(item.h, 1, 100, type === "banner" ? 34 : (type === "avatar" ? 31 : (type === "music" ? 9 : 12))),
         order: Math.round(clampNumber(item.order, 0, 100, index)),
         text: typeof item.text === "string" ? item.text.slice(0, 500) : null,
         radius: Math.round(clampNumber(item.radius, 0, 40, type === "avatar" ? 18 : (type === "banner" ? 0 : 8))),
