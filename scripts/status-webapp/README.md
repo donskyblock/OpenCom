@@ -26,8 +26,10 @@ node scripts/status-webapp/monitor.mjs
 ## Run continuous checks
 
 ```bash
-node scripts/status-webapp/monitor.mjs --watch 60
+node scripts/status-webapp/monitor.mjs --watch 120
 ```
+
+`./scripts/ops/status-monitor.sh` defaults to `--watch 120` when no arguments are provided.
 
 ## Add / update incidents
 
