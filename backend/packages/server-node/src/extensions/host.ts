@@ -100,6 +100,41 @@ type LoadedExtension = {
 const loadedByServer = new Map<string, Map<string, LoadedExtension>>();
 const commandRegistryByServer = new Map<string, Map<string, RegisteredCommand>>();
 
+function normalizeManifest(raw: any): ServerExtensionManifest | null {
+  if (!raw || typeof raw !== "object") return null;
+  const id = String(raw.id || "").trim();
+  const name = String(raw.name || "").trim();
+  const version = String(raw.version || "").trim();
+  if (!id || !name || !version) return null;
+
+  const scope = raw.scope === "client" || raw.scope === "server" || raw.scope === "both" ? raw.scope : "server";
+  return {
+    id,
+    name,
+    version,
+    author: typeof raw.author === "string" ? raw.author : undefined,
+    description: typeof raw.description === "string" ? raw.description : undefined,
+    entry: typeof raw.entry === "string" && raw.entry.trim() ? raw.entry : "index.js",
+    scope,
+    permissions: Array.isArray(raw.permissions) ? raw.permissions.filter((item: unknown) => typeof item === "string") : ["all"],
+    configDefaults: raw.configDefaults && typeof raw.configDefaults === "object" && !Array.isArray(raw.configDefaults)
+      ? raw.configDefaults as Record<string, unknown>
+      : {}
+  };
+}
+
+function parseManifestList(rawValue: string): ServerExtensionManifest[] {
+  try {
+    const parsed = JSON.parse(rawValue || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => normalizeManifest(item))
+      .filter((item): item is ServerExtensionManifest => Boolean(item));
+  } catch {
+    return [];
+  }
+}
+
 function findExtensionsRoot(): string {
   let current = process.cwd();
   for (let i = 0; i < 8; i++) {
@@ -420,14 +455,70 @@ export async function syncExtensionsForServer(serverId: string, manifests: Serve
   await persistManifests(serverId, manifests);
 }
 
+async function fetchEnabledExtensionsFromCore(): Promise<Map<string, ServerExtensionManifest[]> | null> {
+  if (!env.NODE_SYNC_SECRET) return null;
+
+  const response = await fetch(`${env.CORE_BASE_URL.replace(/\/$/, "")}/v1/internal/node-extensions-state`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-node-sync-secret": env.NODE_SYNC_SECRET
+    },
+    body: JSON.stringify({
+      nodeServerId: env.NODE_SERVER_ID,
+      baseUrl: env.PUBLIC_BASE_URL
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`CORE_EXTENSION_STATE_FETCH_FAILED ${response.status}${errorText ? `:${errorText}` : ""}`);
+  }
+
+  const payload = await response.json().catch(() => ({} as any));
+  const rows = Array.isArray(payload?.servers) ? payload.servers : [];
+  const grouped = new Map<string, ServerExtensionManifest[]>();
+
+  for (const row of rows) {
+    const serverId = typeof row?.serverId === "string" ? row.serverId.trim() : "";
+    if (!serverId) continue;
+    const manifests = Array.isArray(row?.extensions)
+      ? row.extensions.map((item: unknown) => normalizeManifest(item)).filter((item: ServerExtensionManifest | null): item is ServerExtensionManifest => Boolean(item))
+      : [];
+    grouped.set(serverId, manifests);
+  }
+
+  return grouped;
+}
+
 export async function restorePersistedExtensions() {
   const rows = await q<{ core_server_id: string; manifest_json: string }>(
     `SELECT core_server_id, manifest_json FROM server_extensions_state`
   );
 
+  const restoredServerIds = new Set<string>();
   for (const row of rows) {
-    const manifests = JSON.parse(row.manifest_json || "[]") as ServerExtensionManifest[];
+    const manifests = parseManifestList(row.manifest_json || "[]");
+    restoredServerIds.add(row.core_server_id);
     await syncExtensionsForServer(row.core_server_id, manifests);
+  }
+
+  try {
+    const coreState = await fetchEnabledExtensionsFromCore();
+    if (!coreState) return;
+    const authoritativeServerIds = new Set<string>();
+
+    for (const [serverId, manifests] of coreState.entries()) {
+      authoritativeServerIds.add(serverId);
+      await syncExtensionsForServer(serverId, manifests);
+    }
+
+    for (const serverId of restoredServerIds) {
+      if (authoritativeServerIds.has(serverId)) continue;
+      await syncExtensionsForServer(serverId, []);
+    }
+  } catch (error) {
+    console.warn("[extensions] failed to restore authoritative extension state from core", error);
   }
 }
 
