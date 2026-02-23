@@ -30,8 +30,10 @@ Set `OPENCOM_FORCE_SYNC_WEB=1` to force rebuild.
 
 - Build tooling (`electron-builder`) currently depends on older `minimatch` API expectations.
 - This client pins `electron-builder` and uses an `overrides` entry to a local compatibility package at `client/vendor/minimatch` so all transitive `minimatch` resolutions are fixed at `10.2.2` without breaking legacy consumers.
+- `package.json` sets `packageManager` to `traversal@1.0.0` so `electron-builder` uses its manual dependency collector (instead of `npm list`), which avoids Node 25+ stdout collection issues during packaging.
 - `npm install` and all desktop run/build scripts automatically restore vendored `minimatch` runtime deps via `npm run prepare:vendored-minimatch` (offline-safe, no registry fetch required).
 - Run `npm run check:minimatch` after dependency updates to verify all resolved `minimatch` versions stay at `>= 10.2.1`.
+- `npm run check:mismatch` is provided as an alias to `check:minimatch`.
 - Use `npm run audit:runtime` for shipped/runtime dependency checks, and `npm run audit:all` for full dev + build chain scans.
 - Avoid `npm audit fix --force` in this package; it can churn lockfile versions and reintroduce unstable builder trees.
 
@@ -108,3 +110,6 @@ Direct script entrypoints are also available:
 ./scripts/build-win.sh
 ./scripts/build-all.sh
 ```
+
+On Arch-based systems, `.deb` packaging may fail if bundled `fpm` cannot load `libcrypt.so.1`.
+`npm run build:linux` now auto-falls back to `tar.gz` in that case. Install `libxcrypt-compat` and rerun to restore `.deb` output.

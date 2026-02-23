@@ -10,6 +10,8 @@ const repoRoot = path.resolve(clientDir, "..");
 const frontendDir = path.resolve(repoRoot, "frontend");
 const clientWebDir = path.resolve(clientDir, "src", "web");
 const frontendSrcDir = path.resolve(frontendDir, "src");
+const frontendPublicDir = path.resolve(frontendDir, "public");
+const frontendLegacyPublicDir = path.resolve(frontendSrcDir, "public");
 const frontendIndexHtml = path.resolve(frontendDir, "index.html");
 const frontendViteConfig = path.resolve(frontendDir, "vite.config.js");
 const frontendPackageJson = path.resolve(frontendDir, "package.json");
@@ -73,6 +75,10 @@ async function latestMtimeMsInTree(rootDir) {
 async function latestFrontendInputMtimeMs() {
   const paths = [frontendIndexHtml, frontendViteConfig, frontendPackageJson, frontendLockFile];
   let latest = await latestMtimeMsInTree(frontendSrcDir);
+  for (const publicDir of [frontendPublicDir, frontendLegacyPublicDir]) {
+    if (!(await exists(publicDir))) continue;
+    latest = Math.max(latest, await latestMtimeMsInTree(publicDir));
+  }
   for (const p of paths) {
     if (!(await exists(p))) continue;
     const stat = await fs.stat(p);
