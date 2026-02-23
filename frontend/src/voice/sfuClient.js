@@ -83,7 +83,9 @@ export function createSfuVoiceClient({
     localAudioContext: null,
     localAudioNodes: null,
     pendingAudioStartByProducerId: new Map(),
-    userAudioPrefsByUserId: new Map()
+    userAudioPrefsByUserId: new Map(),
+    selfMonitorAudio: null,
+    selfMonitorActive: false
   };
 
   function normalizeUserAudioPreference(pref = {}) {
@@ -143,6 +145,13 @@ export function createSfuVoiceClient({
 
   function setScreenSharing(active) {
     onScreenShareStateChange?.(!!active);
+  }
+
+  function applyLocalTrackEnabledState() {
+    const track = state.localStream?.getAudioTracks?.()?.[0] || null;
+    if (!track) return;
+    // Keep the local processed track running while self-monitor is active, even if muted.
+    track.enabled = !state.isMuted || state.selfMonitorActive;
   }
 
   function resolveSelfUserId() {
@@ -222,6 +231,17 @@ export function createSfuVoiceClient({
     for (const track of stream.getTracks?.() || []) {
       try { track.stop(); } catch {}
     }
+  }
+
+  function clearSelfMonitorState() {
+    const audio = state.selfMonitorAudio;
+    if (audio) {
+      try { audio.pause(); } catch {}
+      try { audio.srcObject = null; } catch {}
+      try { audio.remove(); } catch {}
+    }
+    state.selfMonitorAudio = null;
+    state.selfMonitorActive = false;
   }
 
   function getAudioContextConstructor() {
@@ -406,6 +426,7 @@ export function createSfuVoiceClient({
   }
 
   async function closeLocalAudioPipeline({ stopLocalStream = true, stopRawStream = true } = {}) {
+    clearSelfMonitorState();
     if (state.localAudioContext) {
       try { await state.localAudioContext.close(); } catch {}
     }
@@ -498,14 +519,11 @@ export function createSfuVoiceClient({
     if (state.localAudioProducer) {
       if (state.isMuted) {
         state.localAudioProducer.pause();
-        nextTrack.enabled = false;
       } else {
         state.localAudioProducer.resume();
-        nextTrack.enabled = true;
       }
-    } else {
-      nextTrack.enabled = !state.isMuted;
     }
+    applyLocalTrackEnabledState();
 
     if (previousAudioContext && previousAudioContext !== state.localAudioContext) {
       try { await previousAudioContext.close(); } catch {}
@@ -1018,12 +1036,11 @@ export function createSfuVoiceClient({
 
   function setMuted(nextMuted) {
     state.isMuted = !!nextMuted;
-    const track = state.localStream?.getAudioTracks?.()[0];
     if (state.localAudioProducer) {
       if (state.isMuted) state.localAudioProducer.pause();
       else state.localAudioProducer.resume();
     }
-    if (track) track.enabled = !state.isMuted;
+    applyLocalTrackEnabledState();
   }
 
   function setDeafened(nextDeafened) {
@@ -1032,6 +1049,49 @@ export function createSfuVoiceClient({
       if (!audio) continue;
       applyAudioPreferenceToAudio(audio, userId || "");
     }
+  }
+
+  async function startSelfMonitor() {
+    if (state.selfMonitorActive && state.selfMonitorAudio) return;
+    const localTrack = state.localStream?.getAudioTracks?.()?.[0] || null;
+    if (!localTrack) throw new Error("MIC_TEST_NOT_READY");
+
+    state.selfMonitorActive = true;
+    applyLocalTrackEnabledState();
+    clearSelfMonitorState();
+    state.selfMonitorActive = true;
+
+    const audio = document.createElement("audio");
+    audio.autoplay = true;
+    audio.playsInline = true;
+    audio.preload = "auto";
+    audio.muted = false;
+    audio.style.display = "none";
+    audio.srcObject = new MediaStream([localTrack]);
+    document.body.appendChild(audio);
+
+    if (typeof audio.setSinkId === "function" && state.audioOutputDeviceId) {
+      await audio.setSinkId(state.audioOutputDeviceId).catch(() => {});
+    }
+
+    try {
+      await audio.play();
+    } catch (error) {
+      try { audio.pause(); } catch {}
+      try { audio.srcObject = null; } catch {}
+      try { audio.remove(); } catch {}
+      state.selfMonitorAudio = null;
+      state.selfMonitorActive = false;
+      applyLocalTrackEnabledState();
+      throw error instanceof Error ? error : new Error("MIC_TEST_PLAYBACK_FAILED");
+    }
+
+    state.selfMonitorAudio = audio;
+  }
+
+  async function stopSelfMonitor() {
+    clearSelfMonitorState();
+    applyLocalTrackEnabledState();
   }
 
   function setUserAudioPreference(userId, pref = {}) {
@@ -1051,6 +1111,10 @@ export function createSfuVoiceClient({
       if (typeof audio.setSinkId === "function" && state.audioOutputDeviceId) {
         audio.setSinkId(state.audioOutputDeviceId).catch(() => {});
       }
+    }
+    if (state.selfMonitorAudio && typeof state.selfMonitorAudio.setSinkId === "function") {
+      const sinkId = state.audioOutputDeviceId || "default";
+      state.selfMonitorAudio.setSinkId(sinkId).catch(() => {});
     }
   }
 
@@ -1075,6 +1139,8 @@ export function createSfuVoiceClient({
     setAudioInputDevice,
     setUserAudioPreference,
     setAudioOutputDevice,
+    startSelfMonitor,
+    stopSelfMonitor,
     startScreenShare,
     stopScreenShare,
     getLocalStream,

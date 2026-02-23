@@ -1067,6 +1067,8 @@ export function App() {
   const [screenShareOverlayOpen, setScreenShareOverlayOpen] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
+  const [isMicMonitorActive, setIsMicMonitorActive] = useState(false);
+  const micMonitorRestoreStateRef = useRef({ muted: false, deafened: false, shouldRestore: false });
   const [micGain, setMicGain] = useState(Number(localStorage.getItem(MIC_GAIN_KEY) || 100));
   const [micSensitivity, setMicSensitivity] = useState(Number(localStorage.getItem(MIC_SENSITIVITY_KEY) || 50));
   const [audioInputDeviceId, setAudioInputDeviceId] = useState(localStorage.getItem(AUDIO_INPUT_DEVICE_KEY) || "");
@@ -3790,6 +3792,18 @@ export function App() {
   }, [isDeafened]);
 
   useEffect(() => {
+    if (!isMicMonitorActive) return;
+    if (!isMuted || !isDeafened) {
+      stopMicMonitor({ restoreState: false, announce: true }).catch(() => {});
+    }
+  }, [isMicMonitorActive, isMuted, isDeafened]);
+
+  useEffect(() => {
+    if (!isMicMonitorActive || isInVoiceChannel) return;
+    stopMicMonitor({ restoreState: false, announce: false }).catch(() => {});
+  }, [isMicMonitorActive, isInVoiceChannel]);
+
+  useEffect(() => {
     voiceSfuRef.current?.setAudioOutputDevice(audioOutputDeviceId);
   }, [audioOutputDeviceId]);
 
@@ -6222,6 +6236,9 @@ export function App() {
 
   async function cleanupVoiceRtc() {
     rejectPendingVoiceEvents("VOICE_SESSION_CLEANUP");
+    await voiceSfuRef.current?.stopSelfMonitor?.().catch(() => {});
+    micMonitorRestoreStateRef.current = { muted: false, deafened: false, shouldRestore: false };
+    setIsMicMonitorActive(false);
     await voiceSfuRef.current?.cleanup();
     setIsScreenSharing(false);
     setRemoteScreenSharesByProducerId({});
@@ -6395,6 +6412,61 @@ export function App() {
       const message = `Screen sharing failed: ${error.message || "SCREEN_SHARE_FAILED"}`;
       setStatus(message);
       await alertDialog(message, "Screen Share Error");
+    }
+  }
+
+  async function stopMicMonitor({ restoreState = true, announce = false } = {}) {
+    await voiceSfuRef.current?.stopSelfMonitor?.().catch(() => {});
+    const restore = micMonitorRestoreStateRef.current || { muted: false, deafened: false, shouldRestore: false };
+    micMonitorRestoreStateRef.current = { muted: false, deafened: false, shouldRestore: false };
+    setIsMicMonitorActive(false);
+    if (restoreState && restore.shouldRestore) {
+      setIsMuted(!!restore.muted);
+      setIsDeafened(!!restore.deafened);
+    }
+    if (announce) {
+      setStatus("Mic test stopped.");
+    }
+  }
+
+  async function toggleMicMonitor() {
+    if (isMicMonitorActive) {
+      await stopMicMonitor({ restoreState: true, announce: true });
+      return;
+    }
+    if (!isInVoiceChannel) {
+      setStatus("Join a voice channel to test your microphone.");
+      return;
+    }
+
+    const restoreState = {
+      muted: !!isMuted,
+      deafened: !!isDeafened,
+      shouldRestore: true
+    };
+    micMonitorRestoreStateRef.current = restoreState;
+    setIsMuted(true);
+    setIsDeafened(true);
+
+    try {
+      await voiceSfuRef.current?.startSelfMonitor?.();
+      setIsMicMonitorActive(true);
+      setStatus("Mic test started. You are muted and deafened while hearing your processed mic.");
+    } catch (error) {
+      micMonitorRestoreStateRef.current = { muted: false, deafened: false, shouldRestore: false };
+      setIsMuted(restoreState.muted);
+      setIsDeafened(restoreState.deafened);
+
+      const reason = String(error?.message || "").trim();
+      if (reason === "MIC_TEST_NOT_READY") {
+        setStatus("Mic test failed: microphone stream is not ready.");
+        return;
+      }
+      if (reason === "NotAllowedError") {
+        setStatus("Mic test failed: playback was blocked by browser permissions.");
+        return;
+      }
+      setStatus(`Mic test failed: ${reason || "MIC_TEST_FAILED"}`);
     }
   }
 
@@ -9498,6 +9570,21 @@ export function App() {
                       ))}
                     </select>
                   </label>
+                  <div className="row-actions" style={{ width: "100%" }}>
+                    <button
+                      type="button"
+                      className={isMicMonitorActive ? "danger" : "ghost"}
+                      onClick={toggleMicMonitor}
+                      disabled={!isInVoiceChannel && !isMicMonitorActive}
+                    >
+                      {isMicMonitorActive ? "Stop Mic Test" : "Start Mic Test"}
+                    </button>
+                    <span className="hint">
+                      {isMicMonitorActive
+                        ? "Mic test is active: you're muted/deafened while hearing your processed mic."
+                        : "Hear your mic as others hear it (while muted + deafened)."}
+                    </span>
+                  </div>
                   <label>Microphone Gain ({micGain}%)
                     <input type="range" min="0" max="200" step="5" value={micGain} onChange={(e) => setMicGain(Number(e.target.value))} />
                   </label>

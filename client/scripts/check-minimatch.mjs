@@ -27,9 +27,18 @@ const lockfile = JSON.parse(fs.readFileSync(path.join(clientDir, "package-lock.j
 const vendorPackage = JSON.parse(fs.readFileSync(path.join(clientDir, "vendor", "minimatch", "package.json"), "utf8"));
 
 const failures = [];
+const vendoredNodeModulesDir = path.join(clientDir, "vendor", "minimatch", "node_modules");
+const requiredVendoredDeps = ["brace-expansion", "balanced-match"];
 
 if (!isAtLeast(vendorPackage.version || "0.0.0", MIN_VERSION)) {
   failures.push(`vendor/minimatch version is ${vendorPackage.version || "unknown"}`);
+}
+
+for (const dep of requiredVendoredDeps) {
+  const depPackage = path.join(vendoredNodeModulesDir, dep, "package.json");
+  if (!fs.existsSync(depPackage)) {
+    failures.push(`missing vendored dependency: vendor/minimatch/node_modules/${dep}`);
+  }
 }
 
 for (const [pkgPath, entry] of Object.entries(lockfile.packages || {})) {
