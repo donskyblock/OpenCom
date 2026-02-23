@@ -1,9 +1,15 @@
-const DOWNLOAD_BASE_URL = (import.meta.env.VITE_DOWNLOADS_BASE_URL || import.meta.env.VITE_CORE_API_URL || "").replace(/\/$/, "");
+function normalizeBasePath(basePath = "/") {
+  const value = String(basePath || "/").trim();
+  if (!value) return "/";
+  return value.endsWith("/") ? value.slice(0, -1) : value;
+}
+
+const DOWNLOAD_BASE_PATH = `${normalizeBasePath(import.meta.env.BASE_URL)}/downloads`;
 
 export const DOWNLOAD_TARGETS = [
-  { href: `${DOWNLOAD_BASE_URL}/downloads/OpenCom.exe`, label: "Windows (.exe)" },
-  { href: `${DOWNLOAD_BASE_URL}/downloads/OpenCom.deb`, label: "Linux (.deb)" },
-  { href: `${DOWNLOAD_BASE_URL}/downloads/OpenCom.tar.gz`, label: "Linux (.tar.gz)" }
+  { href: `${DOWNLOAD_BASE_PATH}/OpenCom.exe`, label: "Windows (.exe)" },
+  { href: `${DOWNLOAD_BASE_PATH}/OpenCom.deb`, label: "Linux (.deb)" },
+  { href: `${DOWNLOAD_BASE_PATH}/OpenCom.tar.gz`, label: "Linux (.tar.gz)" }
 ];
 
 export function getPreferredDownloadTarget(targets = DOWNLOAD_TARGETS) {

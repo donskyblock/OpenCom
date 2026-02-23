@@ -18,7 +18,7 @@ const TARGETS = {
   linux: {
     npmScript: "build:linux",
     artifacts: [
-      { from: "OpenCom.deb", to: "OpenCom.deb" },
+      { from: "OpenCom.deb", to: "OpenCom.deb", optional: true },
       { from: "OpenCom.tar.gz", to: "OpenCom.tar.gz" }
     ]
   }
@@ -39,8 +39,16 @@ async function copyArtifacts(artifacts) {
   for (const artifact of artifacts) {
     const source = path.join(distDir, artifact.from);
     const destination = path.join(frontendDir, artifact.to);
-    await fs.copyFile(source, destination);
-    console.log(`Staged ${artifact.from} -> frontend/${artifact.to}`);
+    try {
+      await fs.copyFile(source, destination);
+      console.log(`Staged ${artifact.from} -> frontend/${artifact.to}`);
+    } catch (error) {
+      if (artifact.optional && error?.code === "ENOENT") {
+        console.warn(`Skipping optional artifact ${artifact.from} (not produced on this system).`);
+        continue;
+      }
+      throw error;
+    }
   }
 }
 

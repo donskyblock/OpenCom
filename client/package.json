@@ -9,6 +9,7 @@
   },
   "main": "src/main.js",
   "type": "module",
+  "packageManager": "traversal@1.0.0",
   "scripts": {
     "postinstall": "npm run prepare:vendored-minimatch",
     "prepare:vendored-minimatch": "node scripts/ensure-vendored-minimatch-deps.mjs",
@@ -17,11 +18,12 @@
     "start:remote": "npm run prepare:vendored-minimatch && electron .",
     "build": "npm run sync:web && npm run prepare:vendored-minimatch && electron-builder",
     "build:win": "npm run sync:web && npm run prepare:vendored-minimatch && electron-builder --win nsis",
-    "build:linux": "npm run sync:web && npm run prepare:vendored-minimatch && electron-builder --linux deb tar.gz",
+    "build:linux": "npm run sync:web && npm run prepare:vendored-minimatch && node scripts/build-linux.mjs",
     "build:stage:linux": "node scripts/build-and-stage.mjs linux",
     "build:stage:win": "node scripts/build-and-stage.mjs win",
     "build:stage:all": "npm run build:stage:linux && npm run build:stage:win",
     "check:minimatch": "node scripts/check-minimatch.mjs",
+    "check:mismatch": "npm run check:minimatch",
     "audit:runtime": "npm audit --omit=dev",
     "audit:all": "npm audit"
   },

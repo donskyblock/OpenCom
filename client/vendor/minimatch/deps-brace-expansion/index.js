@@ -1,6 +1,8 @@
 var balanced = require('balanced-match');
 
 module.exports = expandTop;
+module.exports.expand = expandTop;
+module.exports.default = expandTop;
 
 var escSlash = '\0SLASH'+Math.random()+'\0';
 var escOpen = '\0OPEN'+Math.random()+'\0';
@@ -200,4 +202,3 @@ function expand(str, isTop) {
 
   return expansions;
 }
-
