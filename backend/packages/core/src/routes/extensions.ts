@@ -119,8 +119,58 @@ function buildNodeScopedRoles(input: {
   return uniqueRoles(roles);
 }
 
-function resolveNodeServerId(serverId: string, baseUrl: string) {
-  if (env.OFFICIAL_NODE_BASE_URL && env.OFFICIAL_NODE_SERVER_ID && baseUrl === env.OFFICIAL_NODE_BASE_URL) {
+function normalizeHttpBaseUrl(value: string | null | undefined): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = String(hostname || "").trim().toLowerCase();
+  if (!normalized) return false;
+  return normalized === "localhost"
+    || normalized === "::1"
+    || normalized === "0:0:0:0:0:0:0:1"
+    || normalized === "0.0.0.0"
+    || normalized.startsWith("127.");
+}
+
+function isLoopbackBaseUrl(value: string | null | undefined): boolean {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    return isLoopbackHostname(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function resolveNodeBaseUrl(baseUrl: string): string {
+  const normalized = normalizeHttpBaseUrl(baseUrl);
+  if (!normalized) return "";
+  const officialBaseUrl = normalizeHttpBaseUrl(env.OFFICIAL_NODE_BASE_URL || "");
+  if (officialBaseUrl && isLoopbackBaseUrl(normalized)) return officialBaseUrl;
+  return normalized;
+}
+
+function resolveNodeServerId(serverId: string, rawBaseUrl: string) {
+  const officialBaseUrl = normalizeHttpBaseUrl(env.OFFICIAL_NODE_BASE_URL || "");
+  const effectiveBaseUrl = resolveNodeBaseUrl(rawBaseUrl);
+  if (
+    env.OFFICIAL_NODE_SERVER_ID
+    && officialBaseUrl
+    && (
+      effectiveBaseUrl === officialBaseUrl
+      || isLoopbackBaseUrl(rawBaseUrl)
+    )
+  ) {
     return env.OFFICIAL_NODE_SERVER_ID;
   }
   return serverId;
@@ -215,16 +265,18 @@ export async function extensionRoutes(app: FastifyInstance) {
       `SELECT base_url, owner_user_id FROM servers WHERE id=:serverId LIMIT 1`,
       { serverId }
     );
-    const baseUrl = serverRows[0]?.base_url;
-    if (!baseUrl) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
+    const rawBaseUrl = serverRows[0]?.base_url;
+    if (!rawBaseUrl) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
+    const baseUrl = resolveNodeBaseUrl(rawBaseUrl);
+    if (!baseUrl) return rep.code(502).send({ error: "NODE_UNREACHABLE" });
 
     const memberRoles: string[] = JSON.parse(memberRows[0].roles || "[]");
     const platformRole = await getPlatformRole(userId);
-    const nodeServerId = resolveNodeServerId(serverId, baseUrl);
+    const nodeServerId = resolveNodeServerId(serverId, rawBaseUrl);
     const token = await signMembershipToken(nodeServerId, userId, memberRoles, platformRole, serverId);
 
     try {
-      const response = await fetchWithRetry(`${baseUrl.replace(/\/$/, "")}/v1/extensions/${encodeURIComponent(extensionId)}/config`, {
+      const response = await fetchWithRetry(`${baseUrl}/v1/extensions/${encodeURIComponent(extensionId)}/config`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       return response.json();
@@ -251,8 +303,10 @@ export async function extensionRoutes(app: FastifyInstance) {
       `SELECT base_url, owner_user_id FROM servers WHERE id=:serverId LIMIT 1`,
       { serverId }
     );
-    const baseUrl = serverRows[0]?.base_url;
-    if (!baseUrl) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
+    const rawBaseUrl = serverRows[0]?.base_url;
+    if (!rawBaseUrl) return rep.code(404).send({ error: "SERVER_NOT_FOUND" });
+    const baseUrl = resolveNodeBaseUrl(rawBaseUrl);
+    if (!baseUrl) return rep.code(502).send({ error: "NODE_UNREACHABLE" });
     const isServerOwner = serverRows[0]?.owner_user_id === userId;
     const isOwnerOrStaff = memberRoles.includes("owner") || isServerOwner || platformRole === "admin" || platformRole === "owner";
     if (!isOwnerOrStaff) return rep.code(403).send({ error: "NOT_OWNER" });
@@ -263,10 +317,10 @@ export async function extensionRoutes(app: FastifyInstance) {
       serverOwnerUserId: serverRows[0].owner_user_id,
       platformRole
     });
-    const nodeServerId = resolveNodeServerId(serverId, baseUrl);
+    const nodeServerId = resolveNodeServerId(serverId, rawBaseUrl);
     const token = await signMembershipToken(nodeServerId, userId, effectiveRoles, platformRole, serverId);
     try {
-      const response = await fetchWithRetry(`${baseUrl.replace(/\/$/, "")}/v1/extensions/${encodeURIComponent(extensionId)}/config`, {
+      const response = await fetchWithRetry(`${baseUrl}/v1/extensions/${encodeURIComponent(extensionId)}/config`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -302,7 +356,8 @@ export async function extensionRoutes(app: FastifyInstance) {
     const isServerOwner = serverRows[0].owner_user_id === userId;
     const isOwnerOrStaff = memberRoles.includes("owner") || isServerOwner || platformRole === "admin" || platformRole === "owner";
     if (!isOwnerOrStaff) return rep.code(403).send({ error: "NOT_OWNER" });
-    const baseUrl = serverRows[0].base_url;
+    const rawBaseUrl = serverRows[0].base_url;
+    const baseUrl = resolveNodeBaseUrl(rawBaseUrl);
     if (!baseUrl) return rep.code(502).send({ error: "NODE_UNREACHABLE" });
 
     const catalog = await readExtensionCatalog();
@@ -328,12 +383,12 @@ export async function extensionRoutes(app: FastifyInstance) {
         serverOwnerUserId: serverRows[0].owner_user_id,
         platformRole
       });
-      const nodeServerId = resolveNodeServerId(serverId, baseUrl);
+      const nodeServerId = resolveNodeServerId(serverId, rawBaseUrl);
       const token = await signMembershipToken(nodeServerId, userId, effectiveRoles, platformRole, serverId);
       const activateBody = JSON.stringify({ extension: manifest });
       const deactivateBody = "{}";
       if (body.enabled) {
-        await fetchWithRetry(`${baseUrl.replace(/\/$/, "")}/v1/extensions/activate`, {
+        await fetchWithRetry(`${baseUrl}/v1/extensions/activate`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -342,7 +397,7 @@ export async function extensionRoutes(app: FastifyInstance) {
           body: activateBody
         });
       } else {
-        await fetchWithRetry(`${baseUrl.replace(/\/$/, "")}/v1/extensions/${encodeURIComponent(manifest.id)}/deactivate`, {
+        await fetchWithRetry(`${baseUrl}/v1/extensions/${encodeURIComponent(manifest.id)}/deactivate`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -358,7 +413,7 @@ export async function extensionRoutes(app: FastifyInstance) {
         { serverId }
       );
       const syncBody = JSON.stringify({ extensions: activeRows.map((row) => JSON.parse(row.manifest_json || "{}")) });
-      await fetchWithRetry(`${baseUrl.replace(/\/$/, "")}/v1/extensions/sync`, {
+      await fetchWithRetry(`${baseUrl}/v1/extensions/sync`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

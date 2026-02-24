@@ -61,6 +61,48 @@ function normalizeImageUrl(value: string | null | undefined) {
   return trimmed;
 }
 
+function normalizeHttpBaseUrl(value: string | null | undefined): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = String(hostname || "").trim().toLowerCase();
+  if (!normalized) return false;
+  return normalized === "localhost"
+    || normalized === "::1"
+    || normalized === "0:0:0:0:0:0:0:1"
+    || normalized === "0.0.0.0"
+    || normalized.startsWith("127.");
+}
+
+function isLoopbackBaseUrl(value: string | null | undefined): boolean {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    return isLoopbackHostname(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function normalizeServerBaseUrlForClient(baseUrl: string): string {
+  const normalized = normalizeHttpBaseUrl(baseUrl);
+  if (!normalized) return String(baseUrl || "");
+  const official = normalizeHttpBaseUrl(OFFICIAL_NODE_BASE_URL || "");
+  if (!official) return normalized;
+  if (isLoopbackBaseUrl(normalized)) return official;
+  return normalized;
+}
+
 async function getPlatformRole(userId: string): Promise<"user" | "admin" | "owner"> {
   const founder = await q<{ founder_user_id: string | null }>(`SELECT founder_user_id FROM platform_config WHERE id=1`);
   if (founder.length && founder[0].founder_user_id === userId) return "owner";
@@ -263,16 +305,26 @@ export async function serverRoutes(app: FastifyInstance) {
       }
       if (boostEntitlement.active && !membershipRoles.includes("boost")) membershipRoles.push("boost");
 
-      // For official node, token must use OFFICIAL_NODE_SERVER_ID so the node accepts it
-      const idForToken = (OFFICIAL_NODE_BASE_URL && OFFICIAL_NODE_SERVER_ID && r.base_url === OFFICIAL_NODE_BASE_URL)
-        ? OFFICIAL_NODE_SERVER_ID
-        : r.id;
+      const effectiveBaseUrl = normalizeServerBaseUrlForClient(r.base_url);
+      const officialBaseUrl = normalizeHttpBaseUrl(OFFICIAL_NODE_BASE_URL || "");
+      const officialTokenServerId = OFFICIAL_NODE_SERVER_ID || "";
+      const shouldUseOfficialTokenServerId = Boolean(
+        officialTokenServerId
+        && officialBaseUrl
+        && (
+          effectiveBaseUrl === officialBaseUrl
+          || isLoopbackBaseUrl(r.base_url)
+        )
+      );
+
+      // For official node, token must use OFFICIAL_NODE_SERVER_ID so the node accepts it.
+      const idForToken = shouldUseOfficialTokenServerId ? officialTokenServerId : r.id;
       const membershipToken = await signMembershipToken(idForToken, userId, membershipRoles, platformRole, r.id);
 
       return {
         id: r.id,
         name: r.name,
-        baseUrl: r.base_url,
+        baseUrl: effectiveBaseUrl,
         logoUrl: r.logo_url ?? null,
         bannerUrl: r.banner_url ?? null,
         defaultGuildId: r.default_guild_id ?? undefined,
@@ -399,9 +451,18 @@ export async function serverRoutes(app: FastifyInstance) {
     }
     if (boostEntitlement.active && !roles.includes("boost")) roles.push("boost");
 
-    const idForToken = (OFFICIAL_NODE_BASE_URL && OFFICIAL_NODE_SERVER_ID && server[0].base_url === OFFICIAL_NODE_BASE_URL)
-      ? OFFICIAL_NODE_SERVER_ID
-      : serverId;
+    const effectiveBaseUrl = normalizeServerBaseUrlForClient(server[0].base_url);
+    const officialBaseUrl = normalizeHttpBaseUrl(OFFICIAL_NODE_BASE_URL || "");
+    const officialTokenServerId = OFFICIAL_NODE_SERVER_ID || "";
+    const shouldUseOfficialTokenServerId = Boolean(
+      officialTokenServerId
+      && officialBaseUrl
+      && (
+        effectiveBaseUrl === officialBaseUrl
+        || isLoopbackBaseUrl(server[0].base_url)
+      )
+    );
+    const idForToken = shouldUseOfficialTokenServerId ? officialTokenServerId : serverId;
     const membershipToken = await signMembershipToken(idForToken, userId, roles, platformRole, serverId);
 
     return rep.send({ serverId, membershipToken, roles });

@@ -33,7 +33,7 @@ function resolveCoreApiBase() {
     const qp = new URLSearchParams(window.location.search || "");
     fromQuery = String(qp.get("coreApi") || "").trim();
   }
-  const candidate = fromQuery || fromEnv || "https://api.opencom.online";
+  const candidate = fromEnv || fromQuery || "https://api.opencom.online";
   try {
     const parsed = new URL(candidate);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "https://api.opencom.online";
@@ -44,6 +44,110 @@ function resolveCoreApiBase() {
 }
 
 const CORE_API = resolveCoreApiBase();
+
+function isLoopbackHostname(hostname = "") {
+  const normalized = String(hostname || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (!normalized) return false;
+  return normalized === "localhost"
+    || normalized === "::1"
+    || normalized === "0:0:0:0:0:0:0:1"
+    || normalized === "0.0.0.0"
+    || normalized.startsWith("127.");
+}
+
+function shouldAllowLoopbackTargets() {
+  if (typeof window === "undefined") return true;
+  if (window.location.protocol === "file:") return true;
+  const currentHost = String(window.location.hostname || "").trim().toLowerCase();
+  return isLoopbackHostname(currentHost) || currentHost.endsWith(".localhost");
+}
+
+function normalizeHttpBaseUrl(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function gatewayUrlToHttpBaseUrl(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === "ws:") parsed.protocol = "http:";
+    else if (parsed.protocol === "wss:") parsed.protocol = "https:";
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    parsed.search = "";
+    parsed.hash = "";
+    parsed.pathname = parsed.pathname.replace(/\/gateway\/?$/i, "");
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function resolvePublicNodeBaseUrl() {
+  const explicit = normalizeHttpBaseUrl(import.meta.env.VITE_OFFICIAL_NODE_BASE_URL || import.meta.env.OFFICIAL_NODE_BASE_URL || "");
+  if (explicit) return explicit;
+  const wsCandidates = [
+    import.meta.env.VITE_NODE_GATEWAY_WS_URL,
+    import.meta.env.VITE_VOICE_GATEWAY_URL
+  ];
+  for (const candidate of wsCandidates) {
+    const derived = gatewayUrlToHttpBaseUrl(candidate);
+    if (derived) return derived;
+  }
+  return "";
+}
+
+const PUBLIC_NODE_BASE_URL = resolvePublicNodeBaseUrl();
+
+function normalizeServerBaseUrl(baseUrl = "") {
+  const normalized = normalizeHttpBaseUrl(baseUrl);
+  if (!normalized) return "";
+  try {
+    const parsed = new URL(normalized);
+    if (isLoopbackHostname(parsed.hostname)) {
+      if (PUBLIC_NODE_BASE_URL) return PUBLIC_NODE_BASE_URL;
+      if (!shouldAllowLoopbackTargets()) return "";
+    }
+  } catch {
+    return normalized;
+  }
+  return normalized;
+}
+
+function normalizeServerRecord(server) {
+  if (!server || typeof server !== "object") return server;
+  const currentBaseUrl = String(server.baseUrl ?? server.base_url ?? "").trim();
+  if (!currentBaseUrl) return server;
+  const normalizedBaseUrl = normalizeServerBaseUrl(currentBaseUrl);
+  if (normalizedBaseUrl === currentBaseUrl) return server;
+  if (!normalizedBaseUrl) {
+    const next = { ...server, baseUrl: "" };
+    if (Object.prototype.hasOwnProperty.call(server, "base_url")) {
+      next.base_url = "";
+    }
+    return next;
+  }
+  const next = { ...server, baseUrl: normalizedBaseUrl };
+  if (Object.prototype.hasOwnProperty.call(server, "base_url")) {
+    next.base_url = normalizedBaseUrl;
+  }
+  return next;
+}
+
+function normalizeServerList(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((server) => normalizeServerRecord(server)).filter(Boolean);
+}
 
 /** Resolve profile image URL so it loads from the API when relative (e.g. /v1/profile-images/...) */
 function profileImageUrl(url) {
@@ -381,13 +485,21 @@ function normalizeGatewayWsUrl(value) {
     if (url.protocol !== "ws:" && url.protocol !== "wss:") {
       url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
     }
+    if (!shouldAllowLoopbackTargets() && isLoopbackHostname(url.hostname)) return "";
     url.pathname = "/gateway";
     url.search = "";
     url.hash = "";
     return url.toString().replace(/\/$/, "");
   } catch {
     const normalized = trimmed.replace(/\/$/, "");
-    return normalized.endsWith("/gateway") ? normalized : `${normalized}/gateway`;
+    const withPath = normalized.endsWith("/gateway") ? normalized : `${normalized}/gateway`;
+    try {
+      const url = new URL(withPath);
+      if (!shouldAllowLoopbackTargets() && isLoopbackHostname(url.hostname)) return "";
+    } catch {
+      // keep fallback behavior for unparsable strings
+    }
+    return withPath;
   }
 }
 
@@ -575,7 +687,9 @@ async function nodeApi(baseUrl, path, token, options = {}) {
   const nextOptions = { ...options };
   delete nextOptions.__retried;
   const hasBody = nextOptions.body !== undefined && nextOptions.body !== null;
-  const response = await fetch(`${baseUrl}${path}`, {
+  const normalizedBaseUrl = normalizeServerBaseUrl(baseUrl);
+  if (!normalizedBaseUrl) throw new Error("NODE_BASE_URL_INVALID");
+  const response = await fetch(`${normalizedBaseUrl}${path}`, {
     headers: {
       ...(hasBody ? { "Content-Type": "application/json" } : {}),
       Authorization: `Bearer ${token}`,
@@ -586,9 +700,9 @@ async function nodeApi(baseUrl, path, token, options = {}) {
 
   if (!response.ok) {
     if (response.status === 401 && !retried) {
-      const nextMembershipToken = await refreshMembershipTokenForNode(baseUrl, token).catch(() => null);
+      const nextMembershipToken = await refreshMembershipTokenForNode(normalizedBaseUrl, token).catch(() => null);
       if (nextMembershipToken) {
-        return nodeApi(baseUrl, path, nextMembershipToken, { ...nextOptions, __retried: true });
+        return nodeApi(normalizedBaseUrl, path, nextMembershipToken, { ...nextOptions, __retried: true });
       }
     }
     const errorData = await response.json().catch(() => ({}));
@@ -2799,7 +2913,7 @@ export function App() {
           api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } })
         ]);
 
-        const nextServers = serverData.servers || [];
+        const nextServers = normalizeServerList(serverData.servers || []);
         setProfile(profileData);
         setFullProfileDraft(normalizeFullProfile(profileData, profileData.fullProfile));
         setProfileForm({
@@ -5312,7 +5426,7 @@ export function App() {
         })
       });
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
-      const next = refreshed.servers || [];
+      const next = normalizeServerList(refreshed.servers || []);
       setServers(next);
       setStatus("Server profile updated.");
     } catch (error) {
@@ -5344,7 +5458,7 @@ export function App() {
       setNewServerBannerUrl("");
       setStatus("Server provider added.");
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
-      setServers(refreshed.servers || []);
+      setServers(normalizeServerList(refreshed.servers || []));
       setAddServerModalOpen(false);
     } catch (error) {
       const msg = error?.message || "";
@@ -5453,7 +5567,7 @@ export function App() {
       setStatus(joinedServerName ? `Joined ${joinedServerName}.` : "Joined server from invite.");
 
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
-      const next = refreshed.servers || [];
+      const next = normalizeServerList(refreshed.servers || []);
       setServers(next);
       const joinedServerId = data?.serverId;
       if (joinedServerId && next.some((s) => s.id === joinedServerId)) {
@@ -6028,7 +6142,7 @@ export function App() {
         }
       }
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
-      const next = refreshed.servers || [];
+      const next = normalizeServerList(refreshed.servers || []);
       setServers(next);
       if (wasActive && next.length) setActiveServerId(next[0].id);
       setStatus("Left server.");
@@ -6044,7 +6158,7 @@ export function App() {
     try {
       await api(`/v1/servers/${server.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } });
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
-      const next = refreshed.servers || [];
+      const next = normalizeServerList(refreshed.servers || []);
       setServers(next);
       if (activeServerId === server.id) {
         setActiveServerId(next.length ? next[0].id : "");
@@ -6580,7 +6694,7 @@ export function App() {
       setNewOfficialServerBannerUrl("");
       setStatus("Your server was created.");
       const refreshed = await api("/v1/servers", { headers: { Authorization: `Bearer ${accessToken}` } });
-      const next = refreshed.servers || [];
+      const next = normalizeServerList(refreshed.servers || []);
       setServers(next);
       if (data.serverId && next.length) {
         setActiveServerId(data.serverId);

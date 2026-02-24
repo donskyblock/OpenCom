@@ -67,6 +67,47 @@ async function hasBoostBadge(userId: string): Promise<boolean> {
   return entitlement.active;
 }
 
+function normalizeHttpBaseUrl(value: string | null | undefined): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = String(hostname || "").trim().toLowerCase();
+  if (!normalized) return false;
+  return normalized === "localhost"
+    || normalized === "::1"
+    || normalized === "0:0:0:0:0:0:0:1"
+    || normalized === "0.0.0.0"
+    || normalized.startsWith("127.");
+}
+
+function isLoopbackBaseUrl(value: string | null | undefined): boolean {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    return isLoopbackHostname(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function resolveNodeBaseUrl(baseUrl: string): string {
+  const normalized = normalizeHttpBaseUrl(baseUrl);
+  if (!normalized) return "";
+  const officialBaseUrl = normalizeHttpBaseUrl(env.OFFICIAL_NODE_BASE_URL || "");
+  if (officialBaseUrl && isLoopbackBaseUrl(normalized)) return officialBaseUrl;
+  return normalized;
+}
+
 export async function inviteRoutes(app: FastifyInstance) {
   async function joinByInviteCode(input: {
     userId: string;
@@ -102,12 +143,17 @@ export async function inviteRoutes(app: FastifyInstance) {
       { id: inv.server_id }
     );
     if (serverRow.length && serverRow[0].default_guild_id) {
-      const baseUrl = (serverRow[0].base_url || "").replace(/\/$/, "");
+      const rawBaseUrl = serverRow[0].base_url || "";
+      const baseUrl = resolveNodeBaseUrl(rawBaseUrl);
+      if (!baseUrl) {
+        input.log.warn({ serverId: inv.server_id, userId: input.userId }, "Invite join: node base URL is unavailable");
+        return { status: 200, body: { ok: true, serverId: inv.server_id } };
+      }
       const defaultGuildId = serverRow[0].default_guild_id;
       const platformRole = await getPlatformRole(input.userId);
-      const officialBase = (env.OFFICIAL_NODE_BASE_URL || "").replace(/\/$/, "");
+      const officialBase = normalizeHttpBaseUrl(env.OFFICIAL_NODE_BASE_URL || "");
       const audience =
-        officialBase && env.OFFICIAL_NODE_SERVER_ID && baseUrl === officialBase
+        officialBase && env.OFFICIAL_NODE_SERVER_ID && (baseUrl === officialBase || isLoopbackBaseUrl(rawBaseUrl))
           ? env.OFFICIAL_NODE_SERVER_ID
           : inv.server_id;
       try {

@@ -2,6 +2,110 @@ import { useEffect, useState } from "react";
 
 const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://api.opencom.online";
 
+function isLoopbackHostname(hostname = "") {
+  const normalized = String(hostname || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (!normalized) return false;
+  return normalized === "localhost"
+    || normalized === "::1"
+    || normalized === "0:0:0:0:0:0:0:1"
+    || normalized === "0.0.0.0"
+    || normalized.startsWith("127.");
+}
+
+function shouldAllowLoopbackTargets() {
+  if (typeof window === "undefined") return true;
+  if (window.location.protocol === "file:") return true;
+  const currentHost = String(window.location.hostname || "").trim().toLowerCase();
+  return isLoopbackHostname(currentHost) || currentHost.endsWith(".localhost");
+}
+
+function normalizeHttpBaseUrl(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function gatewayUrlToHttpBaseUrl(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === "ws:") parsed.protocol = "http:";
+    else if (parsed.protocol === "wss:") parsed.protocol = "https:";
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    parsed.search = "";
+    parsed.hash = "";
+    parsed.pathname = parsed.pathname.replace(/\/gateway\/?$/i, "");
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function resolvePublicNodeBaseUrl() {
+  const explicit = normalizeHttpBaseUrl(import.meta.env.VITE_OFFICIAL_NODE_BASE_URL || import.meta.env.OFFICIAL_NODE_BASE_URL || "");
+  if (explicit) return explicit;
+  const wsCandidates = [
+    import.meta.env.VITE_NODE_GATEWAY_WS_URL,
+    import.meta.env.VITE_VOICE_GATEWAY_URL
+  ];
+  for (const candidate of wsCandidates) {
+    const derived = gatewayUrlToHttpBaseUrl(candidate);
+    if (derived) return derived;
+  }
+  return "";
+}
+
+const PUBLIC_NODE_BASE_URL = resolvePublicNodeBaseUrl();
+
+function normalizeServerBaseUrl(baseUrl = "") {
+  const normalized = normalizeHttpBaseUrl(baseUrl);
+  if (!normalized) return "";
+  try {
+    const parsed = new URL(normalized);
+    if (isLoopbackHostname(parsed.hostname)) {
+      if (PUBLIC_NODE_BASE_URL) return PUBLIC_NODE_BASE_URL;
+      if (!shouldAllowLoopbackTargets()) return "";
+    }
+  } catch {
+    return normalized;
+  }
+  return normalized;
+}
+
+function normalizeServerRecord(server) {
+  if (!server || typeof server !== "object") return server;
+  const currentBaseUrl = String(server.baseUrl ?? server.base_url ?? "").trim();
+  if (!currentBaseUrl) return server;
+  const normalizedBaseUrl = normalizeServerBaseUrl(currentBaseUrl);
+  if (normalizedBaseUrl === currentBaseUrl) return server;
+  if (!normalizedBaseUrl) {
+    const next = { ...server, baseUrl: "" };
+    if (Object.prototype.hasOwnProperty.call(server, "base_url")) {
+      next.base_url = "";
+    }
+    return next;
+  }
+  const next = { ...server, baseUrl: normalizedBaseUrl };
+  if (Object.prototype.hasOwnProperty.call(server, "base_url")) {
+    next.base_url = normalizedBaseUrl;
+  }
+  return next;
+}
+
+function normalizeServerList(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((server) => normalizeServerRecord(server)).filter(Boolean);
+}
+
 async function api(path, token, options = {}) {
   const response = await fetch(`${CORE_API}${path}`, {
     headers: {
@@ -21,7 +125,9 @@ async function api(path, token, options = {}) {
 }
 
 async function nodeApi(baseUrl, path, token, options = {}) {
-  const response = await fetch(`${baseUrl}${path}`, {
+  const normalizedBaseUrl = normalizeServerBaseUrl(baseUrl);
+  if (!normalizedBaseUrl) throw new Error("NODE_BASE_URL_INVALID");
+  const response = await fetch(`${normalizedBaseUrl}${path}`, {
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
@@ -116,8 +222,11 @@ export function ServerAdminApp() {
 
   async function loadServers() {
     try {
-      const data = await api("/v1/servers", {}, { headers: { Authorization: `Bearer ${token}` } });
-      const ownedServers = data.servers.filter(s => s.roles.includes("owner"));
+      const data = await api("/v1/servers", token);
+      const ownedServers = normalizeServerList(data.servers || []).filter((server) => {
+        const roles = Array.isArray(server?.roles) ? server.roles.map((role) => String(role).toLowerCase()) : [];
+        return roles.includes("owner");
+      });
       setServers(ownedServers);
       if (ownedServers.length > 0) {
         setSelectedServerId(ownedServers[0].id);
@@ -252,9 +361,9 @@ export function ServerAdminApp() {
     try {
       const server = servers.find(s => s.id === selectedServerId);
       if (!server) return;
-      const data = await api(`/v1/users/search?query=${encodeURIComponent(searchUsername.trim())}`, {
+      const data = await api(`/v1/users/search?query=${encodeURIComponent(searchUsername.trim())}`, token, {
         method: "GET"
-      }, { headers: { Authorization: `Bearer ${token}` } });
+      });
       setSearchResults(data.users || []);
     } catch (e) {
       setStatus(`Search failed: ${e.message}`);
