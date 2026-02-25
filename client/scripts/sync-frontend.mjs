@@ -12,7 +12,13 @@ const clientWebDir = path.resolve(clientDir, "src", "web");
 const frontendSrcDir = path.resolve(frontendDir, "src");
 const frontendPublicDir = path.resolve(frontendDir, "public");
 const frontendLegacyPublicDir = path.resolve(frontendSrcDir, "public");
-const frontendIndexHtml = path.resolve(frontendDir, "index.html");
+const frontendHtmlEntries = [
+  "index.html",
+  "admin.html",
+  "server-admin.html",
+  "theme-catalog.html",
+  "theme-creator.html"
+].map((name) => path.resolve(frontendDir, name));
 const frontendViteConfig = path.resolve(frontendDir, "vite.config.js");
 const frontendPackageJson = path.resolve(frontendDir, "package.json");
 const frontendLockFile = path.resolve(frontendDir, "package-lock.json");
@@ -34,6 +40,7 @@ function run(cmd, args, cwd) {
 }
 
 async function copyBrandAssets() {
+  await fs.mkdir(clientWebDir, { recursive: true });
   const assets = ["logo.png", "logo.jpg"];
   await Promise.all(assets.map(async (name) => {
     const source = path.resolve(frontendDir, name);
@@ -73,7 +80,7 @@ async function latestMtimeMsInTree(rootDir) {
 }
 
 async function latestFrontendInputMtimeMs() {
-  const paths = [frontendIndexHtml, frontendViteConfig, frontendPackageJson, frontendLockFile];
+  const paths = [...frontendHtmlEntries, frontendViteConfig, frontendPackageJson, frontendLockFile];
   let latest = await latestMtimeMsInTree(frontendSrcDir);
   for (const publicDir of [frontendPublicDir, frontendLegacyPublicDir]) {
     if (!(await exists(publicDir))) continue;
@@ -97,6 +104,7 @@ async function shouldBuild() {
 
 async function main() {
   if (!(await shouldBuild())) {
+    await copyBrandAssets();
     console.log("Embedded frontend is up to date; skipping rebuild.");
     return;
   }

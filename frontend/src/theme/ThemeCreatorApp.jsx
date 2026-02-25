@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { coreApi } from "./themeApi";
+import { openStaticPage } from "../lib/routing";
 import "../theme-tools.css";
 
 const starterTemplates = [
@@ -226,7 +227,7 @@ export function ThemeCreatorApp() {
           <p>No-code builder + advanced CSS in one page.</p>
         </div>
         <div className="theme-tool-actions">
-          <button type="button" className="ghost" onClick={() => window.open("/theme-catalog.html", "_blank", "noopener,noreferrer")}>
+          <button type="button" className="ghost" onClick={() => openStaticPage("theme-catalog.html")}>
             Open Catalogue
           </button>
           <button type="button" className="ghost" onClick={loadMine}>Reload My Themes</button>

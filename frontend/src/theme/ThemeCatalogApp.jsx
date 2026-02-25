@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { coreApi, installThemeLocally } from "./themeApi";
+import { openStaticPage } from "../lib/routing";
 import "../theme-tools.css";
 
 export function ThemeCatalogApp() {
@@ -62,7 +63,7 @@ export function ThemeCatalogApp() {
           <p>Browse community themes and install instantly.</p>
         </div>
         <div className="theme-tool-actions">
-          <button type="button" className="ghost" onClick={() => window.open("/theme-creator.html", "_blank", "noopener,noreferrer")}>
+          <button type="button" className="ghost" onClick={() => openStaticPage("theme-creator.html")}>
             Open Creator
           </button>
           <button type="button" onClick={() => loadThemes().catch(() => {})}>Refresh</button>
