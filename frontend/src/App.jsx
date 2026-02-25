@@ -21,9 +21,11 @@ import {
   isBoostGiftPath,
   isInviteJoinPath,
   normalizeAppPath,
+  openStaticPage,
   shouldSkipLandingPage,
   parseBoostGiftCodeFromInput,
   parseInviteCodeFromInput,
+  resolveStaticPageHref,
   writeAppRoute
 } from "./lib/routing";
 
@@ -9147,7 +9149,7 @@ export function App() {
                 <button type="button" className={addServerTab === "custom" ? "active" : "ghost"} onClick={() => setAddServerTab("custom")}>Add host</button>
                 <button type="button" className={addServerTab === "create" ? "active" : "ghost"} onClick={() => setAddServerTab("create")}>Create yours</button>
                 {canAccessServerAdminPanel && (
-                  <a href="/server-admin.html" target="_blank" rel="noopener noreferrer" className="add-server-admin-link" onClick={(e) => e.stopPropagation()}>🔧 Admin</a>
+                  <a href={resolveStaticPageHref("server-admin.html")} target="_blank" rel="noopener noreferrer" className="add-server-admin-link" onClick={(e) => e.stopPropagation()}>🔧 Admin</a>
                 )}
               </div>
             </header>
@@ -9433,7 +9435,7 @@ export function App() {
               <button className={settingsTab === "extensions" ? "active" : "ghost"} onClick={() => setSettingsTab("extensions")}>Extensions</button>
               <button className={settingsTab === "voice" ? "active" : "ghost"} onClick={() => setSettingsTab("voice")}>Voice</button>
               {canAccessServerAdminPanel && (
-                <a href="/server-admin.html" target="_blank" style={{ display: "block", padding: "var(--space-sm) var(--space-md)", background: "rgba(149, 168, 205, 0.12)", border: "1px solid rgba(125, 164, 255, 0.25)", borderRadius: "calc(var(--radius) * 0.9)", color: "var(--text-main)", textDecoration: "none", textAlign: "center", fontWeight: "500", cursor: "pointer", fontSize: "0.95em" }}>🔧 Server Admin Panel</a>
+                <a href={resolveStaticPageHref("server-admin.html")} target="_blank" rel="noopener noreferrer" style={{ display: "block", padding: "var(--space-sm) var(--space-md)", background: "rgba(149, 168, 205, 0.12)", border: "1px solid rgba(125, 164, 255, 0.25)", borderRadius: "calc(var(--radius) * 0.9)", color: "var(--text-main)", textDecoration: "none", textAlign: "center", fontWeight: "500", cursor: "pointer", fontSize: "0.95em" }}>🔧 Server Admin Panel</a>
               )}
               <button className="danger" onClick={() => setSettingsOpen(false)}>Close</button>
               <button className="danger" onClick={logout}>Log out</button>
@@ -9942,10 +9944,10 @@ export function App() {
                   <input type="file" accept="text/css,.css" onChange={onUploadTheme} />
                   <textarea value={themeCss} onChange={(event) => setThemeCss(event.target.value)} rows={10} placeholder="Paste custom CSS" />
                   <div className="row-actions" style={{ width: "100%", marginTop: "0.5rem" }}>
-                    <button type="button" className="ghost" onClick={() => window.open("/theme-catalog.html", "_blank", "noopener,noreferrer")}>
+                    <button type="button" className="ghost" onClick={() => openStaticPage("theme-catalog.html")}>
                       Open Theme Catalogue
                     </button>
-                    <button type="button" className="ghost" onClick={() => window.open("/theme-creator.html", "_blank", "noopener,noreferrer")}>
+                    <button type="button" className="ghost" onClick={() => openStaticPage("theme-creator.html")}>
                       Open Theme Creator
                     </button>
                   </div>

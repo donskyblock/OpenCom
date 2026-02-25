@@ -121,6 +121,7 @@ function showPromptWindow(promptText = "", defaultValue = "", title = "OpenCom")
       show: false,
       title,
       autoHideMenuBar: true,
+      ...(fs.existsSync(LOCAL_ICON) ? { icon: LOCAL_ICON } : {}),
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false,
@@ -199,6 +200,7 @@ function showDisplaySourcePickerWindow(sources = [], title = "Share your screen"
       show: false,
       title,
       autoHideMenuBar: true,
+      ...(fs.existsSync(LOCAL_ICON) ? { icon: LOCAL_ICON } : {}),
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false,

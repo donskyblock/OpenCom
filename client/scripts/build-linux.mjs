@@ -42,26 +42,31 @@ async function fileExists(target) {
 
 async function main() {
   const requireDeb = process.env.OPENCOM_REQUIRE_DEB === "1";
+  const requireSnap = process.env.OPENCOM_REQUIRE_SNAP === "1";
   const tarballPath = path.join(clientDir, "dist", "OpenCom.tar.gz");
+  const builderCacheDir = process.env.ELECTRON_BUILDER_CACHE || path.join(clientDir, ".cache", "electron-builder");
 
-  try {
-    await run(electronBuilderCmd, ["--linux", "deb", "tar.gz"]);
-    return;
-  } catch (error) {
-    if (requireDeb) {
-      throw error;
-    }
-    const hasTarball = await fileExists(tarballPath);
-    if (hasTarball) {
-      console.warn("Deb packaging failed; tar.gz artifact was produced successfully.");
-      console.warn("Install libxcrypt-compat to restore .deb packaging on Arch-based systems.");
-      return;
-    }
-    console.warn("Deb packaging failed. Falling back to tar.gz only.");
-  }
+  process.env.ELECTRON_BUILDER_CACHE = builderCacheDir;
+  await fs.mkdir(builderCacheDir, { recursive: true });
 
   await run(electronBuilderCmd, ["--linux", "tar.gz"]);
-  console.warn("Built tar.gz successfully. Install libxcrypt-compat to restore .deb packaging on Arch-based systems.");
+  if (!(await fileExists(tarballPath))) {
+    throw new Error("Linux tar.gz artifact was not produced.");
+  }
+
+  try {
+    await run(electronBuilderCmd, ["--linux", "deb"]);
+  } catch (error) {
+    if (requireDeb) throw error;
+    console.warn(`Deb packaging failed (optional): ${error?.message || error}`);
+  }
+
+  try {
+    await run(electronBuilderCmd, ["--linux", "snap"]);
+  } catch (error) {
+    if (requireSnap) throw error;
+    console.warn(`Snap packaging failed (optional): ${error?.message || error}`);
+  }
 }
 
 main().catch((error) => {

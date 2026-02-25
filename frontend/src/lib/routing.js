@@ -130,3 +130,23 @@ export function buildBoostGiftUrl(code) {
   if (typeof window === "undefined") return "";
   return `${window.location.origin}/gift/${encodeURIComponent(code)}`;
 }
+
+export function resolveStaticPageHref(pageFileName = "") {
+  const fileName = String(pageFileName || "").trim().replace(/^\/+/, "");
+  if (!fileName) return "/";
+  if (typeof window === "undefined") return `/${fileName}`;
+  if (window.location.protocol === "file:") {
+    try {
+      return new URL(fileName, window.location.href).toString();
+    } catch {
+      return fileName;
+    }
+  }
+  return `/${fileName}`;
+}
+
+export function openStaticPage(pageFileName = "", { target = "_blank" } = {}) {
+  if (typeof window === "undefined") return;
+  const href = resolveStaticPageHref(pageFileName);
+  window.open(href, target, "noopener,noreferrer");
+}

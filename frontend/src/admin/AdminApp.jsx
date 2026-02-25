@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { resolveStaticPageHref } from "../lib/routing";
 
 const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://api.opencom.online";
 
@@ -396,7 +397,7 @@ export function AdminApp() {
               {adminStatus.platformRole === "owner" ? "Owner" : adminStatus.platformRole === "admin" ? "Admin" : "—"}
             </span>
           )}
-          <a href="/server-admin.html" target="_blank" rel="noopener noreferrer" className="admin-link-out">Server Admin →</a>
+          <a href={resolveStaticPageHref("server-admin.html")} target="_blank" rel="noopener noreferrer" className="admin-link-out">Server Admin →</a>
           <button
             type="button"
             className="admin-lock-btn"

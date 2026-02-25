@@ -9,6 +9,7 @@ const DOWNLOAD_BASE_PATH = `${normalizeBasePath(import.meta.env.BASE_URL)}/downl
 export const DOWNLOAD_TARGETS = [
   { href: `${DOWNLOAD_BASE_PATH}/OpenCom.exe`, label: "Windows (.exe)" },
   { href: `${DOWNLOAD_BASE_PATH}/OpenCom.deb`, label: "Linux (.deb)" },
+  { href: `${DOWNLOAD_BASE_PATH}/OpenCom.snap`, label: "Linux (.snap)" },
   { href: `${DOWNLOAD_BASE_PATH}/OpenCom.tar.gz`, label: "Linux (.tar.gz)" }
 ];
 

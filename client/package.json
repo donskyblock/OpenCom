@@ -59,7 +59,8 @@
     "linux": {
       "target": [
         "deb",
-        "tar.gz"
+        "tar.gz",
+        "snap"
       ],
       "category": "Network",
       "icon": "src/web/logo.png",
