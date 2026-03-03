@@ -43,7 +43,7 @@ export async function CallRoutes(app: FastifyInstance,   broadcastToUser?: (targ
 
     });
 
-  app.post("/call/by_id", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+  app.post("/call/create", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const body = req.body
 
     const target_id = body.id
@@ -128,9 +128,47 @@ export async function CallRoutes(app: FastifyInstance,   broadcastToUser?: (targ
 
       // Add thing to gen the call_id for the frontend to parse and join.
 
-      const call_id = ""
+      const call_id = generate_voice_channel(userId, target_id)
 
       return rep.send({'success': true, 'message': 'Successfully created call request', 'call_id': call_id})
     }
   });
+
+  async function generate_voice_channel(user1_id: string, user2_id: string) {
+    const token = Math.random().toString(12).substring(2, 10);
+    if (!user1_id) {
+      throw new Error("[WARN]: ID Not providfed")
+    }
+    if (!user2_id) {
+      throw new Error("[WARN]: ID Not providfed")
+    }
+
+    const channel_id = '0'
+
+    return channel_id
+
+  };
+
+
+  async function find_channel(channelId: any) {
+    if (!channelId) {
+      throw new Error("[WARN] channelId is required");
+    }
+
+    // To implement
+    // I have to now work out how this whole voice id system is gonna work propelry,
+    return ""
+  };
+
+  app.post("/call/end", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const body = req.body
+
+    const target_id = req.target_id;
+    const userId = req.user.sub as string;
+
+    const channel = await find_channel(target_id)
+
+
+
+  })
 }
