@@ -5,6 +5,7 @@ import type { FastifyInstance } from "fastify";
 // 420: Database Error
 // 421: Missing caller paramter
 // 422: Missing callid Paramater
+// 509: Not friends with person trying to call
 
 
 export async function CallRoutes(app: FastifyInstance) {
@@ -54,7 +55,20 @@ export async function CallRoutes(app: FastifyInstance) {
     if (!target_id) {
       return rep.send({'success': false, 'error': true, 'code': 510})
     }
+    const rows = await q<{ id: string; username: string; display_name: string | null; pfp_url: string | null; status: string }>(
+      `SELECT u.id, u.username, u.display_name, u.pfp_url, COALESCE(p.status, 'offline') AS status
+       FROM friendships f
+       JOIN users u ON u.id=f.friend_user_id
+       LEFT JOIN presence p ON p.user_id=u.id
+       WHERE f.user_id=:userId
+       ORDER BY f.created_at DESC`,
+      { userId }
+    );
+    const targetExists = rows.some(row => row.id === target_id);
 
+    if (!targetExists) {
+      return rep.send({'success': false, 'error': true, 'code': 509})
+    }
 
 
   });
