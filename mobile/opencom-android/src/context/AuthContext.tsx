@@ -1,20 +1,75 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createApiClient } from "../api";
 import { resolveCoreApiUrl } from "../config";
 import { loadTokens, saveTokens, clearTokens } from "../storage";
-import type { AuthTokens, CoreServer } from "../types";
+import type {
+  AuthTokens,
+  CoreServer,
+  DmMessageApi,
+  DmThreadApi,
+  MyProfile,
+  UserStatus,
+} from "../types";
 
 type ApiClient = ReturnType<typeof createApiClient>;
 
-type AuthContextValue = {
+export type PresenceMap = Record<
+  string,
+  { status: string; customStatus?: string | null }
+>;
+
+export type AuthContextValue = {
   api: ApiClient;
+  coreApiUrl: string;
+
+  // Auth tokens
   tokens: AuthTokens | null;
   setTokens: (tokens: AuthTokens | null) => Promise<void>;
+
+  // Basic identity
   me: { id: string; username: string } | null;
   setMe: (me: { id: string; username: string } | null) => void;
+
+  // Full profile
+  myProfile: MyProfile | null;
+  setMyProfile: (profile: MyProfile | null) => void;
+  refreshMyProfile: () => Promise<void>;
+
+  // Self status (set by user)
+  selfStatus: UserStatus;
+  setSelfStatus: (status: UserStatus) => void;
+
+  // Servers
   servers: CoreServer[];
   setServers: React.Dispatch<React.SetStateAction<CoreServer[]>>;
   refreshServers: () => Promise<void>;
+
+  // Presence map: userId -> { status, customStatus }
+  presenceByUserId: PresenceMap;
+  updatePresence: (
+    userId: string,
+    status: string,
+    customStatus?: string | null,
+  ) => void;
+
+  // DM threads (kept globally so screens can react to real-time updates)
+  dmThreads: DmThreadApi[];
+  setDmThreads: React.Dispatch<React.SetStateAction<DmThreadApi[]>>;
+  upsertDmMessage: (threadId: string, message: DmMessageApi) => void;
+  removeDmMessage: (threadId: string, messageId: string) => void;
+
+  // DM messages cache: threadId -> messages array (newest-first from API)
+  dmMessages: Record<string, DmMessageApi[]>;
+  setDmMessages: React.Dispatch<
+    React.SetStateAction<Record<string, DmMessageApi[]>>
+  >;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -25,7 +80,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const [tokens, setTokensState] = useState<AuthTokens | null>(null);
   const [me, setMe] = useState<{ id: string; username: string } | null>(null);
+  const [myProfile, setMyProfile] = useState<MyProfile | null>(null);
+  const [selfStatus, setSelfStatus] = useState<UserStatus>("online");
   const [servers, setServers] = useState<CoreServer[]>([]);
+  const [presenceByUserId, setPresenceByUserId] = useState<PresenceMap>({});
+  const [dmThreads, setDmThreads] = useState<DmThreadApi[]>([]);
+  const [dmMessages, setDmMessages] = useState<Record<string, DmMessageApi[]>>(
+    {},
+  );
 
   const setTokens = useCallback(async (next: AuthTokens | null) => {
     tokensRef.current = next;
@@ -35,7 +97,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } else {
       await clearTokens();
       setMe(null);
+      setMyProfile(null);
       setServers([]);
+      setPresenceByUserId({});
+      setDmThreads([]);
+      setDmMessages({});
     }
   }, []);
 
@@ -47,22 +113,137 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setTokens,
         updateServerMembershipToken: (serverId, membershipToken) => {
           setServers((current) =>
-            current.map((s) => (s.id === serverId ? { ...s, membershipToken } : s))
+            current.map((s) =>
+              s.id === serverId ? { ...s, membershipToken } : s,
+            ),
           );
-        }
+        },
       }),
-    [coreApiUrl, setTokens]
+    [coreApiUrl, setTokens],
   );
 
   const refreshServers = useCallback(async () => {
-    const [meData, serversData] = await Promise.all([api.getMe(), api.getServers()]);
+    const [meData, serversData] = await Promise.all([
+      api.getMe(),
+      api.getServers(),
+    ]);
     setMe({ id: meData.id, username: meData.username });
     setServers(serversData.servers || []);
   }, [api]);
 
-  const value = useMemo(
-    () => ({ api, tokens, setTokens, me, setMe, servers, setServers, refreshServers }),
-    [api, tokens, setTokens, me, servers, refreshServers]
+  const refreshMyProfile = useCallback(async () => {
+    try {
+      const profile = await api.getMyProfile();
+      setMyProfile(profile);
+    } catch {
+      // non-fatal
+    }
+  }, [api]);
+
+  const updatePresence = useCallback(
+    (userId: string, status: string, customStatus?: string | null) => {
+      setPresenceByUserId((prev) => ({
+        ...prev,
+        [userId]: { status, customStatus: customStatus ?? null },
+      }));
+    },
+    [],
+  );
+
+  /** Insert or update a DM message in the cache and update thread preview */
+  const upsertDmMessage = useCallback(
+    (threadId: string, message: DmMessageApi) => {
+      // Update messages cache
+      setDmMessages((prev) => {
+        const existing = prev[threadId] ?? [];
+        const idx = existing.findIndex((m) => m.id === message.id);
+        let next: DmMessageApi[];
+        if (idx >= 0) {
+          next = existing.map((m, i) => (i === idx ? message : m));
+        } else {
+          // Prepend (list is newest-first from API perspective, but we store
+          // oldest-first for display). Actually store newest-first to match
+          // API and let each screen reverse for display.
+          next = [message, ...existing];
+        }
+        return { ...prev, [threadId]: next };
+      });
+
+      // Update thread list preview
+      setDmThreads((prev) => {
+        const idx = prev.findIndex((t) => t.id === threadId);
+        if (idx < 0) return prev;
+        const updated = {
+          ...prev[idx],
+          lastMessageAt: message.createdAt,
+          lastMessageContent: message.content,
+        };
+        const next = [...prev];
+        next[idx] = updated;
+        // Bubble to top
+        next.splice(idx, 1);
+        next.unshift(updated);
+        return next;
+      });
+    },
+    [],
+  );
+
+  /** Remove a DM message from the cache */
+  const removeDmMessage = useCallback((threadId: string, messageId: string) => {
+    setDmMessages((prev) => {
+      const existing = prev[threadId];
+      if (!existing) return prev;
+      return {
+        ...prev,
+        [threadId]: existing.filter((m) => m.id !== messageId),
+      };
+    });
+  }, []);
+
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      api,
+      coreApiUrl,
+      tokens,
+      setTokens,
+      me,
+      setMe,
+      myProfile,
+      setMyProfile,
+      refreshMyProfile,
+      selfStatus,
+      setSelfStatus,
+      servers,
+      setServers,
+      refreshServers,
+      presenceByUserId,
+      updatePresence,
+      dmThreads,
+      setDmThreads,
+      upsertDmMessage,
+      removeDmMessage,
+      dmMessages,
+      setDmMessages,
+    }),
+    [
+      api,
+      coreApiUrl,
+      tokens,
+      setTokens,
+      me,
+      myProfile,
+      refreshMyProfile,
+      selfStatus,
+      servers,
+      refreshServers,
+      presenceByUserId,
+      updatePresence,
+      dmThreads,
+      upsertDmMessage,
+      removeDmMessage,
+      dmMessages,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
