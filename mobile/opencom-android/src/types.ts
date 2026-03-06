@@ -42,6 +42,28 @@ export type Channel = {
   parent_id: string | null;
 };
 
+export type Role = {
+  id: string;
+  name: string;
+  color?: string | null;
+  position: number;
+  permissions?: number;
+};
+
+export type ServerEmote = {
+  name: string;
+  imageUrl: string;
+};
+
+export type GuildMember = {
+  id: string;
+  username: string;
+  displayName?: string | null;
+  pfp_url?: string | null;
+  status?: string;
+  roleIds?: string[];
+};
+
 export type GuildState = {
   guild: {
     id: string;
@@ -50,18 +72,50 @@ export type GuildState = {
     created_at: string;
   };
   channels: Channel[];
+  roles?: Role[];
+  members?: GuildMember[];
+  emotes?: ServerEmote[];
+};
+
+export type MessageAttachment = {
+  id: string;
+  filename: string;
+  url: string;
+  mimeType?: string | null;
+  size?: number | null;
 };
 
 export type ChannelMessage = {
   id: string;
   author_id: string;
   username?: string;
+  pfp_url?: string | null;
   content: string;
   created_at: string;
+  edited?: boolean;
+  attachments?: MessageAttachment[];
+  reply_to_id?: string | null;
+  reply_to_content?: string | null;
+  reply_to_author?: string | null;
 };
 
 export type ChannelMessagesResponse = {
   messages: ChannelMessage[];
+  hasMore?: boolean;
+};
+
+export type DmMessageApi = {
+  id: string;
+  authorId: string;
+  author: string;
+  pfp_url?: string | null;
+  content: string;
+  createdAt: string;
+  edited?: boolean;
+  attachments?: MessageAttachment[];
+  replyToId?: string | null;
+  replyToContent?: string | null;
+  replyToAuthor?: string | null;
 };
 
 export type DeepLinkTarget =
@@ -84,16 +138,228 @@ export type DmThreadApi = {
   name: string;
   pfp_url?: string | null;
   lastMessageAt?: string | null;
+  lastMessageContent?: string | null;
 };
 
-export type DmMessageApi = {
+export type FriendRequestIncoming = {
   id: string;
-  authorId: string;
-  author: string;
-  pfp_url?: string | null;
-  content: string;
+  userId: string;
+  username: string;
   createdAt: string;
 };
 
-export type FriendRequestIncoming = { id: string; userId: string; username: string; createdAt: string };
-export type FriendRequestOutgoing = { id: string; userId: string; username: string; createdAt: string };
+export type FriendRequestOutgoing = {
+  id: string;
+  userId: string;
+  username: string;
+  createdAt: string;
+};
+
+// Presence
+export type UserStatus = "online" | "idle" | "dnd" | "offline" | "invisible";
+
+export type UserPresence = {
+  status: UserStatus;
+  customStatus?: string | null;
+};
+
+// Voice
+export type VoiceState = {
+  userId: string;
+  username?: string;
+  pfp_url?: string | null;
+  channelId: string;
+  guildId: string;
+  muted: boolean;
+  deafened: boolean;
+  speaking?: boolean;
+};
+
+// Invites
+export type Invite = {
+  code: string;
+  serverId: string;
+  serverName?: string;
+  permanent: boolean;
+  uses?: number;
+  expiresAt?: string | null;
+  joinUrl?: string;
+};
+
+// Pinned messages
+export type PinnedMessage = {
+  id: string;
+  author: string;
+  pfp_url?: string | null;
+  content: string;
+  createdAt?: string;
+  attachments?: MessageAttachment[];
+};
+
+// Full user profile
+export type MyProfile = {
+  id: string;
+  username: string;
+  email: string;
+  displayName?: string | null;
+  bio?: string | null;
+  pfp_url?: string | null;
+  banner_url?: string | null;
+};
+
+// Member profile (for viewing other users)
+export type MemberProfile = {
+  id: string;
+  username: string;
+  displayName?: string | null;
+  bio?: string | null;
+  pfp_url?: string | null;
+  banner_url?: string | null;
+  status?: string;
+  roles?: string[];
+  createdAt?: string;
+};
+
+// Gateway events from the core gateway
+export type GatewayEventType =
+  | "PRESENCE_UPDATE"
+  | "DM_NEW_MESSAGE"
+  | "DM_MESSAGE_DELETED"
+  | "DM_READ"
+  | "CALL_INCOMING"
+  | "CALL_ENDED"
+  | "SELF_STATUS"
+  | "FRIEND_REQUEST"
+  | "FRIEND_ACCEPTED";
+
+export type GatewayPresenceUpdate = {
+  type: "PRESENCE_UPDATE";
+  userId: string;
+  status: string;
+  customStatus?: string | null;
+};
+
+export type GatewayDmNewMessage = {
+  type: "DM_NEW_MESSAGE";
+  threadId: string;
+  message: DmMessageApi;
+};
+
+export type GatewayDmMessageDeleted = {
+  type: "DM_MESSAGE_DELETED";
+  threadId: string;
+  messageId: string;
+};
+
+export type GatewayDmRead = {
+  type: "DM_READ";
+  threadId: string;
+};
+
+export type GatewayCallIncoming = {
+  type: "CALL_INCOMING";
+  callId: string;
+  callerId: string;
+  callerName: string;
+  callerPfp?: string | null;
+  channelId?: string;
+  guildId?: string;
+  nodeBaseUrl?: string;
+};
+
+export type GatewayCallEnded = {
+  type: "CALL_ENDED";
+  callId: string;
+};
+
+export type GatewaySelfStatus = {
+  type: "SELF_STATUS";
+  status: string;
+  customStatus?: string | null;
+};
+
+export type GatewayFriendRequest = {
+  type: "FRIEND_REQUEST";
+  requestId: string;
+  userId: string;
+  username: string;
+};
+
+export type GatewayFriendAccepted = {
+  type: "FRIEND_ACCEPTED";
+  friendId: string;
+  username: string;
+};
+
+export type GatewayEvent =
+  | GatewayPresenceUpdate
+  | GatewayDmNewMessage
+  | GatewayDmMessageDeleted
+  | GatewayDmRead
+  | GatewayCallIncoming
+  | GatewayCallEnded
+  | GatewaySelfStatus
+  | GatewayFriendRequest
+  | GatewayFriendAccepted;
+
+// Node gateway events (per server)
+export type NodeGatewayMessageCreate = {
+  type: "MESSAGE_CREATE";
+  channelId: string;
+  message: ChannelMessage;
+};
+
+export type NodeGatewayMessageUpdate = {
+  type: "MESSAGE_UPDATE";
+  channelId: string;
+  messageId: string;
+  content: string;
+  edited: boolean;
+};
+
+export type NodeGatewayMessageDelete = {
+  type: "MESSAGE_DELETE";
+  channelId: string;
+  messageId: string;
+};
+
+export type NodeGatewayVoiceStateUpdate = {
+  type: "VOICE_STATE_UPDATE";
+  userId: string;
+  guildId: string;
+  channelId: string | null;
+  muted: boolean;
+  deafened: boolean;
+};
+
+export type NodeGatewayVoiceJoin = {
+  type: "VOICE_JOIN";
+  userId: string;
+  username: string;
+  guildId: string;
+  channelId: string;
+};
+
+export type NodeGatewayVoiceLeave = {
+  type: "VOICE_LEAVE";
+  userId: string;
+  guildId: string;
+  channelId: string;
+};
+
+export type NodeGatewayVoiceSpeaking = {
+  type: "VOICE_SPEAKING";
+  userId: string;
+  guildId: string;
+  channelId: string;
+  speaking: boolean;
+};
+
+export type NodeGatewayEvent =
+  | NodeGatewayMessageCreate
+  | NodeGatewayMessageUpdate
+  | NodeGatewayMessageDelete
+  | NodeGatewayVoiceStateUpdate
+  | NodeGatewayVoiceJoin
+  | NodeGatewayVoiceLeave
+  | NodeGatewayVoiceSpeaking;

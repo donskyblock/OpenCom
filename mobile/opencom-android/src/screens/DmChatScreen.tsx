@@ -1,75 +1,410 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ActionSheetIOS,
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
-  View
+  View,
 } from "react-native";
 import { useAuth } from "../context/AuthContext";
+import { useCoreGateway, httpToCoreGatewayWs } from "../hooks/useGateway";
+import { Avatar } from "../components/Avatar";
 import type { DmMessageApi, DmThreadApi } from "../types";
 import { colors, radii, spacing, typography } from "../theme";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type DmChatScreenProps = {
   thread: DmThreadApi;
   onBack: () => void;
+  onViewPins?: () => void;
 };
 
-export function DmChatScreen({ thread, onBack }: DmChatScreenProps) {
-  const { api } = useAuth();
+type ReplyTarget = {
+  id: string;
+  author: string;
+  content: string;
+};
+
+type ContextMenuState = {
+  message: DmMessageApi;
+  isOwn: boolean;
+} | null;
+
+const PAGE_SIZE = 50;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) {
+      return d.toLocaleTimeString(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    }
+    return d.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+// ─── Reply bar ────────────────────────────────────────────────────────────────
+
+function ReplyBar({
+  target,
+  onClear,
+}: {
+  target: ReplyTarget;
+  onClear: () => void;
+}) {
+  return (
+    <View style={replyStyles.bar}>
+      <View style={replyStyles.indicator} />
+      <View style={replyStyles.info}>
+        <Text style={replyStyles.label} numberOfLines={1}>
+          Replying to <Text style={replyStyles.author}>{target.author}</Text>
+        </Text>
+        <Text style={replyStyles.preview} numberOfLines={1}>
+          {target.content}
+        </Text>
+      </View>
+      <Pressable onPress={onClear} style={replyStyles.closeBtn} hitSlop={8}>
+        <Text style={replyStyles.closeText}>✕</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const replyStyles = StyleSheet.create({
+  bar: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.elev,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    gap: spacing.sm,
+  },
+  indicator: {
+    width: 3,
+    alignSelf: "stretch",
+    backgroundColor: colors.brand,
+    borderRadius: 2,
+    flexShrink: 0,
+  },
+  info: { flex: 1, minWidth: 0 },
+  label: { ...typography.caption, color: colors.textDim },
+  author: { color: colors.brand, fontWeight: "600" },
+  preview: { ...typography.caption, color: colors.textDim },
+  closeBtn: { padding: spacing.xs },
+  closeText: { color: colors.textDim, fontSize: 14 },
+});
+
+// ─── Message item ─────────────────────────────────────────────────────────────
+
+function MessageItem({
+  message,
+  myId,
+  participantId,
+  onLongPress,
+}: {
+  message: DmMessageApi;
+  myId: string;
+  participantId: string;
+  onLongPress: (message: DmMessageApi, isOwn: boolean) => void;
+}) {
+  const isOwn = message.authorId === myId;
+  const hasReply = !!message.replyToId;
+
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        styles.messageWrapper,
+        isOwn && styles.messageWrapperOwn,
+        pressed && styles.messagePressed,
+      ]}
+      onLongPress={() => onLongPress(message, isOwn)}
+      delayLongPress={350}
+    >
+      {!isOwn && (
+        <Avatar username={message.author} pfpUrl={message.pfp_url} size={32} />
+      )}
+
+      <View
+        style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubbleOther]}
+      >
+        {hasReply && (
+          <View style={styles.replyQuote}>
+            <View style={styles.replyQuoteBar} />
+            <Text style={styles.replyQuoteText} numberOfLines={2}>
+              <Text style={styles.replyQuoteAuthor}>
+                {message.replyToAuthor ?? "Unknown"}
+              </Text>
+              {"  "}
+              {message.replyToContent ?? ""}
+            </Text>
+          </View>
+        )}
+
+        {!isOwn && <Text style={styles.bubbleAuthor}>{message.author}</Text>}
+
+        <Text style={[styles.bubbleContent, isOwn && styles.bubbleContentOwn]}>
+          {message.content}
+        </Text>
+
+        {message.attachments && message.attachments.length > 0 && (
+          <View style={styles.attachments}>
+            {message.attachments.map((a) => (
+              <View key={a.id} style={styles.attachmentChip}>
+                <Text style={styles.attachmentName} numberOfLines={1}>
+                  📎 {a.filename}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        <Text style={[styles.bubbleTime, isOwn && styles.bubbleTimeOwn]}>
+          {formatTime(message.createdAt)}
+          {message.edited ? "  (edited)" : ""}
+        </Text>
+      </View>
+
+      {isOwn && (
+        <Avatar username={message.author} pfpUrl={message.pfp_url} size={32} />
+      )}
+    </Pressable>
+  );
+}
+
+// ─── Main screen ─────────────────────────────────────────────────────────────
+
+export function DmChatScreen({
+  thread,
+  onBack,
+  onViewPins,
+}: DmChatScreenProps) {
+  const {
+    api,
+    me,
+    coreApiUrl,
+    tokens,
+    presenceByUserId,
+    upsertDmMessage,
+    removeDmMessage,
+    dmMessages,
+  } = useAuth();
+
+  // ── State ──────────────────────────────────────────────────────────────────
   const [messages, setMessages] = useState<DmMessageApi[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [composer, setComposer] = useState("");
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState("");
-  const listRef = useRef<FlatList>(null);
+  const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
 
-  const refreshMessages = useCallback(async () => {
+  const listRef = useRef<FlatList>(null);
+  const isAtBottomRef = useRef(true);
+
+  // ── Derived ────────────────────────────────────────────────────────────────
+  const participantPresence = presenceByUserId[thread.participantId];
+  const gatewayWsUrl = httpToCoreGatewayWs(coreApiUrl);
+
+  // ── Load messages ──────────────────────────────────────────────────────────
+  const loadMessages = useCallback(async () => {
     try {
-      const data = await api.getDmMessages(thread.id);
-      setMessages(data.messages || []);
+      const data = await api.getDmMessages(thread.id, { limit: PAGE_SIZE });
+      // API returns newest-first; store oldest-first for display
+      const msgs = (data.messages ?? []).slice().reverse() as DmMessageApi[];
+      setMessages(msgs);
+      setHasMore(data.hasMore ?? false);
+      // Sync to global cache
+      msgs.forEach((m) => upsertDmMessage(thread.id, m));
     } catch {
       setStatus("Failed to load messages.");
     }
-  }, [api, thread.id]);
+  }, [api, thread.id, upsertDmMessage]);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (loadingOlder || !hasMore || messages.length === 0) return;
+    setLoadingOlder(true);
+    try {
+      const oldest = messages[0];
+      const data = await api.getDmMessages(thread.id, {
+        limit: PAGE_SIZE,
+        before: oldest.id,
+      });
+      const older = (data.messages ?? []).slice().reverse() as DmMessageApi[];
+      setMessages((prev) => [...older, ...prev]);
+      setHasMore(data.hasMore ?? false);
+    } catch {
+      setStatus("Failed to load older messages.");
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [api, thread.id, messages, loadingOlder, hasMore]);
 
   useEffect(() => {
     setLoading(true);
-    refreshMessages().finally(() => setLoading(false));
-  }, [refreshMessages]);
+    setMessages([]);
+    setHasMore(false);
+    setReplyTarget(null);
+    loadMessages().finally(() => setLoading(false));
+  }, [thread.id]); // eslint-disable-line
 
+  // ── Real-time gateway ──────────────────────────────────────────────────────
+  useCoreGateway({
+    wsUrl: gatewayWsUrl,
+    accessToken: tokens?.accessToken ?? null,
+    enabled: !!tokens?.accessToken,
+    onEvent: useCallback(
+      (event) => {
+        if (event.type === "DM_NEW_MESSAGE" && event.threadId === thread.id) {
+          const msg = event.message as DmMessageApi;
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === msg.id)) return prev;
+            return [...prev, msg];
+          });
+          upsertDmMessage(thread.id, msg);
+          if (isAtBottomRef.current) {
+            setTimeout(
+              () => listRef.current?.scrollToEnd({ animated: true }),
+              50,
+            );
+          }
+        } else if (
+          event.type === "DM_MESSAGE_DELETED" &&
+          event.threadId === thread.id
+        ) {
+          setMessages((prev) => prev.filter((m) => m.id !== event.messageId));
+          removeDmMessage(thread.id, event.messageId);
+        }
+      },
+      [thread.id, upsertDmMessage, removeDmMessage],
+    ),
+  });
+
+  // ── Send message ───────────────────────────────────────────────────────────
   const onSend = useCallback(async () => {
     const content = composer.trim();
     if (!content || sending) return;
     setSending(true);
     setStatus("");
     try {
-      await api.sendDmMessage(thread.id, content);
+      const result = await api.sendDmMessage(thread.id, content, {
+        replyToId: replyTarget?.id ?? null,
+      });
       setComposer("");
-      await refreshMessages();
-      listRef.current?.scrollToEnd({ animated: true });
+      setReplyTarget(null);
+      // Refresh to get full message data (real-time may not always fire)
+      await loadMessages();
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
     } catch {
-      setStatus("Failed to send.");
+      setStatus("Failed to send message.");
     } finally {
       setSending(false);
     }
-  }, [api, composer, thread.id, refreshMessages, sending]);
+  }, [api, composer, thread.id, replyTarget, sending, loadMessages]);
 
-  const formatTime = (iso: string) => {
-    try {
-      const d = new Date(iso);
-      return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-    } catch {
-      return "";
-    }
-  };
+  // ── Context menu ───────────────────────────────────────────────────────────
+  const openContextMenu = useCallback(
+    (message: DmMessageApi, isOwn: boolean) => {
+      if (Platform.OS === "ios") {
+        const options: string[] = ["Reply"];
+        if (isOwn) options.push("Delete");
+        options.push("Copy");
+        options.push("Cancel");
 
-  const isOwnMessage = (m: DmMessageApi) => m.authorId !== thread.participantId;
+        ActionSheetIOS.showActionSheetWithOptions(
+          {
+            options,
+            destructiveButtonIndex: isOwn ? 1 : undefined,
+            cancelButtonIndex: options.length - 1,
+          },
+          (idx) => {
+            const label = options[idx];
+            if (label === "Reply") {
+              setReplyTarget({
+                id: message.id,
+                author: message.author,
+                content: message.content,
+              });
+            } else if (label === "Delete") {
+              confirmDelete(message); // eslint-disable-line
+            } else if (label === "Copy") {
+              Alert.alert("Content", message.content);
+            }
+          },
+        );
+      } else {
+        setContextMenu({ message, isOwn });
+      }
+    },
+    [], // eslint-disable-line
+  );
 
+  const confirmDelete = useCallback(
+    (message: DmMessageApi) => {
+      Alert.alert("Delete Message", "Delete this message?", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await api.deleteDmMessage(thread.id, message.id);
+              setMessages((prev) => prev.filter((m) => m.id !== message.id));
+              removeDmMessage(thread.id, message.id);
+            } catch {
+              Alert.alert("Error", "Failed to delete message.");
+            }
+          },
+        },
+      ]);
+    },
+    [api, thread.id, removeDmMessage],
+  );
+
+  const handleContextAction = useCallback(
+    (action: string) => {
+      const cm = contextMenu;
+      if (!cm) return;
+      setContextMenu(null);
+      if (action === "reply") {
+        setReplyTarget({
+          id: cm.message.id,
+          author: cm.message.author,
+          content: cm.message.content,
+        });
+      } else if (action === "delete") {
+        confirmDelete(cm.message);
+      } else if (action === "copy") {
+        Alert.alert("Content", cm.message.content);
+      }
+    },
+    [contextMenu, confirmDelete],
+  );
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -84,34 +419,89 @@ export function DmChatScreen({ thread, onBack }: DmChatScreenProps) {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={0}
     >
+      {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={onBack} style={styles.backBtn}>
+        <Pressable onPress={onBack} style={styles.backBtn} hitSlop={8}>
           <Text style={styles.backText}>←</Text>
         </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {thread.name}
-        </Text>
+        <Avatar
+          username={thread.name}
+          pfpUrl={thread.pfp_url}
+          size={32}
+          status={participantPresence?.status}
+          showStatus
+        />
+        <View style={styles.headerInfo}>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {thread.name}
+          </Text>
+          {participantPresence?.status && (
+            <Text style={styles.headerStatus}>
+              {participantPresence.customStatus
+                ? participantPresence.customStatus
+                : participantPresence.status}
+            </Text>
+          )}
+        </View>
+        {onViewPins && (
+          <Pressable onPress={onViewPins} style={styles.headerBtn} hitSlop={8}>
+            <Text style={styles.headerBtnText}>📌</Text>
+          </Pressable>
+        )}
       </View>
 
+      {/* Message list */}
       <FlatList
         ref={listRef}
         data={messages}
         keyExtractor={(m) => m.id}
         contentContainerStyle={styles.listContent}
+        onScroll={(e) => {
+          const { layoutMeasurement, contentOffset, contentSize } =
+            e.nativeEvent;
+          isAtBottomRef.current =
+            layoutMeasurement.height + contentOffset.y >=
+            contentSize.height - 40;
+        }}
+        scrollEventThrottle={100}
+        ListHeaderComponent={
+          loadingOlder ? (
+            <ActivityIndicator
+              style={{ marginVertical: spacing.md }}
+              color={colors.brand}
+            />
+          ) : hasMore ? (
+            <Pressable style={styles.loadMoreBtn} onPress={loadOlderMessages}>
+              <Text style={styles.loadMoreText}>Load older messages</Text>
+            </Pressable>
+          ) : null
+        }
         renderItem={({ item }) => (
-          <View style={[styles.message, isOwnMessage(item) && styles.messageOwn]}>
-            <Text style={styles.messageAuthor}>{item.author}</Text>
-            <Text style={styles.messageBody}>{item.content}</Text>
-            <Text style={styles.messageTime}>{formatTime(item.createdAt)}</Text>
-          </View>
+          <MessageItem
+            message={item}
+            myId={me?.id ?? ""}
+            participantId={thread.participantId}
+            onLongPress={openContextMenu}
+          />
         )}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>No messages yet. Say hello!</Text>
+            <Text style={styles.emptyText}>
+              No messages yet. Say hello to {thread.name}!
+            </Text>
           </View>
         }
       />
 
+      {/* Status */}
+      {!!status && <Text style={styles.statusText}>{status}</Text>}
+
+      {/* Reply bar */}
+      {replyTarget && (
+        <ReplyBar target={replyTarget} onClear={() => setReplyTarget(null)} />
+      )}
+
+      {/* Composer */}
       <View style={styles.composerRow}>
         <TextInput
           value={composer}
@@ -121,19 +511,68 @@ export function DmChatScreen({ thread, onBack }: DmChatScreenProps) {
           placeholderTextColor={colors.textDim}
           multiline
           maxLength={4000}
-          onSubmitEditing={onSend}
           editable={!sending}
         />
         <Pressable
-          style={[styles.sendBtn, (!composer.trim() || sending) && styles.sendBtnDisabled]}
+          style={[
+            styles.sendBtn,
+            (!composer.trim() || sending) && styles.sendBtnDisabled,
+          ]}
           onPress={onSend}
           disabled={!composer.trim() || sending}
         >
-          <Text style={styles.sendBtnText}>Send</Text>
+          {sending ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={styles.sendBtnText}>Send</Text>
+          )}
         </Pressable>
       </View>
 
-      {status ? <Text style={styles.status}>{status}</Text> : null}
+      {/* Android context menu */}
+      <Modal
+        visible={!!contextMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setContextMenu(null)}
+      >
+        <Pressable
+          style={styles.contextOverlay}
+          onPress={() => setContextMenu(null)}
+        >
+          <View style={styles.contextCard}>
+            <Text style={styles.contextTitle} numberOfLines={2}>
+              {contextMenu?.message.content}
+            </Text>
+            {[
+              { label: "↩️  Reply", action: "reply" },
+              ...(contextMenu?.isOwn
+                ? [{ label: "🗑️  Delete", action: "delete" }]
+                : []),
+              { label: "📋  Copy", action: "copy" },
+            ].map(({ label, action }) => (
+              <Pressable
+                key={action}
+                style={({ pressed }) => [
+                  styles.contextItem,
+                  pressed && styles.contextItemPressed,
+                  action === "delete" && styles.contextItemDanger,
+                ]}
+                onPress={() => handleContextAction(action)}
+              >
+                <Text
+                  style={[
+                    styles.contextItemText,
+                    action === "delete" && styles.contextItemTextDanger,
+                  ]}
+                >
+                  {label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </Pressable>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -141,34 +580,128 @@ export function DmChatScreen({ thread, onBack }: DmChatScreenProps) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   centered: { flex: 1, justifyContent: "center", alignItems: "center" },
+
+  // Header
   header: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     backgroundColor: colors.sidebar,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border
+    borderBottomColor: colors.border,
+    gap: spacing.sm,
   },
-  backBtn: { marginRight: spacing.md, padding: spacing.xs },
-  backText: { fontSize: 24, color: colors.text },
-  headerTitle: { ...typography.heading, color: colors.text, flex: 1 },
-  listContent: { padding: spacing.md, paddingBottom: spacing.lg },
-  message: {
-    marginBottom: spacing.md,
-    paddingVertical: spacing.sm,
+  backBtn: { padding: spacing.xs },
+  backText: { fontSize: 22, color: colors.text },
+  headerInfo: { flex: 1, minWidth: 0 },
+  headerTitle: { ...typography.heading, color: colors.text },
+  headerStatus: {
+    ...typography.caption,
+    color: colors.textDim,
+    textTransform: "capitalize",
+  },
+  headerBtn: { padding: spacing.xs, borderRadius: radii.sm },
+  headerBtnText: { fontSize: 18 },
+
+  // List
+  listContent: {
+    padding: spacing.md,
+    paddingBottom: spacing.lg,
+    gap: spacing.xs,
+  },
+  loadMoreBtn: {
+    alignItems: "center",
+    paddingVertical: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  loadMoreText: { color: colors.brand, fontWeight: "600", fontSize: 13 },
+
+  // Message wrapper
+  messageWrapper: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  messageWrapperOwn: {
+    flexDirection: "row-reverse",
+  },
+  messagePressed: { opacity: 0.75 },
+
+  // Bubble
+  bubble: {
+    maxWidth: "78%",
+    borderRadius: radii.lg,
     paddingHorizontal: spacing.md,
-    backgroundColor: colors.elev,
-    borderRadius: radii.md,
-    alignSelf: "flex-start",
-    maxWidth: "85%"
+    paddingVertical: spacing.sm,
+    gap: 3,
   },
-  messageOwn: { alignSelf: "flex-end", backgroundColor: colors.brand },
-  messageAuthor: { ...typography.caption, color: colors.brand, fontWeight: "600", marginBottom: 2 },
-  messageBody: { ...typography.body, color: colors.text },
-  messageTime: { ...typography.label, color: colors.textDim, marginTop: 2 },
+  bubbleOther: {
+    backgroundColor: colors.elev,
+    borderBottomLeftRadius: radii.sm,
+  },
+  bubbleOwn: {
+    backgroundColor: colors.brand,
+    borderBottomRightRadius: radii.sm,
+  },
+  bubbleAuthor: {
+    ...typography.caption,
+    color: colors.brand,
+    fontWeight: "700",
+    marginBottom: 1,
+  },
+  bubbleContent: { ...typography.body, color: colors.text },
+  bubbleContentOwn: { color: "#fff" },
+  bubbleTime: {
+    ...typography.label,
+    color: colors.textDim,
+    textAlign: "right",
+    marginTop: 2,
+  },
+  bubbleTimeOwn: { color: "rgba(255,255,255,0.65)" },
+
+  // Reply quote inside bubble
+  replyQuote: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    marginBottom: 4,
+    opacity: 0.75,
+  },
+  replyQuoteBar: {
+    width: 2,
+    alignSelf: "stretch",
+    backgroundColor: colors.textSoft,
+    borderRadius: 1,
+    flexShrink: 0,
+  },
+  replyQuoteText: { ...typography.caption, color: colors.textSoft, flex: 1 },
+  replyQuoteAuthor: { fontWeight: "700" },
+
+  // Attachments
+  attachments: { marginTop: spacing.xs, gap: spacing.xs },
+  attachmentChip: {
+    backgroundColor: "rgba(0,0,0,0.2)",
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    alignSelf: "flex-start",
+  },
+  attachmentName: { ...typography.caption, color: colors.textSoft },
+
+  // Empty
   empty: { paddingVertical: spacing.xl, alignItems: "center" },
-  emptyText: { color: colors.textDim },
+  emptyText: { color: colors.textDim, textAlign: "center" },
+
+  // Status
+  statusText: {
+    color: colors.textDim,
+    fontSize: 12,
+    paddingHorizontal: spacing.md,
+    paddingBottom: 4,
+  },
+
+  // Composer
   composerRow: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -176,7 +709,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.sidebar,
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    gap: spacing.sm
+    gap: spacing.sm,
   },
   composerInput: {
     flex: 1,
@@ -187,16 +720,57 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     color: colors.text,
-    maxHeight: 100
+    maxHeight: 120,
+    fontSize: 15,
   },
   sendBtn: {
     backgroundColor: colors.brand,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     borderRadius: radii.md,
-    justifyContent: "center"
+    justifyContent: "center",
+    alignItems: "center",
+    minWidth: 60,
   },
   sendBtnDisabled: { opacity: 0.5 },
   sendBtnText: { color: "#fff", fontWeight: "700" },
-  status: { color: colors.textDim, fontSize: 12, paddingHorizontal: spacing.md, paddingBottom: spacing.sm }
+
+  // Context menu
+  contextOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "flex-end",
+  },
+  contextCard: {
+    backgroundColor: colors.sidebar,
+    borderTopLeftRadius: radii.lg,
+    borderTopRightRadius: radii.lg,
+    padding: spacing.md,
+    paddingBottom: spacing.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: spacing.xs,
+  },
+  contextTitle: {
+    ...typography.caption,
+    color: colors.textDim,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    marginBottom: spacing.xs,
+  },
+  contextItem: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: radii.md,
+  },
+  contextItemPressed: { backgroundColor: colors.hover },
+  contextItemDanger: {},
+  contextItemText: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: "600",
+  },
+  contextItemTextDanger: { color: colors.danger },
 });

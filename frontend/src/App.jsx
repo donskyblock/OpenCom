@@ -13,6 +13,30 @@ import {
   CallMessageCard,
   OutgoingCallToast,
 } from "./components/PrivateCallOverlay";
+import { ServerRailNav } from "./components/app/ServerRailNav";
+import { FriendsSurface } from "./components/app/FriendsSurface";
+import { ProfileStudioPage } from "./components/app/ProfileStudioPage";
+import { VoiceShareOverlay } from "./components/app/VoiceShareOverlay";
+import { AppContextMenus } from "./components/app/AppContextMenus";
+import { AddServerModal } from "./components/app/AddServerModal";
+import { MemberProfilePopout } from "./components/app/MemberProfilePopout";
+import { FullProfileViewerModal } from "./components/app/FullProfileViewerModal";
+import { AppDialogModal } from "./components/app/AppDialogModal";
+import {
+  BoostUpsellModal,
+  BoostGiftPromptModal,
+} from "./components/app/BoostModals";
+import { SettingsOverlay } from "./components/settings/SettingsOverlay";
+import { ServerSettingsSection } from "./components/settings/ServerSettingsSection";
+import { ProfileSettingsSection } from "./components/settings/ProfileSettingsSection";
+import { RolesSettingsSection } from "./components/settings/RolesSettingsSection";
+import { ModerationSettingsSection } from "./components/settings/ModerationSettingsSection";
+import { InvitesSettingsSection } from "./components/settings/InvitesSettingsSection";
+import { ExtensionsSettingsSection } from "./components/settings/ExtensionsSettingsSection";
+import { AppearanceSettingsSection } from "./components/settings/AppearanceSettingsSection";
+import { VoiceSettingsSection } from "./components/settings/VoiceSettingsSection";
+import { BillingSettingsSection } from "./components/settings/BillingSettingsSection";
+import { SecuritySettingsSection } from "./components/settings/SecuritySettingsSection";
 import { DOWNLOAD_TARGETS, getPreferredDownloadTarget } from "./lib/downloads";
 import {
   APP_ROUTE_CLIENT,
@@ -10518,112 +10542,25 @@ export function App() {
 
   return (
     <div className="opencom-shell">
-      <aside className="server-rail">
-        <div className="rail-header" title="OpenCom">
-          <img
-            src="logo.png"
-            alt="OpenCom"
-            className="logo-img"
-            style={{ width: "100%", height: "100%", objectFit: "contain" }}
-          />
-        </div>
-        {dmNotification &&
-          (() => {
-            const notifDm = dms.find((d) => d.id === dmNotification.dmId);
-            return notifDm ? (
-              <button
-                type="button"
-                className="dm-notification-popup"
-                onClick={() => {
-                  setNavMode("dms");
-                  setActiveDmId(dmNotification.dmId);
-                  setDmNotification(null);
-                }}
-              >
-                {notifDm.pfp_url ? (
-                  <img
-                    src={profileImageUrl(notifDm.pfp_url)}
-                    alt=""
-                    className="dm-notification-avatar"
-                  />
-                ) : (
-                  <div className="dm-notification-avatar dm-notification-avatar-initials">
-                    {getInitials(notifDm.name || notifDm.username || "?")}
-                  </div>
-                )}
-                <span className="dm-notification-text">
-                  New message from{" "}
-                  {notifDm.name || notifDm.username || "Someone"}
-                </span>
-              </button>
-            ) : null;
-          })()}
-        <button
-          className={`server-pill nav-pill ${navMode === "friends" ? "active" : ""}`}
-          onClick={() => setNavMode("friends")}
-          title="Friends"
-        >
-          👥
-        </button>
-        <button
-          className={`server-pill nav-pill ${navMode === "dms" ? "active" : ""}`}
-          onClick={() => setNavMode("dms")}
-          title="Direct messages"
-        >
-          💬
-        </button>
-        <button
-          className={`server-pill nav-pill ${navMode === "profile" ? "active" : ""}`}
-          onClick={() => setNavMode("profile")}
-          title="Profile"
-        >
-          🪪
-        </button>
-        <div className="server-list">
-          {servers.map((server) => (
-            <button
-              key={server.id}
-              className={`server-pill ${server.id === activeServerId && navMode === "servers" ? "active" : ""}`}
-              title={server.name}
-              onClick={() => {
-                setNavMode("servers");
-                setActiveServerId(server.id);
-                setActiveGuildId("");
-                setGuildState(null);
-                setMessages([]);
-              }}
-              onContextMenu={(event) => openServerContextMenu(event, server)}
-            >
-              {server.logoUrl ? (
-                <img
-                  src={profileImageUrl(server.logoUrl)}
-                  alt={server.name}
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                    borderRadius: "inherit",
-                  }}
-                />
-              ) : (
-                getInitials(server.name)
-              )}
-              {(serverPingCounts[server.id] || 0) > 0 && (
-                <span className="server-pill-ping-badge">
-                  {serverPingCounts[server.id]}
-                </span>
-              )}
-            </button>
-          ))}
-          <button
-            className="server-pill"
-            title="Create or join a server"
-            onClick={() => setAddServerModalOpen(true)}
-          >
-            ＋
-          </button>
-        </div>
-      </aside>
+      <ServerRailNav
+        dmNotification={dmNotification}
+        dms={dms}
+        setNavMode={setNavMode}
+        setActiveDmId={setActiveDmId}
+        setDmNotification={setDmNotification}
+        profileImageUrl={profileImageUrl}
+        getInitials={getInitials}
+        navMode={navMode}
+        servers={servers}
+        activeServerId={activeServerId}
+        setActiveServerId={setActiveServerId}
+        setActiveGuildId={setActiveGuildId}
+        setGuildState={setGuildState}
+        setMessages={setMessages}
+        openServerContextMenu={openServerContextMenu}
+        serverPingCounts={serverPingCounts}
+        setAddServerModalOpen={setAddServerModalOpen}
+      />
 
       <aside
         className={`channel-sidebar ${isInVoiceChannel ? "voice-connected" : ""}`}
@@ -12118,4392 +12055,487 @@ export function App() {
         )}
 
         {navMode === "friends" && (
-          <div className="friends-surface">
-            <section className="friends-main">
-              <header className="friends-header">
-                <h3>Friends</h3>
-                <div className="friends-tabs">
-                  <button
-                    className={friendView === "online" ? "active" : "ghost"}
-                    onClick={() => setFriendView("online")}
-                  >
-                    Online
-                  </button>
-                  <button
-                    className={friendView === "all" ? "active" : "ghost"}
-                    onClick={() => setFriendView("all")}
-                  >
-                    All
-                  </button>
-                  <button
-                    className={friendView === "add" ? "active" : "ghost"}
-                    onClick={() => setFriendView("add")}
-                  >
-                    Add Friend
-                  </button>
-                  <button
-                    className={friendView === "requests" ? "active" : "ghost"}
-                    onClick={() => setFriendView("requests")}
-                  >
-                    Requests
-                  </button>
-                </div>
-              </header>
-
-              <input
-                placeholder="Search friends"
-                value={friendQuery}
-                onChange={(event) => setFriendQuery(event.target.value)}
-              />
-
-              {friendView === "add" && (
-                <div className="friend-add-card">
-                  <h4>Add Friend</h4>
-                  <p className="hint">
-                    Type the username and send your request instantly.
-                  </p>
-                  <div className="friend-add-row">
-                    <input
-                      placeholder="Username"
-                      value={friendAddInput}
-                      onChange={(event) =>
-                        setFriendAddInput(event.target.value)
-                      }
-                    />
-                    <button onClick={addFriend}>Send Request</button>
-                  </div>
-                </div>
-              )}
-
-              {friendView === "requests" && (
-                <div className="friend-add-card">
-                  <h4>Friend Requests</h4>
-                  {friendRequests.incoming.map((request) => (
-                    <div key={request.id} className="friend-row">
-                      <div className="friend-meta">
-                        <strong>{request.username}</strong>
-                        <span>Incoming request</span>
-                      </div>
-                      <div className="row-actions">
-                        <button
-                          onClick={() =>
-                            respondToFriendRequest(request.id, "accept")
-                          }
-                        >
-                          Accept
-                        </button>
-                        <button
-                          className="ghost"
-                          onClick={() =>
-                            respondToFriendRequest(request.id, "decline")
-                          }
-                        >
-                          Decline
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  {friendRequests.outgoing.map((request) => (
-                    <div key={request.id} className="friend-row">
-                      <div className="friend-meta">
-                        <strong>{request.username}</strong>
-                        <span>Pending</span>
-                      </div>
-                      <div className="row-actions">
-                        <button
-                          className="ghost"
-                          onClick={() =>
-                            respondToFriendRequest(request.id, "cancel")
-                          }
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  {!friendRequests.incoming.length &&
-                    !friendRequests.outgoing.length && (
-                      <p className="hint">No pending friend requests.</p>
-                    )}
-                </div>
-              )}
-
-              {(friendView === "online"
-                ? filteredFriends.filter(
-                    (friend) => getPresence(friend.id) !== "offline",
-                  )
-                : filteredFriends
-              ).map((friend) => (
-                <div key={friend.id} className="friend-row">
-                  <div className="friend-row-main">
-                    {renderPresenceAvatar({
-                      userId: friend.id,
-                      username: friend.username,
-                      pfpUrl: friend.pfp_url,
-                      size: 32,
-                    })}
-                    <div className="friend-meta">
-                      <strong>{friend.username}</strong>
-                      <span>{presenceLabel(getPresence(friend.id))}</span>
-                    </div>
-                  </div>
-                  <button
-                    className="ghost"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      openDmFromFriend(friend);
-                    }}
-                  >
-                    Message
-                  </button>
-                </div>
-              ))}
-            </section>
-
-            <aside className="active-now">
-              <h4>Active Now</h4>
-              {filteredFriends.slice(0, 5).map((friend) => (
-                <button
-                  key={`active-${friend.id}`}
-                  className="active-card"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    openMemberProfile(friend, {
-                      x: event.clientX,
-                      y: event.clientY,
-                    });
-                  }}
-                >
-                  <div className="friend-row-main">
-                    {renderPresenceAvatar({
-                      userId: friend.id,
-                      username: friend.username,
-                      pfpUrl: friend.pfp_url,
-                      size: 30,
-                    })}
-                    <div className="friend-meta">
-                      <strong>{friend.username}</strong>
-                      <span>
-                        {getPresence(friend.id) === "online"
-                          ? "Available now"
-                          : presenceLabel(getPresence(friend.id))}
-                      </span>
-                    </div>
-                  </div>
-                </button>
-              ))}
-              {!filteredFriends.length && (
-                <p className="hint">
-                  When friends are active, they will appear here.
-                </p>
-              )}
-            </aside>
-          </div>
+          <FriendsSurface
+            friendView={friendView}
+            setFriendView={setFriendView}
+            friendQuery={friendQuery}
+            setFriendQuery={setFriendQuery}
+            friendAddInput={friendAddInput}
+            setFriendAddInput={setFriendAddInput}
+            addFriend={addFriend}
+            friendRequests={friendRequests}
+            respondToFriendRequest={respondToFriendRequest}
+            filteredFriends={filteredFriends}
+            getPresence={getPresence}
+            presenceLabel={presenceLabel}
+            renderPresenceAvatar={renderPresenceAvatar}
+            openDmFromFriend={openDmFromFriend}
+            openMemberProfile={openMemberProfile}
+          />
         )}
 
         {navMode === "profile" && (
-          <div className="profile-studio profile-studio-full-page">
-            <section className="profile-studio-layout">
-              <aside className="card profile-studio-panel">
-                <h3>Profile Studio</h3>
-                <p className="hint">
-                  Drag, resize, and style each element directly on the canvas.
-                </p>
-                <div className="row-actions">
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={resetFullProfileDraftToBasic}
-                  >
-                    Reset
-                  </button>
-                  <button type="button" onClick={saveFullProfileDraft}>
-                    Save Full Profile
-                  </button>
-                </div>
-                <h4>Identity</h4>
-                <label>
-                  Display Name
-                  <input
-                    value={profileForm.displayName}
-                    onChange={(event) =>
-                      setProfileForm((current) => ({
-                        ...current,
-                        displayName: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Bio
-                  <textarea
-                    rows={3}
-                    value={profileForm.bio}
-                    onChange={(event) =>
-                      setProfileForm((current) => ({
-                        ...current,
-                        bio: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Avatar URL
-                  <input
-                    value={profileForm.pfpUrl}
-                    onChange={(event) =>
-                      setProfileForm((current) => ({
-                        ...current,
-                        pfpUrl: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Upload Avatar
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={onAvatarUpload}
-                  />
-                </label>
-                <label>
-                  Banner URL
-                  <input
-                    value={profileForm.bannerUrl}
-                    onChange={(event) =>
-                      setProfileForm((current) => ({
-                        ...current,
-                        bannerUrl: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Upload Banner
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={onBannerUpload}
-                  />
-                </label>
-                <button type="button" onClick={saveProfile}>
-                  Save Identity
-                </button>
-
-                <h4>Add Elements</h4>
-                <div className="profile-studio-tool-grid">
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => addFullProfileElement("avatar")}
-                  >
-                    Avatar
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => addFullProfileElement("banner")}
-                  >
-                    Banner
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => addFullProfileElement("name")}
-                  >
-                    Name
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => addFullProfileElement("bio")}
-                  >
-                    Bio
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => addFullProfileElement("links")}
-                  >
-                    Links
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => addFullProfileElement("music")}
-                    disabled={
-                      !String(fullProfileDraft?.music?.url || "").trim()
-                    }
-                    title={
-                      String(fullProfileDraft?.music?.url || "").trim()
-                        ? "Add music button element"
-                        : "Set Music URL first"
-                    }
-                  >
-                    Music
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={addFullProfileTextBlock}
-                  >
-                    Text
-                  </button>
-                </div>
-                {!hasBoostForFullProfiles && (
-                  <p className="hint">
-                    Boost is required to save custom layouts.
-                  </p>
-                )}
-              </aside>
-
-              <section className="card profile-studio-canvas-wrap">
-                <div className="profile-studio-canvas-head">
-                  <h4>Canvas</h4>
-                  <p className="hint">Drag elements directly to place them.</p>
-                </div>
-                <div
-                  ref={fullProfileEditorCanvasRef}
-                  className={`full-profile-canvas profile-studio-canvas ${hasBoostForFullProfiles ? "" : "locked"}`}
-                  style={{
-                    background:
-                      fullProfileDraft?.theme?.background ||
-                      "linear-gradient(150deg, #16274b, #0f1a33 65%)",
-                    color: fullProfileDraft?.theme?.text || "#dfe9ff",
-                    minHeight: `${profileStudioCanvasMinHeight}px`,
-                    "--full-profile-accent":
-                      fullProfileDraft?.theme?.accent || "#9bb6ff",
-                    "--full-profile-font": getFullProfileFontFamily(
-                      fullProfileDraft?.theme?.fontPreset || "sans",
-                    ),
-                  }}
-                >
-                  <div
-                    className="full-profile-canvas-card"
-                    style={{
-                      background:
-                        fullProfileDraft?.theme?.card ||
-                        "rgba(9, 14, 28, 0.62)",
-                    }}
-                  >
-                    {(fullProfileDraft?.elements || [])
-                      .slice()
-                      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-                      .map((element) => (
-                        <div
-                          key={element.id}
-                          className={`full-profile-element full-profile-element-${element.type} ${fullProfileDraggingElementId === element.id ? "dragging" : ""} ${profileStudioSelectedElementId === element.id ? "selected" : ""}`}
-                          style={getFullProfileElementFrameStyle(element)}
-                          onMouseDown={(event) => {
-                            if (!hasBoostForFullProfiles) return;
-                            onFullProfileElementMouseDown(event, element.id);
-                          }}
-                          onClick={() =>
-                            setProfileStudioSelectedElementId(element.id)
-                          }
-                        >
-                          {renderFullProfileElement(
-                            element,
-                            profileStudioPreviewProfile,
-                          )}
-                        </div>
-                      ))}
-                  </div>
-                  {!hasBoostForFullProfiles && (
-                    <div className="full-profile-lock-overlay">
-                      <p>Boost required for full customization.</p>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          openBoostUpsell(
-                            "Boost required",
-                            "Custom full profiles are a Boost perk.",
-                            "Open billing",
-                          )
-                        }
-                      >
-                        See Boost
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </section>
-
-              <aside className="card profile-studio-panel">
-                <h4>Inspector</h4>
-                <div className="full-profile-layer-list">
-                  {(fullProfileDraft?.elements || [])
-                    .slice()
-                    .sort((a, b) => (b.order ?? 0) - (a.order ?? 0))
-                    .map((element) => (
-                      <button
-                        key={`layer-${element.id}`}
-                        type="button"
-                        className={`full-profile-layer-item ${profileStudioSelectedElementId === element.id ? "active" : ""}`}
-                        onClick={() =>
-                          setProfileStudioSelectedElementId(element.id)
-                        }
-                      >
-                        <span>{element.type}</span>
-                        <small>
-                          {Math.round(Number(element.x) || 0)}%,{" "}
-                          {Math.round(Number(element.y) || 0)}%
-                        </small>
-                      </button>
-                    ))}
-                  {(!fullProfileDraft?.elements ||
-                    fullProfileDraft.elements.length === 0) && (
-                    <p className="hint">No elements on this canvas yet.</p>
-                  )}
-                </div>
-                {selectedProfileStudioElement ? (
-                  <>
-                    <p className="hint">
-                      Editing:{" "}
-                      <strong>{selectedProfileStudioElement.type}</strong>
-                    </p>
-                    {selectedProfileStudioElement.type === "text" && (
-                      <label>
-                        Text
-                        <input
-                          value={selectedProfileStudioElement.text || ""}
-                          onChange={(event) =>
-                            updateFullProfileElement(
-                              selectedProfileStudioElement.id,
-                              { text: event.target.value },
-                            )
-                          }
-                        />
-                      </label>
-                    )}
-                    <label>
-                      X
-                      <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        value={Math.round(selectedProfileStudioElement.x)}
-                        onChange={(event) =>
-                          nudgeFullProfileElement(
-                            selectedProfileStudioElement.id,
-                            { x: event.target.value },
-                          )
-                        }
-                      />
-                    </label>
-                    <label>
-                      Y
-                      <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        value={Math.round(selectedProfileStudioElement.y)}
-                        onChange={(event) =>
-                          nudgeFullProfileElement(
-                            selectedProfileStudioElement.id,
-                            { y: event.target.value },
-                          )
-                        }
-                      />
-                    </label>
-                    <label>
-                      Width
-                      <input
-                        type="range"
-                        min={1}
-                        max={100}
-                        value={Math.round(selectedProfileStudioElement.w)}
-                        onChange={(event) =>
-                          nudgeFullProfileElement(
-                            selectedProfileStudioElement.id,
-                            { w: event.target.value },
-                          )
-                        }
-                      />
-                    </label>
-                    <label>
-                      Height
-                      <input
-                        type="range"
-                        min={1}
-                        max={100}
-                        value={Math.round(selectedProfileStudioElement.h)}
-                        onChange={(event) =>
-                          nudgeFullProfileElement(
-                            selectedProfileStudioElement.id,
-                            { h: event.target.value },
-                          )
-                        }
-                      />
-                    </label>
-                    <label>
-                      Opacity (
-                      {Math.max(
-                        20,
-                        Math.min(
-                          100,
-                          Number(selectedProfileStudioElement.opacity ?? 100),
-                        ),
-                      )}
-                      %)
-                      <input
-                        type="range"
-                        min={20}
-                        max={100}
-                        value={Math.max(
-                          20,
-                          Math.min(
-                            100,
-                            Number(selectedProfileStudioElement.opacity ?? 100),
-                          ),
-                        )}
-                        onChange={(event) =>
-                          updateFullProfileElement(
-                            selectedProfileStudioElement.id,
-                            { opacity: Number(event.target.value) },
-                          )
-                        }
-                      />
-                    </label>
-                    <label>
-                      Corner Radius (
-                      {Math.max(
-                        0,
-                        Math.min(
-                          40,
-                          Number(selectedProfileStudioElement.radius ?? 8),
-                        ),
-                      )}
-                      px)
-                      <input
-                        type="range"
-                        min={0}
-                        max={40}
-                        value={Math.max(
-                          0,
-                          Math.min(
-                            40,
-                            Number(selectedProfileStudioElement.radius ?? 8),
-                          ),
-                        )}
-                        onChange={(event) =>
-                          updateFullProfileElement(
-                            selectedProfileStudioElement.id,
-                            { radius: Number(event.target.value) },
-                          )
-                        }
-                      />
-                    </label>
-                    {["name", "bio", "links", "text", "music"].includes(
-                      selectedProfileStudioElement.type,
-                    ) && (
-                      <>
-                        <label>
-                          Font Size (
-                          {Math.max(
-                            10,
-                            Math.min(
-                              72,
-                              Number(
-                                selectedProfileStudioElement.fontSize ?? 16,
-                              ),
-                            ),
-                          )}
-                          px)
-                          <input
-                            type="range"
-                            min={10}
-                            max={72}
-                            value={Math.max(
-                              10,
-                              Math.min(
-                                72,
-                                Number(
-                                  selectedProfileStudioElement.fontSize ?? 16,
-                                ),
-                              ),
-                            )}
-                            onChange={(event) =>
-                              updateFullProfileElement(
-                                selectedProfileStudioElement.id,
-                                { fontSize: Number(event.target.value) },
-                              )
-                            }
-                          />
-                        </label>
-                        <label>
-                          Text Align
-                          <select
-                            value={
-                              ["left", "center", "right"].includes(
-                                selectedProfileStudioElement.align,
-                              )
-                                ? selectedProfileStudioElement.align
-                                : "left"
-                            }
-                            onChange={(event) =>
-                              updateFullProfileElement(
-                                selectedProfileStudioElement.id,
-                                { align: event.target.value },
-                              )
-                            }
-                          >
-                            <option value="left">Left</option>
-                            <option value="center">Center</option>
-                            <option value="right">Right</option>
-                          </select>
-                        </label>
-                        <label>
-                          Text Color
-                          <input
-                            value={selectedProfileStudioElement.color || ""}
-                            placeholder="inherit or #RRGGBB"
-                            onChange={(event) =>
-                              updateFullProfileElement(
-                                selectedProfileStudioElement.id,
-                                { color: event.target.value },
-                              )
-                            }
-                          />
-                        </label>
-                      </>
-                    )}
-                    <div className="row-actions">
-                      <button
-                        type="button"
-                        className="ghost"
-                        onClick={() =>
-                          nudgeFullProfileElement(
-                            selectedProfileStudioElement.id,
-                            {
-                              order:
-                                Number(
-                                  selectedProfileStudioElement.order || 0,
-                                ) + 1,
-                            },
-                          )
-                        }
-                      >
-                        Bring Forward
-                      </button>
-                      <button
-                        type="button"
-                        className="ghost"
-                        onClick={() =>
-                          nudgeFullProfileElement(
-                            selectedProfileStudioElement.id,
-                            {
-                              order:
-                                Number(
-                                  selectedProfileStudioElement.order || 0,
-                                ) - 1,
-                            },
-                          )
-                        }
-                      >
-                        Send Back
-                      </button>
-                      <button
-                        type="button"
-                        className="danger"
-                        onClick={() =>
-                          removeFullProfileElement(
-                            selectedProfileStudioElement.id,
-                          )
-                        }
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <p className="hint">Select an element on the canvas.</p>
-                )}
-
-                <h4>Theme</h4>
-                <label>
-                  Canvas Background
-                  <input
-                    value={fullProfileDraft?.theme?.background || ""}
-                    onChange={(event) =>
-                      setFullProfileDraft((current) => ({
-                        ...current,
-                        mode: "custom",
-                        theme: {
-                          ...(current.theme || {}),
-                          background: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Card Surface
-                  <input
-                    value={fullProfileDraft?.theme?.card || ""}
-                    onChange={(event) =>
-                      setFullProfileDraft((current) => ({
-                        ...current,
-                        mode: "custom",
-                        theme: {
-                          ...(current.theme || {}),
-                          card: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Text Color
-                  <input
-                    value={fullProfileDraft?.theme?.text || ""}
-                    onChange={(event) =>
-                      setFullProfileDraft((current) => ({
-                        ...current,
-                        mode: "custom",
-                        theme: {
-                          ...(current.theme || {}),
-                          text: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Accent Color
-                  <input
-                    value={fullProfileDraft?.theme?.accent || ""}
-                    onChange={(event) =>
-                      setFullProfileDraft((current) => ({
-                        ...current,
-                        mode: "custom",
-                        theme: {
-                          ...(current.theme || {}),
-                          accent: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Font Style
-                  <select
-                    value={
-                      ["sans", "serif", "mono", "display"].includes(
-                        fullProfileDraft?.theme?.fontPreset,
-                      )
-                        ? fullProfileDraft.theme.fontPreset
-                        : "sans"
-                    }
-                    onChange={(event) =>
-                      setFullProfileDraft((current) => ({
-                        ...current,
-                        mode: "custom",
-                        theme: {
-                          ...(current.theme || {}),
-                          fontPreset: event.target.value,
-                        },
-                      }))
-                    }
-                  >
-                    <option value="sans">Modern Sans</option>
-                    <option value="serif">Serif</option>
-                    <option value="mono">Monospace</option>
-                    <option value="display">Display</option>
-                  </select>
-                </label>
-
-                <h4>Links</h4>
-                {(fullProfileDraft?.links || []).map((link) => (
-                  <div key={link.id} className="full-profile-link-editor">
-                    <input
-                      value={link.label || ""}
-                      placeholder="Label"
-                      onChange={(event) =>
-                        updateFullProfileLink(link.id, {
-                          label: event.target.value,
-                        })
-                      }
-                    />
-                    <input
-                      value={link.url || ""}
-                      placeholder="https://..."
-                      onChange={(event) =>
-                        updateFullProfileLink(link.id, {
-                          url: event.target.value,
-                        })
-                      }
-                    />
-                    <button
-                      type="button"
-                      className="danger"
-                      onClick={() => removeFullProfileLink(link.id)}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={addFullProfileLink}
-                >
-                  Add Link
-                </button>
-
-                <h4>Profile Music</h4>
-                <label>
-                  Music URL (MP3/WAV/OGG/M4A)
-                  <input
-                    value={fullProfileDraft?.music?.url || ""}
-                    placeholder="https://... or /v1/profile-images/users/..."
-                    onChange={(event) =>
-                      setFullProfileDraft((current) => ({
-                        ...current,
-                        mode: "custom",
-                        music: {
-                          ...(current.music || {}),
-                          url: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Upload Music
-                  <input
-                    type="file"
-                    accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/ogg,audio/mp4,audio/x-m4a"
-                    onChange={(event) =>
-                      onAudioFieldUpload(event, "profile music", (mediaUrl) =>
-                        setFullProfileDraft((current) => ({
-                          ...current,
-                          mode: "custom",
-                          music: { ...(current.music || {}), url: mediaUrl },
-                        })),
-                      )
-                    }
-                  />
-                </label>
-                <label>
-                  Volume (
-                  {Math.max(
-                    0,
-                    Math.min(
-                      100,
-                      Number(fullProfileDraft?.music?.volume ?? 60),
-                    ),
-                  )}
-                  %)
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={Math.max(
-                      0,
-                      Math.min(
-                        100,
-                        Number(fullProfileDraft?.music?.volume ?? 60),
-                      ),
-                    )}
-                    onChange={(event) =>
-                      setFullProfileDraft((current) => ({
-                        ...current,
-                        mode: "custom",
-                        music: {
-                          ...(current.music || {}),
-                          volume: Number(event.target.value),
-                        },
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={!!fullProfileDraft?.music?.autoplay}
-                    onChange={(event) =>
-                      setFullProfileDraft((current) => ({
-                        ...current,
-                        mode: "custom",
-                        music: {
-                          ...(current.music || {}),
-                          autoplay: event.target.checked,
-                        },
-                      }))
-                    }
-                  />{" "}
-                  Autoplay when opened
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={fullProfileDraft?.music?.loop !== false}
-                    onChange={(event) =>
-                      setFullProfileDraft((current) => ({
-                        ...current,
-                        mode: "custom",
-                        music: {
-                          ...(current.music || {}),
-                          loop: event.target.checked,
-                        },
-                      }))
-                    }
-                  />{" "}
-                  Loop track
-                </label>
-              </aside>
-            </section>
-          </div>
+          <ProfileStudioPage
+            resetFullProfileDraftToBasic={resetFullProfileDraftToBasic}
+            saveFullProfileDraft={saveFullProfileDraft}
+            profileForm={profileForm}
+            setProfileForm={setProfileForm}
+            onAvatarUpload={onAvatarUpload}
+            onBannerUpload={onBannerUpload}
+            saveProfile={saveProfile}
+            addFullProfileElement={addFullProfileElement}
+            fullProfileDraft={fullProfileDraft}
+            addFullProfileTextBlock={addFullProfileTextBlock}
+            hasBoostForFullProfiles={hasBoostForFullProfiles}
+            fullProfileEditorCanvasRef={fullProfileEditorCanvasRef}
+            profileStudioCanvasMinHeight={profileStudioCanvasMinHeight}
+            getFullProfileFontFamily={getFullProfileFontFamily}
+            fullProfileDraggingElementId={fullProfileDraggingElementId}
+            profileStudioSelectedElementId={profileStudioSelectedElementId}
+            getFullProfileElementFrameStyle={getFullProfileElementFrameStyle}
+            onFullProfileElementMouseDown={onFullProfileElementMouseDown}
+            setProfileStudioSelectedElementId={setProfileStudioSelectedElementId}
+            renderFullProfileElement={renderFullProfileElement}
+            profileStudioPreviewProfile={profileStudioPreviewProfile}
+            openBoostUpsell={openBoostUpsell}
+            selectedProfileStudioElement={selectedProfileStudioElement}
+            updateFullProfileElement={updateFullProfileElement}
+            nudgeFullProfileElement={nudgeFullProfileElement}
+            removeFullProfileElement={removeFullProfileElement}
+            setFullProfileDraft={setFullProfileDraft}
+            updateFullProfileLink={updateFullProfileLink}
+            removeFullProfileLink={removeFullProfileLink}
+            addFullProfileLink={addFullProfileLink}
+            onAudioFieldUpload={onAudioFieldUpload}
+          />
         )}
-        {isInVoiceChannel &&
-          (navMode === "servers" || navMode === "dms") &&
-          screenShareOverlayOpen &&
-          selectedRemoteScreenShare && (
-            <div
-              className="voice-share-overlay"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="voice-share-overlay-head">
-                <strong>Screen Share</strong>
-                <div className="voice-share-overlay-actions">
-                  {remoteScreenShares.length > 1 && (
-                    <select
-                      value={selectedRemoteScreenShare.producerId}
-                      onChange={(event) =>
-                        selectScreenShare(event.target.value)
-                      }
-                    >
-                      {remoteScreenShares.map((share) => (
-                        <option key={share.producerId} value={share.producerId}>
-                          {memberNameById.get(share.userId) ||
-                            share.userId ||
-                            "Screen Share"}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => setScreenShareOverlayOpen(false)}
-                  >
-                    Hide
-                  </button>
-                </div>
-              </div>
-              <video
-                autoPlay
-                playsInline
-                className="voice-share-overlay-video"
-                ref={(node) => {
-                  if (!node || !selectedRemoteScreenShare.stream) return;
-                  if (node.srcObject !== selectedRemoteScreenShare.stream)
-                    node.srcObject = selectedRemoteScreenShare.stream;
-                }}
-              />
-              <span className="voice-share-overlay-name">
-                {memberNameById.get(selectedRemoteScreenShare.userId) ||
-                  selectedRemoteScreenShare.userId ||
-                  "Screen Share"}
-              </span>
-            </div>
-          )}
+        <VoiceShareOverlay
+          isInVoiceChannel={isInVoiceChannel}
+          navMode={navMode}
+          screenShareOverlayOpen={screenShareOverlayOpen}
+          selectedRemoteScreenShare={selectedRemoteScreenShare}
+          remoteScreenShares={remoteScreenShares}
+          selectScreenShare={selectScreenShare}
+          memberNameById={memberNameById}
+          setScreenShareOverlayOpen={setScreenShareOverlayOpen}
+        />
       </main>
 
-      {messageContextMenu && (
-        <div
-          className="server-context-menu"
-          style={{ top: messageContextMenu.y, left: messageContextMenu.x }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {messageContextMenu.message.kind === "server" && (
-            <button
-              onClick={() => {
-                setReplyTarget({
-                  author: messageContextMenu.message.author,
-                  content: messageContextMenu.message.content,
-                });
-                setMessageContextMenu(null);
-              }}
-            >
-              Reply
-            </button>
-          )}
-          {messageContextMenu.message.kind === "dm" && (
-            <button
-              onClick={() => {
-                setDmReplyTarget({
-                  author: messageContextMenu.message.author,
-                  content: messageContextMenu.message.content,
-                });
-                setMessageContextMenu(null);
-              }}
-            >
-              Reply
-            </button>
-          )}
-          <button
-            onClick={() => {
-              togglePinMessage(messageContextMenu.message);
-              setMessageContextMenu(null);
-            }}
-          >
-            {messageContextMenu.message.pinned ? "Unpin" : "Pin"}
-          </button>
-          {messageContextMenu.message.kind === "dm" && (
-            <button
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(
-                    messageContextMenu.message.content || "",
-                  );
-                  setStatus("Copied message text.");
-                } catch {
-                  setStatus("Could not copy message text.");
-                }
-                setMessageContextMenu(null);
-              }}
-            >
-              Copy Text
-            </button>
-          )}
-          {(messageContextMenu.message.mine || canDeleteServerMessages) &&
-            messageContextMenu.message.kind === "server" && (
-              <button
-                className="danger"
-                onClick={() =>
-                  deleteServerMessage(messageContextMenu.message.id)
-                }
-              >
-                Delete
-              </button>
-            )}
-          {messageContextMenu.message.mine &&
-            messageContextMenu.message.kind === "dm" && (
-              <button
-                className="danger"
-                onClick={() => deleteDmMessage(messageContextMenu.message.id)}
-              >
-                Delete
-              </button>
-            )}
-        </div>
-      )}
+      <AppContextMenus
+        messageContextMenu={messageContextMenu}
+        setReplyTarget={setReplyTarget}
+        setDmReplyTarget={setDmReplyTarget}
+        setMessageContextMenu={setMessageContextMenu}
+        togglePinMessage={togglePinMessage}
+        setStatus={setStatus}
+        canDeleteServerMessages={canDeleteServerMessages}
+        deleteServerMessage={deleteServerMessage}
+        deleteDmMessage={deleteDmMessage}
+        memberContextMenu={memberContextMenu}
+        voiceStateByUserId={voiceStateByUserId}
+        getVoiceMemberAudioPref={getVoiceMemberAudioPref}
+        setVoiceMemberAudioPref={setVoiceMemberAudioPref}
+        promptSetVoiceMemberLocalVolume={promptSetVoiceMemberLocalVolume}
+        me={me}
+        canServerMuteMembers={canServerMuteMembers}
+        canServerDeafenMembers={canServerDeafenMembers}
+        canMoveVoiceMembers={canMoveVoiceMembers}
+        setServerVoiceMemberState={setServerVoiceMemberState}
+        disconnectVoiceMember={disconnectVoiceMember}
+        openMemberProfile={openMemberProfile}
+        openDmFromFriend={openDmFromFriend}
+        canKickMembers={canKickMembers}
+        kickMember={kickMember}
+        canBanMembers={canBanMembers}
+        banMember={banMember}
+        canModerateMembers={canModerateMembers}
+        setModerationMemberId={setModerationMemberId}
+        setSettingsOpen={setSettingsOpen}
+        setSettingsTab={setSettingsTab}
+        setMemberContextMenu={setMemberContextMenu}
+        serverContextMenu={serverContextMenu}
+        openServerFromContext={openServerFromContext}
+        canManageServer={canManageServer}
+        activeServerId={activeServerId}
+        workingGuildId={workingGuildId}
+        promptCreateChannelFlow={promptCreateChannelFlow}
+        moveServerInRail={moveServerInRail}
+        setInviteServerId={setInviteServerId}
+        copyServerId={copyServerId}
+        leaveServer={leaveServer}
+        deleteServer={deleteServer}
+        setServerContextMenu={setServerContextMenu}
+        channelContextMenu={channelContextMenu}
+        openChannelSettings={openChannelSettings}
+        setChannelPermsChannelId={setChannelPermsChannelId}
+        setChannelContextMenu={setChannelContextMenu}
+        setActiveChannelId={setActiveChannelId}
+        deleteChannelById={deleteChannelById}
+        categoryContextMenu={categoryContextMenu}
+        setCategoryContextMenu={setCategoryContextMenu}
+      />
 
-      {memberContextMenu && (
-        <div
-          className="server-context-menu"
-          style={{ top: memberContextMenu.y, left: memberContextMenu.x }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {(() => {
-            const memberId = memberContextMenu.member?.id;
-            const memberVoice = memberId
-              ? voiceStateByUserId.get(memberId)
-              : null;
-            const localVoicePref = getVoiceMemberAudioPref(memberId);
-            return (
-              <>
-                {memberVoice?.channelId && (
-                  <button className="ghost" disabled>
-                    In voice: {memberVoice.channelId}
-                  </button>
-                )}
-                <button
-                  onClick={() => {
-                    setVoiceMemberAudioPref(memberId, {
-                      muted: !localVoicePref.muted,
-                    });
-                    setStatus(
-                      localVoicePref.muted
-                        ? "Local voice unmuted for member."
-                        : "Local voice muted for member.",
-                    );
-                    setMemberContextMenu(null);
-                  }}
-                >
-                  {localVoicePref.muted ? "Local Unmute" : "Local Mute"}
-                </button>
-                <button
-                  onClick={async () => {
-                    await promptSetVoiceMemberLocalVolume(memberId);
-                    setMemberContextMenu(null);
-                  }}
-                >
-                  Local Volume ({localVoicePref.volume}%)
-                </button>
-                {memberVoice?.channelId &&
-                  memberId !== me?.id &&
-                  canServerMuteMembers && (
-                    <button
-                      className={memberVoice.muted ? "danger" : "ghost"}
-                      onClick={async () => {
-                        await setServerVoiceMemberState(
-                          memberVoice.channelId,
-                          memberId,
-                          { muted: !memberVoice.muted },
-                        );
-                        setMemberContextMenu(null);
-                      }}
-                    >
-                      {memberVoice.muted ? "Server Unmute" : "Server Mute"}
-                    </button>
-                  )}
-                {memberVoice?.channelId &&
-                  memberId !== me?.id &&
-                  canServerDeafenMembers && (
-                    <button
-                      className={memberVoice.deafened ? "danger" : "ghost"}
-                      onClick={async () => {
-                        await setServerVoiceMemberState(
-                          memberVoice.channelId,
-                          memberId,
-                          { deafened: !memberVoice.deafened },
-                        );
-                        setMemberContextMenu(null);
-                      }}
-                    >
-                      {memberVoice.deafened
-                        ? "Server Undeafen"
-                        : "Server Deafen"}
-                    </button>
-                  )}
-                {memberVoice?.channelId &&
-                  memberId !== me?.id &&
-                  canMoveVoiceMembers && (
-                    <button
-                      className="danger"
-                      onClick={async () => {
-                        await disconnectVoiceMember(
-                          memberVoice.channelId,
-                          memberId,
-                        );
-                        setMemberContextMenu(null);
-                      }}
-                    >
-                      Disconnect From VC
-                    </button>
-                  )}
-              </>
-            );
-          })()}
-          <button
-            onClick={() => {
-              openMemberProfile(memberContextMenu.member, {
-                x: memberContextMenu.x,
-                y: memberContextMenu.y,
-              });
-              setMemberContextMenu(null);
-            }}
-          >
-            View Profile
-          </button>
-          <button
-            onClick={() => {
-              openDmFromFriend({
-                id: memberContextMenu.member.id,
-                username:
-                  memberContextMenu.member.username ||
-                  memberContextMenu.member.id,
-              });
-              setMemberContextMenu(null);
-            }}
-          >
-            Message
-          </button>
-          <button
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(
-                  memberContextMenu.member.id || "",
-                );
-                setStatus("User ID copied.");
-              } catch {
-                setStatus("Could not copy user ID.");
-              }
-              setMemberContextMenu(null);
-            }}
-          >
-            Copy User ID
-          </button>
-          {canKickMembers && memberContextMenu.member.id !== me?.id && (
-            <button
-              className="danger"
-              onClick={async () => {
-                await kickMember(memberContextMenu.member.id);
-                setMemberContextMenu(null);
-              }}
-            >
-              Kick Member
-            </button>
-          )}
-          {canBanMembers && memberContextMenu.member.id !== me?.id && (
-            <button
-              className="danger"
-              onClick={async () => {
-                await banMember(memberContextMenu.member.id, "");
-                setMemberContextMenu(null);
-              }}
-            >
-              Ban Member
-            </button>
-          )}
-          {canModerateMembers && (
-            <button
-              onClick={() => {
-                setModerationMemberId(memberContextMenu.member.id || "");
-                setSettingsOpen(true);
-                setSettingsTab("moderation");
-                setMemberContextMenu(null);
-              }}
-            >
-              Open Moderation Panel
-            </button>
-          )}
-        </div>
-      )}
+      <AddServerModal
+        addServerModalOpen={addServerModalOpen}
+        setAddServerModalOpen={setAddServerModalOpen}
+        addServerTab={addServerTab}
+        setAddServerTab={setAddServerTab}
+        canAccessServerAdminPanel={canAccessServerAdminPanel}
+        resolveStaticPageHref={resolveStaticPageHref}
+        joinInviteCode={joinInviteCode}
+        setJoinInviteCode={setJoinInviteCode}
+        previewInvite={previewInvite}
+        joinInvite={joinInvite}
+        invitePendingCode={invitePendingCode}
+        invitePreview={invitePreview}
+        newServerName={newServerName}
+        setNewServerName={setNewServerName}
+        newServerBaseUrl={newServerBaseUrl}
+        setNewServerBaseUrl={setNewServerBaseUrl}
+        newServerLogoUrl={newServerLogoUrl}
+        setNewServerLogoUrl={setNewServerLogoUrl}
+        onImageFieldUpload={onImageFieldUpload}
+        newServerBannerUrl={newServerBannerUrl}
+        setNewServerBannerUrl={setNewServerBannerUrl}
+        createServer={createServer}
+        newOfficialServerName={newOfficialServerName}
+        setNewOfficialServerName={setNewOfficialServerName}
+        newOfficialServerLogoUrl={newOfficialServerLogoUrl}
+        setNewOfficialServerLogoUrl={setNewOfficialServerLogoUrl}
+        newOfficialServerBannerUrl={newOfficialServerBannerUrl}
+        setNewOfficialServerBannerUrl={setNewOfficialServerBannerUrl}
+        createOfficialServer={createOfficialServer}
+      />
 
-      {serverContextMenu && (
-        <div
-          className="server-context-menu"
-          style={{ top: serverContextMenu.y, left: serverContextMenu.x }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button
-            onClick={() => openServerFromContext(serverContextMenu.server.id)}
-          >
-            Open Server
-          </button>
-          {canManageServer &&
-            serverContextMenu.server.id === activeServerId &&
-            !!workingGuildId && (
-              <>
-                <button
-                  onClick={() => {
-                    promptCreateChannelFlow({ fixedType: "text" });
-                    setServerContextMenu(null);
-                  }}
-                >
-                  Create Text Channel
-                </button>
-                <button
-                  onClick={() => {
-                    promptCreateChannelFlow({ fixedType: "voice" });
-                    setServerContextMenu(null);
-                  }}
-                >
-                  Create Voice Channel
-                </button>
-                <button
-                  onClick={() => {
-                    promptCreateChannelFlow({ fixedType: "category" });
-                    setServerContextMenu(null);
-                  }}
-                >
-                  Create Category
-                </button>
-              </>
-            )}
-          <button
-            onClick={() => moveServerInRail(serverContextMenu.server.id, "up")}
-          >
-            Move Up
-          </button>
-          <button
-            onClick={() =>
-              moveServerInRail(serverContextMenu.server.id, "down")
-            }
-          >
-            Move Down
-          </button>
-          <button
-            onClick={() => {
-              setInviteServerId(serverContextMenu.server.id);
-              setSettingsOpen(true);
-              setSettingsTab("invites");
-              setServerContextMenu(null);
-            }}
-          >
-            Create Invite
-          </button>
-          <button onClick={() => copyServerId(serverContextMenu.server.id)}>
-            Copy Server ID
-          </button>
-          <button
-            onClick={() => {
-              setSettingsOpen(true);
-              setSettingsTab("server");
-              setServerContextMenu(null);
-            }}
-          >
-            Server Settings
-          </button>
-          <button
-            className="danger"
-            onClick={() => leaveServer(serverContextMenu.server)}
-          >
-            Leave Server
-          </button>
-          {(serverContextMenu.server.roles || []).includes("owner") && (
-            <button
-              className="danger"
-              onClick={() => deleteServer(serverContextMenu.server)}
-            >
-              Delete Server
-            </button>
-          )}
-        </div>
-      )}
+      <MemberProfilePopout
+        memberProfileCard={memberProfileCard}
+        memberProfilePopoutRef={memberProfilePopoutRef}
+        profileCardPosition={profileCardPosition}
+        openMemberContextMenu={openMemberContextMenu}
+        startDraggingProfileCard={startDraggingProfileCard}
+        profileImageUrl={profileImageUrl}
+        getInitials={getInitials}
+        presenceLabel={presenceLabel}
+        getPresence={getPresence}
+        formatAccountCreated={formatAccountCreated}
+        getBadgePresentation={getBadgePresentation}
+        guildState={guildState}
+        getRichPresence={getRichPresence}
+        openDmFromFriend={openDmFromFriend}
+        openFullProfileViewer={openFullProfileViewer}
+        canKickMembers={canKickMembers}
+        me={me}
+        kickMember={kickMember}
+        canBanMembers={canBanMembers}
+        banMember={banMember}
+        setMemberProfileCard={setMemberProfileCard}
+      />
 
-      {channelContextMenu && (
-        <div
-          className="server-context-menu"
-          style={{ top: channelContextMenu.y, left: channelContextMenu.x }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {canManageServer && (
-            <>
-              <button
-                onClick={() => openChannelSettings(channelContextMenu.channel)}
-              >
-                Edit Channel
-              </button>
-              <button
-                onClick={() => {
-                  setChannelPermsChannelId(channelContextMenu.channel.id);
-                  setSettingsOpen(true);
-                  setSettingsTab("server");
-                  setChannelContextMenu(null);
-                }}
-              >
-                Permissions
-              </button>
-            </>
-          )}
-          <button
-            onClick={() => {
-              setActiveChannelId(channelContextMenu.channel.id);
-              setChannelContextMenu(null);
-            }}
-          >
-            Open
-          </button>
-          {canManageServer && (
-            <button
-              className="danger"
-              onClick={() => deleteChannelById(channelContextMenu.channel)}
-            >
-              Delete
-            </button>
-          )}
-        </div>
-      )}
+      <FullProfileViewerModal
+        fullProfileViewer={fullProfileViewer}
+        setFullProfileViewer={setFullProfileViewer}
+        profileImageUrl={profileImageUrl}
+        getFullProfileFontFamily={getFullProfileFontFamily}
+        getFullProfileElementFrameStyle={getFullProfileElementFrameStyle}
+        toggleFullProfileViewerMusicPlayback={toggleFullProfileViewerMusicPlayback}
+        renderFullProfileElement={renderFullProfileElement}
+        fullProfileViewerMusicPlaying={fullProfileViewerMusicPlaying}
+        fullProfileViewerHasPlayableMusic={fullProfileViewerHasPlayableMusic}
+        fullProfileViewerMusicAudioRef={fullProfileViewerMusicAudioRef}
+        setFullProfileViewerMusicPlaying={setFullProfileViewerMusicPlaying}
+      />
 
-      {categoryContextMenu && (
-        <div
-          className="server-context-menu"
-          style={{ top: categoryContextMenu.y, left: categoryContextMenu.x }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {canManageServer && (
-            <>
-              <button
-                onClick={() => {
-                  promptCreateChannelFlow({
-                    fixedType: "text",
-                    fixedParentId: categoryContextMenu.category.id,
-                  });
-                  setCategoryContextMenu(null);
-                }}
-              >
-                Create Text Channel
-              </button>
-              <button
-                onClick={() => {
-                  promptCreateChannelFlow({
-                    fixedType: "voice",
-                    fixedParentId: categoryContextMenu.category.id,
-                  });
-                  setCategoryContextMenu(null);
-                }}
-              >
-                Create Voice Channel
-              </button>
-              <button
-                onClick={() =>
-                  openChannelSettings(categoryContextMenu.category)
-                }
-              >
-                Edit Category
-              </button>
-              <button
-                className="danger"
-                onClick={() => deleteChannelById(categoryContextMenu.category)}
-              >
-                Delete Category
-              </button>
-            </>
-          )}
-        </div>
-      )}
+      <AppDialogModal
+        dialogModal={dialogModal}
+        resolveDialog={resolveDialog}
+        setDialogModal={setDialogModal}
+        dialogInputRef={dialogInputRef}
+      />
 
-      {addServerModalOpen && (
-        <div
-          className="settings-overlay"
-          onClick={() => setAddServerModalOpen(false)}
-        >
-          <div
-            className="add-server-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header className="add-server-modal-header">
-              <h3 style={{ margin: 0 }}>Create or join a server</h3>
-              <div className="add-server-tabs">
-                <button
-                  type="button"
-                  className={addServerTab === "join" ? "active" : "ghost"}
-                  onClick={() => setAddServerTab("join")}
-                >
-                  Join
-                </button>
-                <button
-                  type="button"
-                  className={addServerTab === "custom" ? "active" : "ghost"}
-                  onClick={() => setAddServerTab("custom")}
-                >
-                  Add host
-                </button>
-                <button
-                  type="button"
-                  className={addServerTab === "create" ? "active" : "ghost"}
-                  onClick={() => setAddServerTab("create")}
-                >
-                  Create yours
-                </button>
-                {canAccessServerAdminPanel && (
-                  <a
-                    href={resolveStaticPageHref("server-admin.html")}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="add-server-admin-link"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    🔧 Admin
-                  </a>
-                )}
-              </div>
-            </header>
+      <BoostUpsellModal
+        boostUpsell={boostUpsell}
+        setBoostUpsell={setBoostUpsell}
+        openBoostSettingsFromUpsell={openBoostSettingsFromUpsell}
+      />
 
-            <div className="add-server-content">
-              {addServerTab === "join" && (
-                <section className="card">
-                  <p className="hint" style={{ marginBottom: "0.5rem" }}>
-                    Paste an invite code or full join link. Invite links are
-                    previewed and need explicit accept.
-                  </p>
-                  <input
-                    placeholder="Invite code or join link"
-                    value={joinInviteCode ?? ""}
-                    onChange={(e) => setJoinInviteCode(e.target.value)}
-                    style={{
-                      width: "100%",
-                      marginBottom: "0.5rem",
-                      padding: "0.5rem",
-                    }}
-                  />
-                  <div
-                    className="row-actions"
-                    style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}
-                  >
-                    <button className="ghost" onClick={previewInvite}>
-                      Preview
-                    </button>
-                    <button
-                      onClick={() =>
-                        joinInvite(invitePendingCode || joinInviteCode)
-                      }
-                    >
-                      Accept Invite
-                    </button>
-                  </div>
-                  {invitePreview && (
-                    <p className="hint" style={{ marginTop: "0.5rem" }}>
-                      Invite: {invitePreview.code} · Server:{" "}
-                      {invitePreview.serverName || invitePreview.server_id} ·
-                      Uses: {invitePreview.uses}
-                    </p>
-                  )}
-                </section>
-              )}
+      <BoostGiftPromptModal
+        boostGiftPrompt={boostGiftPrompt}
+        setBoostGiftPrompt={setBoostGiftPrompt}
+        boostGiftRedeeming={boostGiftRedeeming}
+        redeemBoostGift={redeemBoostGift}
+      />
 
-              {addServerTab === "custom" && (
-                <section className="card">
-                  <p className="hint" style={{ marginBottom: "0.5rem" }}>
-                    Connect to a server node by URL (self-hosted or provider).
-                  </p>
-                  <input
-                    placeholder="Server name"
-                    value={newServerName ?? ""}
-                    onChange={(e) => setNewServerName(e.target.value)}
-                    style={{
-                      width: "100%",
-                      marginBottom: "0.5rem",
-                      padding: "0.5rem",
-                    }}
-                  />
-                  <input
-                    placeholder="https://node.example.com"
-                    value={newServerBaseUrl ?? "https://"}
-                    onChange={(e) => setNewServerBaseUrl(e.target.value)}
-                    style={{
-                      width: "100%",
-                      marginBottom: "0.5rem",
-                      padding: "0.5rem",
-                    }}
-                  />
-                  <input
-                    placeholder="Logo URL (.png/.jpg/.webp/.svg)"
-                    value={newServerLogoUrl ?? ""}
-                    onChange={(e) => setNewServerLogoUrl(e.target.value)}
-                    style={{
-                      width: "100%",
-                      marginBottom: "0.5rem",
-                      padding: "0.5rem",
-                    }}
-                  />
-                  <label style={{ display: "block", marginBottom: "0.5rem" }}>
-                    Upload Logo
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(event) =>
-                        onImageFieldUpload(
-                          event,
-                          "server logo",
-                          setNewServerLogoUrl,
-                        )
-                      }
-                      style={{ width: "100%", marginTop: "0.35rem" }}
-                    />
-                  </label>
-                  <input
-                    placeholder="Banner URL (optional)"
-                    value={newServerBannerUrl ?? ""}
-                    onChange={(e) => setNewServerBannerUrl(e.target.value)}
-                    style={{
-                      width: "100%",
-                      marginBottom: "0.5rem",
-                      padding: "0.5rem",
-                    }}
-                  />
-                  <label style={{ display: "block", marginBottom: "0.5rem" }}>
-                    Upload Banner
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(event) =>
-                        onImageFieldUpload(
-                          event,
-                          "server banner",
-                          setNewServerBannerUrl,
-                        )
-                      }
-                      style={{ width: "100%", marginTop: "0.35rem" }}
-                    />
-                  </label>
-                  <button
-                    onClick={createServer}
-                    disabled={
-                      !newServerName.trim() ||
-                      !newServerBaseUrl.trim() ||
-                      !newServerLogoUrl.trim()
-                    }
-                  >
-                    Add Server
-                  </button>
-                </section>
-              )}
-
-              {addServerTab === "create" && (
-                <section className="card">
-                  <p className="hint" style={{ marginBottom: "0.5rem" }}>
-                    One server hosted by us—name it and customize channels and
-                    roles.
-                  </p>
-                  <input
-                    placeholder="Server name"
-                    value={newOfficialServerName ?? ""}
-                    onChange={(e) => setNewOfficialServerName(e.target.value)}
-                    style={{
-                      width: "100%",
-                      marginBottom: "0.5rem",
-                      padding: "0.5rem",
-                    }}
-                  />
-                  <input
-                    placeholder="Logo URL (.png/.jpg/.webp/.svg)"
-                    value={newOfficialServerLogoUrl ?? ""}
-                    onChange={(e) =>
-                      setNewOfficialServerLogoUrl(e.target.value)
-                    }
-                    style={{
-                      width: "100%",
-                      marginBottom: "0.5rem",
-                      padding: "0.5rem",
-                    }}
-                  />
-                  <label style={{ display: "block", marginBottom: "0.5rem" }}>
-                    Upload Logo
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(event) =>
-                        onImageFieldUpload(
-                          event,
-                          "server logo",
-                          setNewOfficialServerLogoUrl,
-                        )
-                      }
-                      style={{ width: "100%", marginTop: "0.35rem" }}
-                    />
-                  </label>
-                  <input
-                    placeholder="Banner URL (optional)"
-                    value={newOfficialServerBannerUrl ?? ""}
-                    onChange={(e) =>
-                      setNewOfficialServerBannerUrl(e.target.value)
-                    }
-                    style={{
-                      width: "100%",
-                      marginBottom: "0.5rem",
-                      padding: "0.5rem",
-                    }}
-                  />
-                  <label style={{ display: "block", marginBottom: "0.5rem" }}>
-                    Upload Banner
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(event) =>
-                        onImageFieldUpload(
-                          event,
-                          "server banner",
-                          setNewOfficialServerBannerUrl,
-                        )
-                      }
-                      style={{ width: "100%", marginTop: "0.35rem" }}
-                    />
-                  </label>
-                  <button
-                    onClick={createOfficialServer}
-                    disabled={
-                      !newOfficialServerName?.trim() ||
-                      !newOfficialServerLogoUrl?.trim()
-                    }
-                  >
-                    Create your server
-                  </button>
-                </section>
-              )}
-            </div>
-
-            <button
-              type="button"
-              className="danger"
-              style={{ width: "100%", marginTop: "0.5rem" }}
-              onClick={() => setAddServerModalOpen(false)}
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-
-      {memberProfileCard && (
-        <div
-          ref={memberProfilePopoutRef}
-          className="member-profile-popout"
-          style={{
-            left: profileCardPosition.x,
-            top: profileCardPosition.y,
-            right: "auto",
-            bottom: "auto",
-          }}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) =>
-            openMemberContextMenu(event, memberProfileCard)
-          }
-        >
-          <div
-            className="popout-drag-handle"
-            onPointerDown={startDraggingProfileCard}
-          >
-            Drag
-          </div>
-          <div
-            className="popout-banner"
-            style={{
-              backgroundImage: memberProfileCard.bannerUrl
-                ? `url(${profileImageUrl(memberProfileCard.bannerUrl)})`
-                : undefined,
-            }}
-          />
-          <div className="popout-content">
-            <div className="avatar popout-avatar">
-              {memberProfileCard.pfpUrl ? (
-                <img
-                  src={profileImageUrl(memberProfileCard.pfpUrl)}
-                  alt="Profile avatar"
-                  className="avatar-image"
-                />
-              ) : (
-                getInitials(
-                  memberProfileCard.displayName ||
-                    memberProfileCard.username ||
-                    "User",
-                )
-              )}
-            </div>
-            <h4>
-              {memberProfileCard.displayName || memberProfileCard.username}
-            </h4>
-            <p className="hint">
-              @{memberProfileCard.username} ·{" "}
-              {presenceLabel(
-                getPresence(memberProfileCard?.id) ||
-                  memberProfileCard?.status ||
-                  "offline",
-              )}
-            </p>
-            {memberProfileCard.platformTitle && (
-              <p className="hint">{memberProfileCard.platformTitle}</p>
-            )}
-            {formatAccountCreated(memberProfileCard.createdAt) && (
-              <p className="hint">
-                Account created:{" "}
-                {formatAccountCreated(memberProfileCard.createdAt)}
-              </p>
-            )}
-            {Array.isArray(memberProfileCard.badgeDetails) &&
-              memberProfileCard.badgeDetails.length > 0 && (
-                <div className="popout-roles">
-                  {memberProfileCard.badgeDetails.map((badge, index) => {
-                    const display = getBadgePresentation(badge);
-                    return (
-                      <span
-                        key={`${badge.id || badge.name || "badge"}-${index}`}
-                        className="popout-role-tag"
-                        title={display.name}
-                        style={{
-                          backgroundColor: display.bgColor,
-                          color: display.fgColor,
-                          borderColor: display.bgColor,
-                        }}
-                      >
-                        {display.icon}
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-            {memberProfileCard.roleIds?.length > 0 && guildState?.roles && (
-              <div className="popout-roles">
-                {(guildState.roles || [])
-                  .filter(
-                    (r) =>
-                      (memberProfileCard.roleIds || []).includes(r.id) &&
-                      !r.is_everyone,
-                  )
-                  .sort((a, b) => (b.position ?? 0) - (a.position ?? 0))
-                  .map((role) => {
-                    const hex =
-                      role.color != null && role.color !== ""
-                        ? typeof role.color === "number"
-                          ? `#${Number(role.color).toString(16).padStart(6, "0")}`
-                          : role.color
-                        : "#99aab5";
-                    return (
-                      <span
-                        key={role.id}
-                        className="popout-role-tag"
-                        style={{
-                          backgroundColor: hex + "22",
-                          color: hex,
-                          borderColor: hex,
-                        }}
-                      >
-                        {role.name}
-                      </span>
-                    );
-                  })}
-              </div>
-            )}
-            <p>{memberProfileCard.bio || "No bio set."}</p>
-            {(() => {
-              const rich = getRichPresence(memberProfileCard.id);
-              return rich ? (
-                <div
-                  className="message-embed-card"
-                  style={{ marginTop: "8px", marginBottom: "8px" }}
-                >
-                  {rich.largeImageUrl && (
-                    <img
-                      src={rich.largeImageUrl}
-                      alt={rich.largeImageText || "Activity"}
-                      style={{
-                        width: "100%",
-                        borderRadius: "8px",
-                        marginBottom: "6px",
-                      }}
-                    />
-                  )}
-                  <strong>{rich.name || "Activity"}</strong>
-                  {rich.details && <p>{rich.details}</p>}
-                  {rich.state && <p>{rich.state}</p>}
-                  {Array.isArray(rich.buttons) && rich.buttons.length > 0 && (
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "6px",
-                        flexWrap: "wrap",
-                        marginTop: "6px",
-                      }}
-                    >
-                      {rich.buttons.map((button, index) => (
-                        <a
-                          key={`${button.url}-${index}`}
-                          href={button.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="ghost"
-                          style={{
-                            padding: "4px 8px",
-                            borderRadius: "8px",
-                            border: "1px solid var(--border-subtle)",
-                            textDecoration: "none",
-                            color: "var(--text-soft)",
-                          }}
-                        >
-                          {button.label}
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : null;
-            })()}
-            <div className="popout-actions">
-              <button
-                className="ghost"
-                onClick={() =>
-                  openDmFromFriend({
-                    id: memberProfileCard.id,
-                    username: memberProfileCard.username,
-                  })
-                }
-              >
-                Message
-              </button>
-              <button
-                className="ghost"
-                onClick={() => openFullProfileViewer(memberProfileCard)}
-              >
-                View Full Profile
-              </button>
-              {canKickMembers && memberProfileCard.id !== me?.id && (
-                <button
-                  className="ghost"
-                  onClick={() => kickMember(memberProfileCard.id)}
-                >
-                  Kick
-                </button>
-              )}
-              {canBanMembers && memberProfileCard.id !== me?.id && (
-                <button
-                  className="danger"
-                  onClick={() => banMember(memberProfileCard.id, "")}
-                >
-                  Ban
-                </button>
-              )}
-              <button onClick={() => setMemberProfileCard(null)}>Close</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {fullProfileViewer && (
-        <div
-          className="settings-overlay"
-          onClick={() => setFullProfileViewer(null)}
-        >
-          <div
-            className="full-profile-viewer-fullscreen"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="full-profile-viewer-head">
-              <h3>
-                {fullProfileViewer.displayName || fullProfileViewer.username}'s
-                Full Profile
-              </h3>
-              <button
-                className="danger"
-                onClick={() => setFullProfileViewer(null)}
-              >
-                Close
-              </button>
-            </div>
-            <div
-              className="full-profile-canvas full-profile-canvas-readonly full-profile-viewer-canvas profile-studio-canvas"
-              style={{
-                background:
-                  fullProfileViewer.fullProfile?.theme?.background ||
-                  "linear-gradient(150deg, #16274b, #0f1a33 65%)",
-                color: fullProfileViewer.fullProfile?.theme?.text || "#dfe9ff",
-                "--full-profile-accent":
-                  fullProfileViewer.fullProfile?.theme?.accent || "#9bb6ff",
-                "--full-profile-font": getFullProfileFontFamily(
-                  fullProfileViewer.fullProfile?.theme?.fontPreset || "sans",
-                ),
-              }}
-            >
-              <div
-                className="full-profile-canvas-card"
-                style={{
-                  background:
-                    fullProfileViewer.fullProfile?.theme?.card ||
-                    "rgba(9, 14, 28, 0.62)",
-                }}
-              >
-                {(fullProfileViewer.fullProfile?.elements || [])
-                  .slice()
-                  .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-                  .map((element) => (
-                    <div
-                      key={element.id}
-                      className={`full-profile-element full-profile-element-${element.type}`}
-                      style={getFullProfileElementFrameStyle(element)}
-                      onClick={(event) => {
-                        if (
-                          String(element.type || "").toLowerCase() !== "music"
-                        )
-                          return;
-                        event.preventDefault();
-                        event.stopPropagation();
-                        toggleFullProfileViewerMusicPlayback().catch(() => {});
-                      }}
-                    >
-                      {renderFullProfileElement(element, fullProfileViewer, {
-                        musicPlaying: fullProfileViewerMusicPlaying,
-                      })}
-                    </div>
-                  ))}
-              </div>
-            </div>
-            {fullProfileViewerHasPlayableMusic && (
-              <audio
-                ref={fullProfileViewerMusicAudioRef}
-                src={
-                  profileImageUrl(fullProfileViewer.fullProfile.music.url) ||
-                  fullProfileViewer.fullProfile.music.url
-                }
-                preload="metadata"
-                onPlay={() => setFullProfileViewerMusicPlaying(true)}
-                onPause={() => setFullProfileViewerMusicPlaying(false)}
-                onEnded={() => setFullProfileViewerMusicPlaying(false)}
-                style={{ display: "none" }}
-              />
-            )}
-          </div>
-        </div>
-      )}
-
-      {dialogModal && (
-        <div
-          className="settings-overlay"
-          onClick={() =>
-            resolveDialog(dialogModal.type === "confirm" ? false : null)
-          }
-        >
-          <div
-            className="add-server-modal opencom-dialog-modal"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h3>{dialogModal.title}</h3>
-            <p className="hint opencom-dialog-message">{dialogModal.message}</p>
-            {dialogModal.type === "prompt" && (
-              <input
-                ref={dialogInputRef}
-                value={dialogModal.value}
-                onChange={(event) =>
-                  setDialogModal((current) =>
-                    current
-                      ? { ...current, value: event.target.value }
-                      : current,
-                  )
-                }
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    resolveDialog(null);
-                  }
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    resolveDialog(dialogModal.value);
-                  }
-                }}
-              />
-            )}
-            <div className="row-actions opencom-dialog-actions">
-              {dialogModal.type !== "alert" && (
-                <button
-                  className="ghost"
-                  onClick={() =>
-                    resolveDialog(dialogModal.type === "confirm" ? false : null)
-                  }
-                >
-                  {dialogModal.cancelLabel || "Cancel"}
-                </button>
-              )}
-              <button
-                onClick={() =>
-                  resolveDialog(
-                    dialogModal.type === "prompt" ? dialogModal.value : true,
-                  )
-                }
-              >
-                {dialogModal.confirmLabel || "OK"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {boostUpsell && (
-        <div className="settings-overlay" onClick={() => setBoostUpsell(null)}>
-          <div
-            className="add-server-modal boost-upsell-modal"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h3>{boostUpsell.title}</h3>
-            <p className="hint">{boostUpsell.reason}</p>
-            <div className="row-actions boost-actions">
-              <button onClick={openBoostSettingsFromUpsell}>
-                {boostUpsell.cta}
-              </button>
-              <button className="ghost" onClick={() => setBoostUpsell(null)}>
-                Maybe later
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {boostGiftPrompt && (
-        <div
-          className="settings-overlay"
-          onClick={() => setBoostGiftPrompt(null)}
-        >
-          <div
-            className="add-server-modal boost-upsell-modal"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h3>Redeem Boost Gift?</h3>
-            <p className="hint">
-              <strong>{boostGiftPrompt.from?.username || "Someone"}</strong>{" "}
-              sent you {boostGiftPrompt.grantDays || 30} days of Boost.
-            </p>
-            <p className="hint">
-              This gift expires on{" "}
-              {boostGiftPrompt.expiresAt
-                ? new Date(boostGiftPrompt.expiresAt).toLocaleDateString()
-                : "soon"}
-              .
-            </p>
-            <div className="row-actions boost-actions">
-              <button
-                onClick={() => redeemBoostGift(boostGiftPrompt.code)}
-                disabled={boostGiftRedeeming}
-              >
-                {boostGiftRedeeming ? "Redeeming…" : "Accept Gift"}
-              </button>
-              <button
-                className="ghost"
-                onClick={() => setBoostGiftPrompt(null)}
-              >
-                Not now
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {settingsOpen && (
-        <div
-          className="settings-overlay"
-          onClick={() => setSettingsOpen(false)}
-        >
-          <div
-            className="settings-panel"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <aside className="settings-nav">
-              <h3>Settings</h3>
-              <button
-                className={settingsTab === "profile" ? "active" : "ghost"}
-                onClick={() => setSettingsTab("profile")}
-              >
-                Profile
-              </button>
-              <button
-                className={settingsTab === "security" ? "active" : "ghost"}
-                onClick={() => {
-                  setSettingsTab("security");
-                  loadSessions();
-                }}
-              >
-                🔒 Security
-              </button>
-              <button
-                className={settingsTab === "billing" ? "active" : "ghost"}
-                onClick={() => {
-                  setSettingsTab("billing");
-                  loadBoostStatus();
-                  loadSentBoostGifts();
-                }}
-              >
-                💳 Billing
-              </button>
-              <button
-                className={settingsTab === "server" ? "active" : "ghost"}
-                onClick={() => setSettingsTab("server")}
-              >
-                Server
-              </button>
-              <button
-                className={settingsTab === "roles" ? "active" : "ghost"}
-                onClick={() => setSettingsTab("roles")}
-              >
-                Roles
-              </button>
-              {canModerateMembers && (
-                <button
-                  className={settingsTab === "moderation" ? "active" : "ghost"}
-                  onClick={() => setSettingsTab("moderation")}
-                >
-                  Moderation
-                </button>
-              )}
-              <button
-                className={settingsTab === "invites" ? "active" : "ghost"}
-                onClick={() => setSettingsTab("invites")}
-              >
-                Invites
-              </button>
-              <button
-                className={settingsTab === "appearance" ? "active" : "ghost"}
-                onClick={() => setSettingsTab("appearance")}
-              >
-                Appearance
-              </button>
-              <button
-                className={settingsTab === "extensions" ? "active" : "ghost"}
-                onClick={() => setSettingsTab("extensions")}
-              >
-                Extensions
-              </button>
-              <button
-                className={settingsTab === "voice" ? "active" : "ghost"}
-                onClick={() => setSettingsTab("voice")}
-              >
-                Voice
-              </button>
-              {canAccessServerAdminPanel && (
-                <a
-                  href={resolveStaticPageHref("server-admin.html")}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    display: "block",
-                    padding: "var(--space-sm) var(--space-md)",
-                    background: "rgba(149, 168, 205, 0.12)",
-                    border: "1px solid rgba(125, 164, 255, 0.25)",
-                    borderRadius: "calc(var(--radius) * 0.9)",
-                    color: "var(--text-main)",
-                    textDecoration: "none",
-                    textAlign: "center",
-                    fontWeight: "500",
-                    cursor: "pointer",
-                    fontSize: "0.95em",
-                  }}
-                >
-                  🔧 Server Admin Panel
-                </a>
-              )}
-              <button className="danger" onClick={() => setSettingsOpen(false)}>
-                Close
-              </button>
-              <button className="danger" onClick={logout}>
-                Log out
-              </button>
-            </aside>
-
-            <section className="settings-content">
+      <SettingsOverlay
+        settingsOpen={settingsOpen}
+        closeSettings={() => setSettingsOpen(false)}
+        settingsTab={settingsTab}
+        setSettingsTab={setSettingsTab}
+        onOpenSecurity={() => {
+          setSettingsTab("security");
+          loadSessions();
+        }}
+        onOpenBilling={() => {
+          setSettingsTab("billing");
+          loadBoostStatus();
+          loadSentBoostGifts();
+        }}
+        canModerateMembers={canModerateMembers}
+        canAccessServerAdminPanel={canAccessServerAdminPanel}
+        resolveStaticPageHref={resolveStaticPageHref}
+        logout={logout}
+      >
               {settingsTab === "profile" && (
-                <div className="card">
-                  <h4>Profile Settings</h4>
-                  <label>
-                    Display Name
-                    <input
-                      value={profileForm.displayName}
-                      onChange={(event) =>
-                        setProfileForm((current) => ({
-                          ...current,
-                          displayName: event.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Bio
-                    <textarea
-                      rows={4}
-                      value={profileForm.bio}
-                      onChange={(event) =>
-                        setProfileForm((current) => ({
-                          ...current,
-                          bio: event.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Avatar URL
-                    <input
-                      value={profileForm.pfpUrl}
-                      onChange={(event) =>
-                        setProfileForm((current) => ({
-                          ...current,
-                          pfpUrl: event.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Upload Avatar
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={onAvatarUpload}
-                    />
-                  </label>
-                  <label>
-                    Banner URL
-                    <input
-                      value={profileForm.bannerUrl}
-                      onChange={(event) =>
-                        setProfileForm((current) => ({
-                          ...current,
-                          bannerUrl: event.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Upload Banner
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={onBannerUpload}
-                    />
-                  </label>
-                  <button onClick={saveProfile}>Save Profile</button>
-
-                  {!isDesktopRuntime && (
-                    <>
-                      <hr
-                        style={{
-                          borderColor: "var(--border-subtle)",
-                          width: "100%",
-                        }}
-                      />
-                      <h4>Desktop Client</h4>
-                      <p className="hint">
-                        Install the desktop client for the smoothest chat and
-                        voice experience.
-                      </p>
-                      <div className="row-actions" style={{ width: "100%" }}>
-                        <button
-                          type="button"
-                          onClick={openPreferredDesktopDownload}
-                        >
-                          {preferredDownloadTarget
-                            ? `Download ${preferredDownloadTarget.label}`
-                            : "Download client"}
-                        </button>
-                        {DOWNLOAD_TARGETS.filter(
-                          (target) =>
-                            target.href !== preferredDownloadTarget?.href,
-                        ).map((target) => (
-                          <button
-                            key={target.href}
-                            type="button"
-                            className="ghost"
-                            onClick={() =>
-                              window.open(
-                                target.href,
-                                "_blank",
-                                "noopener,noreferrer",
-                              )
-                            }
-                          >
-                            {target.label}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-
-                  <hr
-                    style={{
-                      borderColor: "var(--border-subtle)",
-                      width: "100%",
-                    }}
-                  />
-                  <h4>Full Profile Studio</h4>
-                  <p className="hint">
-                    Use the dedicated Profile page for drag-and-drop full
-                    profile customization.
-                  </p>
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => {
-                      setSettingsOpen(false);
-                      setNavMode("profile");
-                    }}
-                  >
-                    Open Profile Studio
-                  </button>
-
-                  <hr
-                    style={{
-                      borderColor: "var(--border-subtle)",
-                      width: "100%",
-                    }}
-                  />
-                  <h4>Rich Presence (RPC-style)</h4>
-                  <p className="hint">
-                    No app ID needed. Set activity text, image URLs, and
-                    optional buttons.
-                  </p>
-                  <label>
-                    Activity Name
-                    <input
-                      value={rpcForm.name}
-                      onChange={(event) =>
-                        setRpcForm((current) => ({
-                          ...current,
-                          name: event.target.value,
-                        }))
-                      }
-                      placeholder="Playing OpenCom"
-                    />
-                  </label>
-                  <label>
-                    Details
-                    <input
-                      value={rpcForm.details}
-                      onChange={(event) =>
-                        setRpcForm((current) => ({
-                          ...current,
-                          details: event.target.value,
-                        }))
-                      }
-                      placeholder="In a voice channel"
-                    />
-                  </label>
-                  <label>
-                    State
-                    <input
-                      value={rpcForm.state}
-                      onChange={(event) =>
-                        setRpcForm((current) => ({
-                          ...current,
-                          state: event.target.value,
-                        }))
-                      }
-                      placeholder="With friends"
-                    />
-                  </label>
-                  <label>
-                    Large Image URL
-                    <input
-                      value={rpcForm.largeImageUrl}
-                      onChange={(event) =>
-                        setRpcForm((current) => ({
-                          ...current,
-                          largeImageUrl: event.target.value,
-                        }))
-                      }
-                      placeholder="https://..."
-                    />
-                  </label>
-                  <label>
-                    Upload Large Image
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(event) =>
-                        onImageFieldUpload(event, "large image", (imageUrl) =>
-                          setRpcForm((current) => ({
-                            ...current,
-                            largeImageUrl: imageUrl,
-                          })),
-                        )
-                      }
-                    />
-                  </label>
-                  <label>
-                    Large Image Text
-                    <input
-                      value={rpcForm.largeImageText}
-                      onChange={(event) =>
-                        setRpcForm((current) => ({
-                          ...current,
-                          largeImageText: event.target.value,
-                        }))
-                      }
-                      placeholder="Tooltip text"
-                    />
-                  </label>
-                  <label>
-                    Small Image URL
-                    <input
-                      value={rpcForm.smallImageUrl}
-                      onChange={(event) =>
-                        setRpcForm((current) => ({
-                          ...current,
-                          smallImageUrl: event.target.value,
-                        }))
-                      }
-                      placeholder="https://..."
-                    />
-                  </label>
-                  <label>
-                    Upload Small Image
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(event) =>
-                        onImageFieldUpload(event, "small image", (imageUrl) =>
-                          setRpcForm((current) => ({
-                            ...current,
-                            smallImageUrl: imageUrl,
-                          })),
-                        )
-                      }
-                    />
-                  </label>
-                  <label>
-                    Small Image Text
-                    <input
-                      value={rpcForm.smallImageText}
-                      onChange={(event) =>
-                        setRpcForm((current) => ({
-                          ...current,
-                          smallImageText: event.target.value,
-                        }))
-                      }
-                      placeholder="Tooltip text"
-                    />
-                  </label>
-                  <label>
-                    Button 1 Label
-                    <input
-                      value={rpcForm.button1Label}
-                      onChange={(event) =>
-                        setRpcForm((current) => ({
-                          ...current,
-                          button1Label: event.target.value,
-                        }))
-                      }
-                      placeholder="Watch"
-                    />
-                  </label>
-                  <label>
-                    Button 1 URL
-                    <input
-                      value={rpcForm.button1Url}
-                      onChange={(event) =>
-                        setRpcForm((current) => ({
-                          ...current,
-                          button1Url: event.target.value,
-                        }))
-                      }
-                      placeholder="https://..."
-                    />
-                  </label>
-                  <label>
-                    Button 2 Label
-                    <input
-                      value={rpcForm.button2Label}
-                      onChange={(event) =>
-                        setRpcForm((current) => ({
-                          ...current,
-                          button2Label: event.target.value,
-                        }))
-                      }
-                      placeholder="Join"
-                    />
-                  </label>
-                  <label>
-                    Button 2 URL
-                    <input
-                      value={rpcForm.button2Url}
-                      onChange={(event) =>
-                        setRpcForm((current) => ({
-                          ...current,
-                          button2Url: event.target.value,
-                        }))
-                      }
-                      placeholder="https://..."
-                    />
-                  </label>
-                  <div
-                    style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}
-                  >
-                    <button onClick={saveRichPresence}>
-                      Save Rich Presence
-                    </button>
-                    <button className="ghost" onClick={clearRichPresence}>
-                      Clear
-                    </button>
-                  </div>
-                </div>
+                <ProfileSettingsSection
+                  profileForm={profileForm}
+                  setProfileForm={setProfileForm}
+                  onAvatarUpload={onAvatarUpload}
+                  onBannerUpload={onBannerUpload}
+                  saveProfile={saveProfile}
+                  isDesktopRuntime={isDesktopRuntime}
+                  openPreferredDesktopDownload={openPreferredDesktopDownload}
+                  preferredDownloadTarget={preferredDownloadTarget}
+                  downloadTargets={DOWNLOAD_TARGETS}
+                  onOpenProfileStudio={() => {
+                    setSettingsOpen(false);
+                    setNavMode("profile");
+                  }}
+                  rpcForm={rpcForm}
+                  setRpcForm={setRpcForm}
+                  onImageFieldUpload={onImageFieldUpload}
+                  saveRichPresence={saveRichPresence}
+                  clearRichPresence={clearRichPresence}
+                />
               )}
 
               {settingsTab === "server" && (
-                <>
-                  {activeServer && canManageServer && (
-                    <section className="card">
-                      <h4>Server Branding</h4>
-                      <input
-                        placeholder="Server name"
-                        value={serverProfileForm.name ?? ""}
-                        onChange={(e) =>
-                          setServerProfileForm((current) => ({
-                            ...current,
-                            name: e.target.value,
-                          }))
-                        }
-                      />
-                      <input
-                        placeholder="Logo URL"
-                        value={serverProfileForm.logoUrl ?? ""}
-                        onChange={(e) =>
-                          setServerProfileForm((current) => ({
-                            ...current,
-                            logoUrl: e.target.value,
-                          }))
-                        }
-                      />
-                      <label>
-                        Upload Logo
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={(event) =>
-                            onImageFieldUpload(
-                              event,
-                              "server logo",
-                              (imageUrl) =>
-                                setServerProfileForm((current) => ({
-                                  ...current,
-                                  logoUrl: imageUrl,
-                                })),
-                            )
-                          }
-                        />
-                      </label>
-                      <input
-                        placeholder="Banner URL"
-                        value={serverProfileForm.bannerUrl ?? ""}
-                        onChange={(e) =>
-                          setServerProfileForm((current) => ({
-                            ...current,
-                            bannerUrl: e.target.value,
-                          }))
-                        }
-                      />
-                      <label>
-                        Upload Banner
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={(event) =>
-                            onImageFieldUpload(
-                              event,
-                              "server banner",
-                              (imageUrl) =>
-                                setServerProfileForm((current) => ({
-                                  ...current,
-                                  bannerUrl: imageUrl,
-                                })),
-                            )
-                          }
-                        />
-                      </label>
-                      <button onClick={saveActiveServerProfile}>
-                        Save Server Profile
-                      </button>
-                    </section>
-                  )}
-
-                  <section className="card">
-                    <h4>Add Server Provider</h4>
-                    <input
-                      placeholder="Server name"
-                      value={newServerName ?? ""}
-                      onChange={(e) => setNewServerName(e.target.value)}
-                    />
-                    <input
-                      placeholder="https://node.provider.tld"
-                      value={newServerBaseUrl ?? "https://"}
-                      onChange={(e) => setNewServerBaseUrl(e.target.value)}
-                    />
-                    <input
-                      placeholder="Logo URL (.png/.jpg/.webp/.svg)"
-                      value={newServerLogoUrl ?? ""}
-                      onChange={(e) => setNewServerLogoUrl(e.target.value)}
-                    />
-                    <label>
-                      Upload Logo
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(event) =>
-                          onImageFieldUpload(
-                            event,
-                            "server logo",
-                            setNewServerLogoUrl,
-                          )
-                        }
-                      />
-                    </label>
-                    <input
-                      placeholder="Banner URL (optional)"
-                      value={newServerBannerUrl ?? ""}
-                      onChange={(e) => setNewServerBannerUrl(e.target.value)}
-                    />
-                    <label>
-                      Upload Banner
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(event) =>
-                          onImageFieldUpload(
-                            event,
-                            "server banner",
-                            setNewServerBannerUrl,
-                          )
-                        }
-                      />
-                    </label>
-                    <button
-                      onClick={createServer}
-                      disabled={
-                        !newServerName.trim() ||
-                        !newServerBaseUrl.trim() ||
-                        !newServerLogoUrl.trim()
-                      }
-                    >
-                      Add Server
-                    </button>
-                  </section>
-
-                  {activeServer && canManageServer && (
-                    <section className="card">
-                      <h4>Voice Gateway Routing</h4>
-                      <p className="hint">
-                        Default is OpenCom core gateway. Switch to self-hosted
-                        to reduce latency for your server.
-                      </p>
-                      <label>
-                        Voice Gateway Mode
-                        <select
-                          value={activeServerVoiceGatewayPref.mode}
-                          onChange={(e) =>
-                            updateActiveServerVoiceGatewayPref({
-                              mode:
-                                e.target.value === "server" ? "server" : "core",
-                            })
-                          }
-                        >
-                          <option value="core">OpenCom Core (default)</option>
-                          <option value="server">
-                            Self-hosted/Server-first
-                          </option>
-                        </select>
-                      </label>
-                      <label>
-                        Optional custom gateway URL
-                        <input
-                          placeholder="https://gateway.yourserver.tld"
-                          value={activeServerVoiceGatewayPref.customUrl}
-                          onChange={(e) =>
-                            updateActiveServerVoiceGatewayPref({
-                              customUrl: e.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                      <p className="hint">
-                        Client fallback order follows this mode and
-                        automatically tries the other gateways if one fails.
-                      </p>
-                    </section>
-                  )}
-
-                  {activeServer && canManageServer && (
-                    <section className="card">
-                      <h4>Create Workspace</h4>
-                      <input
-                        placeholder="Workspace name"
-                        value={newWorkspaceName ?? ""}
-                        onChange={(e) => setNewWorkspaceName(e.target.value)}
-                      />
-                      <button onClick={createWorkspace}>
-                        Create Workspace
-                      </button>
-                    </section>
-                  )}
-
-                  {activeServer && canManageServer && (
-                    <section className="card">
-                      <h4>Create Channel</h4>
-                      <input
-                        placeholder="New channel/category"
-                        value={newChannelName ?? ""}
-                        onChange={(e) => setNewChannelName(e.target.value)}
-                      />
-                      <select
-                        value={newChannelType ?? "text"}
-                        onChange={(e) => setNewChannelType(e.target.value)}
-                      >
-                        <option value="text">Text Channel</option>
-                        <option value="voice">Voice Channel</option>
-                        <option value="category">Category</option>
-                      </select>
-                      {newChannelType !== "category" && (
-                        <select
-                          value={newChannelParentId ?? ""}
-                          onChange={(e) =>
-                            setNewChannelParentId(e.target.value)
-                          }
-                        >
-                          <option value="">No category</option>
-                          {(categoryChannels || []).map((cat) => (
-                            <option key={cat?.id ?? ""} value={cat?.id ?? ""}>
-                              {cat?.name ?? "Category"}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                      <button onClick={createChannel}>Create Channel</button>
-                    </section>
-                  )}
-
-                  {activeServer && canManageServer && (
-                    <section className="card">
-                      <h4>Custom Emotes</h4>
-                      <p className="hint">
-                        Use emotes in chat with <code>:name:</code>.
-                      </p>
-                      <input
-                        placeholder="Emote name (example: hype)"
-                        value={newServerEmoteName}
-                        onChange={(event) =>
-                          setNewServerEmoteName(event.target.value)
-                        }
-                      />
-                      <input
-                        placeholder="Emote image URL (.png/.gif/.webp/.svg)"
-                        value={newServerEmoteUrl}
-                        onChange={(event) =>
-                          setNewServerEmoteUrl(event.target.value)
-                        }
-                      />
-                      <label>
-                        Upload Emote Image
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={(event) =>
-                            onImageFieldUpload(
-                              event,
-                              "emote image",
-                              setNewServerEmoteUrl,
-                            )
-                          }
-                        />
-                      </label>
-                      <button onClick={createServerEmote}>Create Emote</button>
-                      <ul
-                        className="channel-perms-role-list"
-                        style={{ marginTop: "10px" }}
-                      >
-                        {(guildState?.emotes || []).map((emote) => (
-                          <li key={emote.id}>
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: "8px",
-                              }}
-                            >
-                              <img
-                                className="message-custom-emote"
-                                src={emote.imageUrl || emote.image_url}
-                                alt={emote.name}
-                              />
-                              <code>:{emote.name}:</code>
-                            </span>
-                            <button
-                              className="ghost"
-                              style={{ marginLeft: "8px" }}
-                              onClick={() => removeServerEmote(emote.id)}
-                            >
-                              Remove
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </section>
-                  )}
-
-                  {activeServer && canManageServer && (
-                    <section className="card">
-                      <h4>Channel permissions</h4>
-                      <p className="hint">
-                        Choose a channel and set which roles can send messages
-                        there. By default everyone can send.
-                      </p>
-                      <select
-                        value={channelPermsChannelId}
-                        onChange={(e) =>
-                          setChannelPermsChannelId(e.target.value)
-                        }
-                      >
-                        <option value="">Select channel</option>
-                        {(sortedChannels || [])
-                          .filter((c) => c.type === "text")
-                          .map((ch) => (
-                            <option key={ch.id} value={ch.id}>
-                              #{ch.name}
-                            </option>
-                          ))}
-                      </select>
-                      {channelPermsChannelId && (
-                        <ul className="channel-perms-role-list">
-                          {(guildState?.roles || [])
-                            .filter((r) => !r.is_everyone)
-                            .sort(
-                              (a, b) => (b.position ?? 0) - (a.position ?? 0),
-                            )
-                            .map((role) => (
-                              <li key={role.id}>
-                                <label>
-                                  <input
-                                    type="checkbox"
-                                    checked={channelOverwriteAllowsSend(
-                                      channelPermsChannelId,
-                                      role.id,
-                                    )}
-                                    onChange={(e) =>
-                                      setChannelRoleSend(
-                                        channelPermsChannelId,
-                                        role.id,
-                                        e.target.checked,
-                                      )
-                                    }
-                                  />
-                                  <span
-                                    className="channel-perms-role-name"
-                                    style={{
-                                      color:
-                                        role.color != null && role.color !== ""
-                                          ? typeof role.color === "number"
-                                            ? `#${Number(role.color).toString(16).padStart(6, "0")}`
-                                            : role.color
-                                          : "#99aab5",
-                                    }}
-                                  >
-                                    {role.name}
-                                  </span>
-                                  <span className="hint"> can send here</span>
-                                </label>
-                              </li>
-                            ))}
-                        </ul>
-                      )}
-                    </section>
-                  )}
-
-                  {settingsTab === "server" &&
-                    !activeServer &&
-                    servers.length > 0 && (
-                      <p className="hint">
-                        Select a server from the sidebar to manage workspaces
-                        and channels.
-                      </p>
-                    )}
-                </>
+                <ServerSettingsSection
+                  serverState={{
+                    activeServer,
+                    servers,
+                    canManageServer,
+                    activeServerVoiceGatewayPref,
+                    categoryChannels,
+                    sortedChannels,
+                    channelPermsChannelId,
+                    guildState,
+                  }}
+                  forms={{
+                    serverProfileForm,
+                    newServerName,
+                    newServerBaseUrl,
+                    newServerLogoUrl,
+                    newServerBannerUrl,
+                    newWorkspaceName,
+                    newChannelName,
+                    newChannelType,
+                    newChannelParentId,
+                    newServerEmoteName,
+                    newServerEmoteUrl,
+                  }}
+                  actions={{
+                    setServerProfileForm,
+                    onImageFieldUpload,
+                    saveActiveServerProfile,
+                    setNewServerName,
+                    setNewServerBaseUrl,
+                    setNewServerLogoUrl,
+                    setNewServerBannerUrl,
+                    createServer,
+                    updateActiveServerVoiceGatewayPref,
+                    setNewWorkspaceName,
+                    createWorkspace,
+                    setNewChannelName,
+                    setNewChannelType,
+                    setNewChannelParentId,
+                    createChannel,
+                    setNewServerEmoteName,
+                    setNewServerEmoteUrl,
+                    createServerEmote,
+                    removeServerEmote,
+                    setChannelPermsChannelId,
+                    channelOverwriteAllowsSend,
+                    setChannelRoleSend,
+                  }}
+                />
               )}
 
-              {settingsTab === "roles" && canManageServer && (
-                <>
-                  <section className="card">
-                    <h4>Create Role</h4>
-                    <input
-                      placeholder="Role name"
-                      value={newRoleName}
-                      onChange={(event) => setNewRoleName(event.target.value)}
-                    />
-                    <button onClick={createRole}>Create Role</button>
-                  </section>
-
-                  <section className="card">
-                    <h4>Edit Roles (colour & hierarchy)</h4>
-                    <p className="hint">
-                      Higher position = higher in the list. Colours show in
-                      member list and chat.
-                    </p>
-                    <ul className="role-edit-list">
-                      {(guildState?.roles || [])
-                        .filter((r) => !r.is_everyone)
-                        .sort((a, b) => (b.position ?? 0) - (a.position ?? 0))
-                        .map((role) => {
-                          const hexColor =
-                            role.color != null && role.color !== ""
-                              ? typeof role.color === "number"
-                                ? `#${Number(role.color).toString(16).padStart(6, "0")}`
-                                : role.color
-                              : "#99aab5";
-                          return (
-                            <li key={role.id} className="role-edit-row">
-                              <span
-                                className="role-edit-name"
-                                style={{ color: hexColor }}
-                              >
-                                {role.name}
-                              </span>
-                              <input
-                                type="color"
-                                value={hexColor}
-                                onChange={(e) =>
-                                  updateRole(role.id, { color: e.target.value })
-                                }
-                                title="Role colour"
-                              />
-                              <label>
-                                Position{" "}
-                                <input
-                                  type="number"
-                                  min={0}
-                                  value={role.position ?? 0}
-                                  onChange={(e) =>
-                                    updateRole(role.id, {
-                                      position:
-                                        parseInt(e.target.value, 10) || 0,
-                                    })
-                                  }
-                                />
-                              </label>
-                            </li>
-                          );
-                        })}
-                    </ul>
-                  </section>
-
-                  <section className="card">
-                    <h4>Assign Role</h4>
-                    <select
-                      value={selectedMemberId}
-                      onChange={(event) =>
-                        setSelectedMemberId(event.target.value)
-                      }
-                    >
-                      <option value="">Select member</option>
-                      {resolvedMemberList.map((member) => (
-                        <option key={member.id} value={member.id}>
-                          {member.username}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      value={selectedRoleId}
-                      onChange={(event) =>
-                        setSelectedRoleId(event.target.value)
-                      }
-                    >
-                      <option value="">Select role</option>
-                      {(guildState?.roles || [])
-                        .filter((role) => !role.is_everyone)
-                        .map((role) => (
-                          <option key={role.id} value={role.id}>
-                            {role.name}
-                          </option>
-                        ))}
-                    </select>
-                    <button onClick={assignRoleToMember}>Assign Role</button>
-                  </section>
-                </>
+              {settingsTab === "roles" && (
+                <RolesSettingsSection
+                  canManageServer={canManageServer}
+                  newRoleName={newRoleName}
+                  setNewRoleName={setNewRoleName}
+                  createRole={createRole}
+                  guildState={guildState}
+                  updateRole={updateRole}
+                  selectedMemberId={selectedMemberId}
+                  setSelectedMemberId={setSelectedMemberId}
+                  resolvedMemberList={resolvedMemberList}
+                  selectedRoleId={selectedRoleId}
+                  setSelectedRoleId={setSelectedRoleId}
+                  assignRoleToMember={assignRoleToMember}
+                />
               )}
 
-              {settingsTab === "moderation" && canModerateMembers && (
-                <>
-                  <section className="card">
-                    <h4>Member moderation</h4>
-                    <p className="hint">
-                      Kick removes a member from this guild. Ban removes and
-                      blocks rejoin until unbanned.
-                    </p>
-                    <select
-                      value={moderationMemberId}
-                      onChange={(event) =>
-                        setModerationMemberId(event.target.value)
-                      }
-                    >
-                      <option value="">Select member</option>
-                      {resolvedMemberList
-                        .filter((member) => member.id !== me?.id)
-                        .map((member) => (
-                          <option key={member.id} value={member.id}>
-                            {member.username}
-                          </option>
-                        ))}
-                    </select>
-                    {canBanMembers && (
-                      <input
-                        placeholder="Ban reason (optional)"
-                        value={moderationBanReason}
-                        onChange={(event) =>
-                          setModerationBanReason(event.target.value)
-                        }
-                      />
-                    )}
-                    <div className="row-actions">
-                      {canKickMembers && (
-                        <button
-                          disabled={!moderationMemberId || moderationBusy}
-                          onClick={() => kickMember(moderationMemberId)}
-                        >
-                          Kick Member
-                        </button>
-                      )}
-                      {canBanMembers && (
-                        <button
-                          className="danger"
-                          disabled={!moderationMemberId || moderationBusy}
-                          onClick={() =>
-                            banMember(moderationMemberId, moderationBanReason)
-                          }
-                        >
-                          Ban Member
-                        </button>
-                      )}
-                    </div>
-                  </section>
-
-                  {canBanMembers && (
-                    <section className="card">
-                      <h4>Unban user</h4>
-                      <p className="hint">
-                        Paste a user ID and remove their ban record.
-                      </p>
-                      <input
-                        placeholder="User ID to unban"
-                        value={moderationUnbanUserId}
-                        onChange={(event) =>
-                          setModerationUnbanUserId(event.target.value)
-                        }
-                      />
-                      <button
-                        disabled={
-                          !moderationUnbanUserId.trim() || moderationBusy
-                        }
-                        onClick={() =>
-                          unbanMember(moderationUnbanUserId.trim())
-                        }
-                      >
-                        Unban User
-                      </button>
-                    </section>
-                  )}
-                </>
+              {settingsTab === "moderation" && (
+                <ModerationSettingsSection
+                  canModerateMembers={canModerateMembers}
+                  resolvedMemberList={resolvedMemberList}
+                  me={me}
+                  moderationMemberId={moderationMemberId}
+                  setModerationMemberId={setModerationMemberId}
+                  canBanMembers={canBanMembers}
+                  moderationBanReason={moderationBanReason}
+                  setModerationBanReason={setModerationBanReason}
+                  canKickMembers={canKickMembers}
+                  moderationBusy={moderationBusy}
+                  kickMember={kickMember}
+                  banMember={banMember}
+                  moderationUnbanUserId={moderationUnbanUserId}
+                  setModerationUnbanUserId={setModerationUnbanUserId}
+                  unbanMember={unbanMember}
+                />
               )}
 
               {settingsTab === "invites" && (
-                <>
-                  <section className="card">
-                    <h4>Join Server</h4>
-                    <input
-                      placeholder="Paste invite code or join link"
-                      value={joinInviteCode}
-                      onChange={(event) =>
-                        setJoinInviteCode(event.target.value)
-                      }
-                    />
-                    <div className="row-actions">
-                      <button className="ghost" onClick={previewInvite}>
-                        Preview
-                      </button>
-                      <button
-                        onClick={() =>
-                          joinInvite(invitePendingCode || joinInviteCode)
-                        }
-                      >
-                        Accept Invite
-                      </button>
-                    </div>
-                    {invitePreview && (
-                      <p className="hint">
-                        Invite: {invitePreview.code} · Server:{" "}
-                        {invitePreview.serverName || invitePreview.server_id} ·
-                        Uses: {invitePreview.uses}
-                      </p>
-                    )}
-                  </section>
-
-                  <section className="card">
-                    <h4>Create Invite</h4>
-                    <p className="hint">
-                      Boost perk: custom code + permanent invite links (example:{" "}
-                      <code>/join/Open</code>).
-                    </p>
-                    <select
-                      value={inviteServerId}
-                      onChange={(event) =>
-                        setInviteServerId(event.target.value)
-                      }
-                    >
-                      <option value="">Select server</option>
-                      {servers.map((server) => (
-                        <option key={server.id} value={server.id}>
-                          {server.name}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      placeholder="Custom code (Boost perk, optional)"
-                      value={inviteCustomCode}
-                      onChange={(event) =>
-                        setInviteCustomCode(event.target.value)
-                      }
-                      onFocus={() => {
-                        if (boostStatus && !boostStatus.active) {
-                          showBoostUpsell(
-                            "Custom invite codes require OpenCom Boost.",
-                          );
-                        }
-                      }}
-                    />
-                    <label
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={invitePermanent}
-                        onChange={(event) => {
-                          if (
-                            event.target.checked &&
-                            boostStatus &&
-                            !boostStatus.active
-                          ) {
-                            showBoostUpsell(
-                              "Permanent invite links require OpenCom Boost.",
-                            );
-                            return;
-                          }
-                          setInvitePermanent(event.target.checked);
-                        }}
-                      />
-                      Permanent invite (Boost perk)
-                    </label>
-                    <button onClick={createInvite}>Generate Invite</button>
-                    {inviteCode && (
-                      <>
-                        <p className="hint">
-                          Code: <code>{inviteCode}</code>
-                        </p>
-                        <p className="hint">Invite link (share this):</p>
-                        <div className="invite-link-row">
-                          <input
-                            readOnly
-                            className="invite-link-input"
-                            value={
-                              inviteJoinUrl || buildInviteJoinUrl(inviteCode)
-                            }
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const u =
-                                inviteJoinUrl || buildInviteJoinUrl(inviteCode);
-                              navigator.clipboard
-                                .writeText(u)
-                                .then(() => setStatus("Invite link copied."))
-                                .catch(() => setStatus("Could not copy."));
-                            }}
-                          >
-                            Copy link
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </section>
-                </>
+                <InvitesSettingsSection
+                  joinInviteCode={joinInviteCode}
+                  setJoinInviteCode={setJoinInviteCode}
+                  previewInvite={previewInvite}
+                  joinInvite={joinInvite}
+                  invitePendingCode={invitePendingCode}
+                  invitePreview={invitePreview}
+                  inviteServerId={inviteServerId}
+                  setInviteServerId={setInviteServerId}
+                  servers={servers}
+                  inviteCustomCode={inviteCustomCode}
+                  setInviteCustomCode={setInviteCustomCode}
+                  boostStatus={boostStatus}
+                  showBoostUpsell={showBoostUpsell}
+                  invitePermanent={invitePermanent}
+                  setInvitePermanent={setInvitePermanent}
+                  createInvite={createInvite}
+                  inviteCode={inviteCode}
+                  inviteJoinUrl={inviteJoinUrl}
+                  buildInviteJoinUrl={buildInviteJoinUrl}
+                  setStatus={setStatus}
+                />
               )}
 
               {settingsTab === "extensions" && (
-                <>
-                  <section className="card">
-                    <h4>Server Extensions</h4>
-                    {!activeServer ? (
-                      <p className="hint">Select a server first.</p>
-                    ) : !canManageServer ? (
-                      <p className="hint">
-                        You need owner/admin permissions in this server to
-                        manage server-side extensions.
-                      </p>
-                    ) : (
-                      <>
-                        <p className="hint">
-                          Enable server-side extensions for this server.
-                          Commands can be run as <code>/extension.command</code>{" "}
-                          (and short names when unique).
-                        </p>
-                        <div
-                          className="row-actions"
-                          style={{ marginBottom: "8px" }}
-                        >
-                          <button
-                            className="ghost"
-                            onClick={() => refreshServerExtensions()}
-                            disabled={serverExtensionsLoading}
-                          >
-                            Refresh
-                          </button>
-                        </div>
-                        {serverExtensionsLoading && (
-                          <p className="hint">Loading server extensions…</p>
-                        )}
-                        {!serverExtensionsForDisplay.length ? (
-                          <p className="hint">
-                            No server extensions found in catalog.
-                          </p>
-                        ) : (
-                          <ul className="channel-perms-role-list">
-                            {serverExtensionsForDisplay.map((ext) => {
-                              const busy = !!serverExtensionBusyById[ext.id];
-                              const checked = !!ext.enabled;
-                              return (
-                                <li key={ext.id}>
-                                  <label>
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      disabled={busy || serverExtensionsLoading}
-                                      onChange={(event) =>
-                                        toggleServerExtension(
-                                          ext.id,
-                                          event.target.checked,
-                                        )
-                                      }
-                                    />
-                                    <strong>{ext.name}</strong>
-                                    <span className="hint">
-                                      {" "}
-                                      · {ext.id} · {ext.version || "0.1.0"}
-                                    </span>
-                                    <span
-                                      className="hint"
-                                      style={{
-                                        marginLeft: "6px",
-                                        color: checked ? "#4ec97e" : "#f0a4a4",
-                                      }}
-                                    >
-                                      {busy
-                                        ? "Syncing…"
-                                        : checked
-                                          ? "Enabled"
-                                          : "Disabled"}
-                                    </span>
-                                  </label>
-                                  {ext.description && (
-                                    <p
-                                      className="hint"
-                                      style={{ margin: "4px 0 0 24px" }}
-                                    >
-                                      {ext.description}
-                                    </p>
-                                  )}
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        )}
-                        {serverExtensionCommands.length > 0 ? (
-                          <p className="hint">
-                            Active commands:{" "}
-                            {serverExtensionCommands
-                              .slice(0, 8)
-                              .map((command) => `/${command.name}`)
-                              .join(", ")}
-                            {serverExtensionCommands.length > 8
-                              ? ` +${serverExtensionCommands.length - 8} more`
-                              : ""}
-                          </p>
-                        ) : (
-                          <p className="hint">
-                            No active server commands detected yet.
-                          </p>
-                        )}
-                      </>
-                    )}
-                  </section>
-
-                  <section className="card">
-                    <h4>Client Extensions</h4>
-                    <p className="hint">
-                      Enable reviewed client-only extensions from the catalog.
-                      Extensions run in your client session.
-                    </p>
-                    {!clientExtensionCatalog.length ? (
-                      <p className="hint">
-                        No client extensions found in the catalog.
-                      </p>
-                    ) : (
-                      <ul className="channel-perms-role-list">
-                        {clientExtensionCatalog.map((ext) => {
-                          const checked = enabledClientExtensions.includes(
-                            ext.id,
-                          );
-                          return (
-                            <li key={ext.id}>
-                              <label>
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={(event) =>
-                                    toggleClientExtension(
-                                      ext.id,
-                                      event.target.checked,
-                                    )
-                                  }
-                                />
-                                <strong>{ext.name}</strong>
-                                <span className="hint">
-                                  {" "}
-                                  · {ext.id} · {ext.version || "0.1.0"}
-                                </span>
-                                <span
-                                  className="hint"
-                                  style={{
-                                    marginLeft: "6px",
-                                    color: checked ? "#4ec97e" : "#f0a4a4",
-                                  }}
-                                >
-                                  {checked ? "Enabled" : "Disabled"}
-                                </span>
-                              </label>
-                              {ext.description && (
-                                <p
-                                  className="hint"
-                                  style={{ margin: "4px 0 0 24px" }}
-                                >
-                                  {ext.description}
-                                </p>
-                              )}
-                              {clientExtensionLoadState[ext.id] && (
-                                <p
-                                  className="hint"
-                                  style={{ margin: "2px 0 0 24px" }}
-                                >
-                                  Status: {clientExtensionLoadState[ext.id]}
-                                </p>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </section>
-
-                  <section className="card">
-                    <h4>Developer Mode</h4>
-                    <label
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={clientExtensionDevMode}
-                        onChange={(event) =>
-                          setClientExtensionDevMode(event.target.checked)
-                        }
-                      />
-                      Enable local/testing extension URLs
-                    </label>
-                    <p className="hint">
-                      Use this while developing extensions. Add one URL per
-                      extension entry script.
-                    </p>
-
-                    {clientExtensionDevMode && (
-                      <>
-                        <div
-                          className="row-actions"
-                          style={{ marginTop: "8px" }}
-                        >
-                          <input
-                            placeholder="http://localhost:5174/my-extension.js"
-                            value={newClientExtensionDevUrl}
-                            onChange={(event) =>
-                              setNewClientExtensionDevUrl(event.target.value)
-                            }
-                            style={{ flex: 1 }}
-                          />
-                          <button onClick={addClientDevExtensionUrl}>
-                            Add URL
-                          </button>
-                        </div>
-
-                        <ul
-                          className="channel-perms-role-list"
-                          style={{ marginTop: "10px" }}
-                        >
-                          {clientExtensionDevUrls.map((url) => (
-                            <li key={url}>
-                              <span style={{ wordBreak: "break-all" }}>
-                                {url}
-                              </span>
-                              <button
-                                className="ghost"
-                                style={{ marginLeft: "8px" }}
-                                onClick={() =>
-                                  setClientExtensionDevUrls((current) =>
-                                    current.filter((item) => item !== url),
-                                  )
-                                }
-                              >
-                                Remove
-                              </button>
-                              {clientExtensionLoadState[`dev:${url}`] && (
-                                <p
-                                  className="hint"
-                                  style={{ margin: "4px 0 0 0" }}
-                                >
-                                  Status:{" "}
-                                  {clientExtensionLoadState[`dev:${url}`]}
-                                </p>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      </>
-                    )}
-                  </section>
-                </>
+                <ExtensionsSettingsSection
+                  activeServer={activeServer}
+                  canManageServer={canManageServer}
+                  refreshServerExtensions={refreshServerExtensions}
+                  serverExtensionsLoading={serverExtensionsLoading}
+                  serverExtensionsForDisplay={serverExtensionsForDisplay}
+                  serverExtensionBusyById={serverExtensionBusyById}
+                  toggleServerExtension={toggleServerExtension}
+                  serverExtensionCommands={serverExtensionCommands}
+                  clientExtensionCatalog={clientExtensionCatalog}
+                  enabledClientExtensions={enabledClientExtensions}
+                  toggleClientExtension={toggleClientExtension}
+                  clientExtensionLoadState={clientExtensionLoadState}
+                  clientExtensionDevMode={clientExtensionDevMode}
+                  setClientExtensionDevMode={setClientExtensionDevMode}
+                  newClientExtensionDevUrl={newClientExtensionDevUrl}
+                  setNewClientExtensionDevUrl={setNewClientExtensionDevUrl}
+                  addClientDevExtensionUrl={addClientDevExtensionUrl}
+                  clientExtensionDevUrls={clientExtensionDevUrls}
+                  setClientExtensionDevUrls={setClientExtensionDevUrls}
+                />
               )}
 
               {settingsTab === "appearance" && (
-                <section className="card">
-                  <h4>Custom CSS Theme</h4>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={themeEnabled}
-                      onChange={(event) =>
-                        setThemeEnabled(event.target.checked)
-                      }
-                    />{" "}
-                    Enable custom CSS
-                  </label>
-                  <input
-                    type="file"
-                    accept="text/css,.css"
-                    onChange={onUploadTheme}
-                  />
-                  <textarea
-                    value={themeCss}
-                    onChange={(event) => setThemeCss(event.target.value)}
-                    rows={10}
-                    placeholder="Paste custom CSS"
-                  />
-                  <div
-                    className="row-actions"
-                    style={{ width: "100%", marginTop: "0.5rem" }}
-                  >
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={() => openStaticPage("theme-catalog.html")}
-                    >
-                      Open Theme Catalogue
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={() => openStaticPage("theme-creator.html")}
-                    >
-                      Open Theme Creator
-                    </button>
-                  </div>
-                </section>
+                <AppearanceSettingsSection
+                  themeEnabled={themeEnabled}
+                  setThemeEnabled={setThemeEnabled}
+                  onUploadTheme={onUploadTheme}
+                  themeCss={themeCss}
+                  setThemeCss={setThemeCss}
+                  openStaticPage={openStaticPage}
+                />
               )}
 
               {settingsTab === "voice" && (
-                <section className="card">
-                  <h4>Voice Settings</h4>
-                  <label>
-                    Input Device
-                    <select
-                      value={audioInputDeviceId}
-                      onChange={(event) =>
-                        setAudioInputDeviceId(event.target.value)
-                      }
-                    >
-                      <option value="">System default</option>
-                      {audioInputDevices.map((device) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                          {device.label ||
-                            `Microphone ${device.deviceId.slice(0, 6)}`}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Output Device
-                    <select
-                      value={audioOutputDeviceId}
-                      onChange={(event) =>
-                        setAudioOutputDeviceId(event.target.value)
-                      }
-                    >
-                      <option value="">System default</option>
-                      {audioOutputDevices.map((device) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                          {device.label ||
-                            `Speaker ${device.deviceId.slice(0, 6)}`}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="row-actions" style={{ width: "100%" }}>
-                    <button
-                      type="button"
-                      className={isMicMonitorActive ? "danger" : "ghost"}
-                      onClick={toggleMicMonitor}
-                      disabled={!isInVoiceChannel && !isMicMonitorActive}
-                    >
-                      {isMicMonitorActive ? "Stop Mic Test" : "Start Mic Test"}
-                    </button>
-                    <span className="hint">
-                      {isMicMonitorActive
-                        ? "Mic test is active: you're muted/deafened while hearing your processed mic."
-                        : "Hear your mic as others hear it (while muted + deafened)."}
-                    </span>
-                  </div>
-                  <label>
-                    Microphone Gain ({micGain}%)
-                    <input
-                      type="range"
-                      min="0"
-                      max="200"
-                      step="5"
-                      value={micGain}
-                      onChange={(e) => setMicGain(Number(e.target.value))}
-                    />
-                  </label>
-                  <label>
-                    Mic Sensitivity ({micSensitivity}%)
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      step="5"
-                      value={micSensitivity}
-                      onChange={(e) =>
-                        setMicSensitivity(Number(e.target.value))
-                      }
-                    />
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={noiseSuppressionEnabled}
-                      onChange={(event) =>
-                        setNoiseSuppressionEnabled(event.target.checked)
-                      }
-                    />{" "}
-                    Noise Suppression
-                  </label>
-                  <label>
-                    Noise Preset
-                    <select
-                      value={noiseSuppressionPreset}
-                      onChange={(event) =>
-                        applyNoiseSuppressionPreset(event.target.value)
-                      }
-                    >
-                      <option value="strict">Strict (default)</option>
-                      <option value="balanced">Balanced</option>
-                      <option value="light">Light</option>
-                      <option value="custom">Custom</option>
-                    </select>
-                  </label>
-                  <div className="row-actions" style={{ width: "100%" }}>
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={() => applyNoiseSuppressionPreset("strict")}
-                    >
-                      Use Strict
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={() => applyNoiseSuppressionPreset("balanced")}
-                    >
-                      Use Balanced
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={() => applyNoiseSuppressionPreset("light")}
-                    >
-                      Use Light
-                    </button>
-                  </div>
-                  <label>
-                    Gate Open Threshold (
-                    {Number(noiseSuppressionConfig.gateOpenRms || 0).toFixed(3)}
-                    )
-                    <input
-                      type="range"
-                      min="0.004"
-                      max="0.06"
-                      step="0.001"
-                      value={noiseSuppressionConfig.gateOpenRms}
-                      onChange={(event) =>
-                        updateNoiseSuppressionConfig({
-                          gateOpenRms: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    Gate Close Threshold (
-                    {Number(noiseSuppressionConfig.gateCloseRms || 0).toFixed(
-                      3,
-                    )}
-                    )
-                    <input
-                      type="range"
-                      min="0.002"
-                      max="0.05"
-                      step="0.001"
-                      value={noiseSuppressionConfig.gateCloseRms}
-                      onChange={(event) =>
-                        updateNoiseSuppressionConfig({
-                          gateCloseRms: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    Gate Attack (
-                    {Math.round(
-                      Number(noiseSuppressionConfig.gateAttack || 0) * 100,
-                    )}
-                    %)
-                    <input
-                      type="range"
-                      min="0.05"
-                      max="0.95"
-                      step="0.01"
-                      value={noiseSuppressionConfig.gateAttack}
-                      onChange={(event) =>
-                        updateNoiseSuppressionConfig({
-                          gateAttack: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    Gate Release (
-                    {Math.round(
-                      Number(noiseSuppressionConfig.gateRelease || 0) * 1000,
-                    )}{" "}
-                    ms factor)
-                    <input
-                      type="range"
-                      min="0.01"
-                      max="0.8"
-                      step="0.01"
-                      value={noiseSuppressionConfig.gateRelease}
-                      onChange={(event) =>
-                        updateNoiseSuppressionConfig({
-                          gateRelease: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    High-pass Cutoff (
-                    {Math.round(Number(noiseSuppressionConfig.highpassHz || 0))}{" "}
-                    Hz)
-                    <input
-                      type="range"
-                      min="40"
-                      max="300"
-                      step="5"
-                      value={noiseSuppressionConfig.highpassHz}
-                      onChange={(event) =>
-                        updateNoiseSuppressionConfig({
-                          highpassHz: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    Low-pass Cutoff (
-                    {Math.round(Number(noiseSuppressionConfig.lowpassHz || 0))}{" "}
-                    Hz)
-                    <input
-                      type="range"
-                      min="4200"
-                      max="14000"
-                      step="100"
-                      value={noiseSuppressionConfig.lowpassHz}
-                      onChange={(event) =>
-                        updateNoiseSuppressionConfig({
-                          lowpassHz: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    Compressor Threshold (
-                    {Math.round(
-                      Number(noiseSuppressionConfig.compressorThreshold || 0),
-                    )}{" "}
-                    dB)
-                    <input
-                      type="range"
-                      min="-70"
-                      max="-8"
-                      step="1"
-                      value={noiseSuppressionConfig.compressorThreshold}
-                      onChange={(event) =>
-                        updateNoiseSuppressionConfig({
-                          compressorThreshold: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    Compressor Knee (
-                    {Math.round(
-                      Number(noiseSuppressionConfig.compressorKnee || 0),
-                    )}{" "}
-                    dB)
-                    <input
-                      type="range"
-                      min="0"
-                      max="40"
-                      step="1"
-                      value={noiseSuppressionConfig.compressorKnee}
-                      onChange={(event) =>
-                        updateNoiseSuppressionConfig({
-                          compressorKnee: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    Compressor Ratio (
-                    {Number(
-                      noiseSuppressionConfig.compressorRatio || 0,
-                    ).toFixed(1)}
-                    :1)
-                    <input
-                      type="range"
-                      min="1"
-                      max="20"
-                      step="0.5"
-                      value={noiseSuppressionConfig.compressorRatio}
-                      onChange={(event) =>
-                        updateNoiseSuppressionConfig({
-                          compressorRatio: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    Compressor Attack (
-                    {Number(
-                      noiseSuppressionConfig.compressorAttack || 0,
-                    ).toFixed(3)}{" "}
-                    s)
-                    <input
-                      type="range"
-                      min="0.001"
-                      max="0.05"
-                      step="0.001"
-                      value={noiseSuppressionConfig.compressorAttack}
-                      onChange={(event) =>
-                        updateNoiseSuppressionConfig({
-                          compressorAttack: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    Compressor Release (
-                    {Number(
-                      noiseSuppressionConfig.compressorRelease || 0,
-                    ).toFixed(3)}{" "}
-                    s)
-                    <input
-                      type="range"
-                      min="0.04"
-                      max="0.8"
-                      step="0.01"
-                      value={noiseSuppressionConfig.compressorRelease}
-                      onChange={(event) =>
-                        updateNoiseSuppressionConfig({
-                          compressorRelease: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  {localAudioProcessingInfo && (
-                    <p className="hint">
-                      Noise suppression requested:{" "}
-                      {localAudioProcessingInfo.requested?.noiseSuppression
-                        ? "On"
-                        : "Off"}
-                      {" · "}
-                      applied:{" "}
-                      {localAudioProcessingInfo.applied?.noiseSuppression ==
-                      null
-                        ? "Unknown"
-                        : localAudioProcessingInfo.applied.noiseSuppression
-                          ? "On"
-                          : "Off"}
-                      {!localAudioProcessingInfo.supported?.noiseSuppression
-                        ? " (not supported by this browser/device)"
-                        : ""}
-                      {localAudioProcessingInfo.client?.processingActive
-                        ? ` · client filter: on (${localAudioProcessingInfo.client?.noisePreset || "strict"}) · gain: ${Math.round(Number(localAudioProcessingInfo.client?.micGainPercent || 100))}%`
-                        : ""}
-                    </p>
-                  )}
-                  <p className="hint">
-                    Hotkeys: Ctrl/Cmd+Shift+M mute, Ctrl/Cmd+Shift+D deafen,
-                    Ctrl/Cmd+Shift+V screen share, Ctrl/Cmd+Shift+X disconnect,
-                    Ctrl/Cmd+Shift+, settings.
-                  </p>
-                  <p className="hint">
-                    Tip: allow microphone permissions so device names show
-                    properly.
-                  </p>
-                </section>
+                <VoiceSettingsSection
+                  audioInputDeviceId={audioInputDeviceId}
+                  setAudioInputDeviceId={setAudioInputDeviceId}
+                  audioInputDevices={audioInputDevices}
+                  audioOutputDeviceId={audioOutputDeviceId}
+                  setAudioOutputDeviceId={setAudioOutputDeviceId}
+                  audioOutputDevices={audioOutputDevices}
+                  isMicMonitorActive={isMicMonitorActive}
+                  toggleMicMonitor={toggleMicMonitor}
+                  isInVoiceChannel={isInVoiceChannel}
+                  micGain={micGain}
+                  setMicGain={setMicGain}
+                  micSensitivity={micSensitivity}
+                  setMicSensitivity={setMicSensitivity}
+                  noiseSuppressionEnabled={noiseSuppressionEnabled}
+                  setNoiseSuppressionEnabled={setNoiseSuppressionEnabled}
+                  noiseSuppressionPreset={noiseSuppressionPreset}
+                  applyNoiseSuppressionPreset={applyNoiseSuppressionPreset}
+                  noiseSuppressionConfig={noiseSuppressionConfig}
+                  updateNoiseSuppressionConfig={updateNoiseSuppressionConfig}
+                  localAudioProcessingInfo={localAudioProcessingInfo}
+                />
               )}
 
               {settingsTab === "billing" && (
-                <section className="card boost-card">
-                  <div className="boost-hero">
-                    <span
-                      className={`boost-pill ${boostStatus?.active ? "active" : ""}`}
-                    >
-                      {boostStatus?.active ? "BOOST ACTIVE" : "BOOST INACTIVE"}
-                    </span>
-                    <h4>OpenCom Boost</h4>
-                    <p className="hint">
-                      Unlock custom invite codes, permanent invite links, and
-                      higher limits.
-                    </p>
-                  </div>
-                  <div className="boost-grid">
-                    <div className="boost-price">
-                      <strong>£10</strong>
-                      <span>/ month</span>
-                    </div>
-                    <ul className="boost-perks">
-                      <li>Custom invite code slugs</li>
-                      <li>Permanent invite links</li>
-                      <li>100MB upload limit</li>
-                      <li>Unlimited servers</li>
-                    </ul>
-                  </div>
-                  {boostLoading && (
-                    <p className="hint">Loading billing status…</p>
-                  )}
-                  {boostStatus && (
-                    <p className="hint">
-                      Status: {boostStatus.active ? "Active" : "Inactive"}
-                      {boostStatus.currentPeriodEnd
-                        ? ` · Renews ${new Date(boostStatus.currentPeriodEnd).toLocaleDateString()}`
-                        : ""}
-                    </p>
-                  )}
-                  {boostStatus && !boostStatus.stripeConfigured && (
-                    <p className="hint">
-                      Stripe is not configured on this server yet.
-                    </p>
-                  )}
-                  <div className="row-actions boost-actions">
-                    <button onClick={startBoostCheckout}>Get Boost</button>
-                    <button className="ghost" onClick={openBoostPortal}>
-                      Manage
-                    </button>
-                    <button className="ghost" onClick={loadBoostStatus}>
-                      Refresh
-                    </button>
-                  </div>
-
-                  <hr className="boost-divider" />
-                  <div className="boost-gift-head">
-                    <h5>Gift Boost (1 month)</h5>
-                    <p className="hint">
-                      Buy a one-month gift link and send it to a friend.
-                    </p>
-                  </div>
-                  <div className="row-actions boost-actions boost-gift-actions">
-                    <button
-                      onClick={startBoostGiftCheckout}
-                      disabled={boostGiftCheckoutBusy}
-                    >
-                      {boostGiftCheckoutBusy
-                        ? "Opening checkout…"
-                        : "Buy Gift (£10)"}
-                    </button>
-                    <button className="ghost" onClick={loadSentBoostGifts}>
-                      Refresh Gifts
-                    </button>
-                  </div>
-
-                  <div className="invite-link-row">
-                    <input
-                      className="invite-link-input"
-                      placeholder="Paste boost gift link or code"
-                      value={boostGiftCode}
-                      onChange={(event) => setBoostGiftCode(event.target.value)}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => previewBoostGift(boostGiftCode)}
-                      disabled={boostGiftLoading}
-                    >
-                      {boostGiftLoading ? "Checking…" : "Preview"}
-                    </button>
-                  </div>
-
-                  {boostGiftPreview && (
-                    <div className="boost-gift-preview">
-                      <p className="hint">
-                        Gift from{" "}
-                        <strong>
-                          {boostGiftPreview.from?.username || "someone"}
-                        </strong>{" "}
-                        · {boostGiftPreview.grantDays} day(s)
-                      </p>
-                      <p className="hint">
-                        Expires{" "}
-                        {new Date(
-                          boostGiftPreview.expiresAt,
-                        ).toLocaleDateString()}
-                      </p>
-                      <button
-                        onClick={() => setBoostGiftPrompt(boostGiftPreview)}
-                      >
-                        Redeem Gift
-                      </button>
-                    </div>
-                  )}
-
-                  {boostGiftSent.length > 0 && (
-                    <div className="boost-gift-list">
-                      <p className="hint">Your recent gifts</p>
-                      {boostGiftSent.slice(0, 5).map((gift) => (
-                        <div key={gift.id} className="boost-gift-row">
-                          <span>{gift.status.toUpperCase()}</span>
-                          <input
-                            readOnly
-                            value={gift.joinUrl || buildBoostGiftUrl(gift.code)}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const link =
-                                gift.joinUrl || buildBoostGiftUrl(gift.code);
-                              navigator.clipboard
-                                .writeText(link)
-                                .then(() => setStatus("Gift link copied."))
-                                .catch(() =>
-                                  setStatus("Could not copy gift link."),
-                                );
-                            }}
-                          >
-                            Copy
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
+                <BillingSettingsSection
+                  boostStatus={boostStatus}
+                  boostLoading={boostLoading}
+                  startBoostCheckout={startBoostCheckout}
+                  openBoostPortal={openBoostPortal}
+                  loadBoostStatus={loadBoostStatus}
+                  startBoostGiftCheckout={startBoostGiftCheckout}
+                  boostGiftCheckoutBusy={boostGiftCheckoutBusy}
+                  loadSentBoostGifts={loadSentBoostGifts}
+                  boostGiftCode={boostGiftCode}
+                  setBoostGiftCode={setBoostGiftCode}
+                  previewBoostGift={previewBoostGift}
+                  boostGiftLoading={boostGiftLoading}
+                  boostGiftPreview={boostGiftPreview}
+                  setBoostGiftPrompt={setBoostGiftPrompt}
+                  boostGiftSent={boostGiftSent}
+                  buildBoostGiftUrl={buildBoostGiftUrl}
+                  setStatus={setStatus}
+                />
               )}
 
               {settingsTab === "security" && (
-                <>
-                  <section className="card security-card">
-                    <h4>🔐 Account Security</h4>
-                    <div className="security-info">
-                      <p className="hint">
-                        Last login:{" "}
-                        {new Date(lastLoginInfo.date).toLocaleString()}
-                      </p>
-                      <p className="hint">Device: {lastLoginInfo.device}</p>
-                    </div>
-                  </section>
-
-                  <section className="card security-card">
-                    <h4>🔑 Change Password</h4>
-                    {!showPasswordChange ? (
-                      <button onClick={() => setShowPasswordChange(true)}>
-                        Change Password
-                      </button>
-                    ) : (
-                      <>
-                        <label>
-                          Current Password
-                          <input
-                            type="password"
-                            value={currentPassword}
-                            onChange={(event) =>
-                              setCurrentPassword(event.target.value)
-                            }
-                          />
-                        </label>
-                        <label>
-                          New Password
-                          <input
-                            type="password"
-                            value={newPassword}
-                            onChange={(event) =>
-                              setNewPassword(event.target.value)
-                            }
-                          />
-                        </label>
-                        <label>
-                          Confirm Password
-                          <input
-                            type="password"
-                            value={confirmPassword}
-                            onChange={(event) =>
-                              setConfirmPassword(event.target.value)
-                            }
-                          />
-                        </label>
-                        <div className="row-actions">
-                          <button
-                            className="ghost"
-                            onClick={() => {
-                              setShowPasswordChange(false);
-                              setCurrentPassword("");
-                              setNewPassword("");
-                              setConfirmPassword("");
-                            }}
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            onClick={async () => {
-                              if (newPassword !== confirmPassword) {
-                                setStatus("Passwords do not match.");
-                                return;
-                              }
-                              if (newPassword.length < 8) {
-                                setStatus(
-                                  "Password must be at least 8 characters.",
-                                );
-                                return;
-                              }
-                              try {
-                                await api("/v1/auth/password", {
-                                  method: "PATCH",
-                                  headers: {
-                                    Authorization: `Bearer ${accessToken}`,
-                                  },
-                                  body: JSON.stringify({
-                                    currentPassword: currentPassword,
-                                    newPassword: newPassword,
-                                  }),
-                                });
-                                setStatus("Password changed successfully.");
-                                setShowPasswordChange(false);
-                                setCurrentPassword("");
-                                setNewPassword("");
-                                setConfirmPassword("");
-                              } catch (error) {
-                                setStatus(
-                                  `Could not change password: ${error.message}`,
-                                );
-                              }
-                            }}
-                          >
-                            Update Password
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </section>
-
-                  <section className="card security-card">
-                    <h4>🛡️ Two-Factor Authentication</h4>
-                    <p className="hint">
-                      Secure your account with an additional authentication
-                      layer
-                    </p>
-
-                    {!securitySettings.twoFactorEnabled && !show2FASetup && (
-                      <button onClick={initiate2FASetup}>Enable 2FA</button>
-                    )}
-
-                    {show2FASetup && !twoFactorVerified && (
-                      <>
-                        <p
-                          className="hint"
-                          style={{
-                            marginTop: "var(--space-sm)",
-                            fontWeight: 600,
-                          }}
-                        >
-                          📱 Step 1: Scan QR Code
-                        </p>
-                        <p className="hint">
-                          Scan this QR code with an authenticator app (Google
-                          Authenticator, Authy, Microsoft Authenticator, etc.):
-                        </p>
-                        {twoFactorQRCode && (
-                          <img
-                            src={twoFactorQRCode}
-                            alt="2FA QR Code"
-                            style={{
-                              width: "200px",
-                              height: "200px",
-                              border: "2px solid rgba(125, 164, 255, 0.3)",
-                              borderRadius: "var(--radius)",
-                              margin: "var(--space-sm) 0",
-                              background: "#fff",
-                              padding: "0.5em",
-                            }}
-                          />
-                        )}
-
-                        <p
-                          className="hint"
-                          style={{
-                            marginTop: "var(--space-md)",
-                            fontWeight: 600,
-                          }}
-                        >
-                          🔐 Step 2: Verify Token
-                        </p>
-                        <p className="hint">
-                          Enter a 6-digit code from your authenticator app:
-                        </p>
-                        <input
-                          type="text"
-                          placeholder="000000"
-                          value={twoFactorToken}
-                          onChange={(event) =>
-                            setTwoFactorToken(
-                              event.target.value.replace(/\D/g, "").slice(0, 6),
-                            )
-                          }
-                          maxLength="6"
-                          style={{
-                            textAlign: "center",
-                            fontSize: "1.2em",
-                            letterSpacing: "0.3em",
-                            fontFamily: "monospace",
-                          }}
-                        />
-
-                        <p
-                          className="hint"
-                          style={{
-                            marginTop: "var(--space-md)",
-                            fontWeight: 600,
-                          }}
-                        >
-                          💾 Step 3: Save Backup Codes
-                        </p>
-                        <p className="hint">
-                          Save these backup codes somewhere safe. You can use
-                          them to regain access if you lose your authenticator.
-                        </p>
-                        <code
-                          style={{
-                            display: "block",
-                            background: "var(--bg-input)",
-                            padding: "var(--space-sm)",
-                            borderRadius: "calc(var(--radius)*0.8)",
-                            fontSize: "0.85em",
-                            marginBottom: "var(--space-sm)",
-                            whiteSpace: "pre-wrap",
-                            wordBreak: "break-all",
-                            fontFamily: "monospace",
-                            lineHeight: "1.8",
-                          }}
-                        >
-                          {backupCodes.map((code) => `${code}\n`).join("")}
-                        </code>
-
-                        <div className="row-actions">
-                          <button
-                            className="ghost"
-                            onClick={() => {
-                              setShow2FASetup(false);
-                              setTwoFactorSecret("");
-                              setBackupCodes([]);
-                              setTwoFactorToken("");
-                            }}
-                          >
-                            Cancel
-                          </button>
-                          <button onClick={confirm2FA}>
-                            Verify & Enable 2FA
-                          </button>
-                        </div>
-                      </>
-                    )}
-
-                    {securitySettings.twoFactorEnabled && (
-                      <>
-                        <p
-                          style={{
-                            color: "var(--green)",
-                            fontWeight: 600,
-                            marginTop: "var(--space-sm)",
-                          }}
-                        >
-                          ✓ 2FA is enabled
-                        </p>
-                        <p className="hint">
-                          Your account is protected with two-factor
-                          authentication. Your backup codes are stored securely.
-                        </p>
-                        <button
-                          className="danger"
-                          onClick={disable2FA}
-                          style={{ marginTop: "var(--space-sm)" }}
-                        >
-                          Disable 2FA
-                        </button>
-                      </>
-                    )}
-                  </section>
-
-                  <section className="card security-card">
-                    <h4>📱 Active Sessions</h4>
-                    <p className="hint">
-                      Devices where you're logged in. Sign out of any session
-                      you don't recognize.
-                    </p>
-                    {activeSessions.map((session) => (
-                      <div key={session.id} className="session-item">
-                        <div className="session-info">
-                          <strong>{session.device}</strong>
-                          <span className="hint">{session.location}</span>
-                          <span className="hint">
-                            Last active: {session.lastActive}
-                          </span>
-                        </div>
-                        <button
-                          className={
-                            session.status === "active" ? "ghost" : "danger"
-                          }
-                          onClick={() =>
-                            setStatus(
-                              `Session ${session.device} would be signed out.`,
-                            )
-                          }
-                        >
-                          {session.status === "active" ? "Current" : "Sign Out"}
-                        </button>
-                      </div>
-                    ))}
-                  </section>
-
-                  <section className="card security-card danger-card">
-                    <h4>⚠️ Danger Zone</h4>
-                    <p className="hint">
-                      Irreversible actions. Proceed with caution.
-                    </p>
-                    <button
-                      className="danger"
-                      onClick={async () => {
-                        const approved = await confirmDialog(
-                          "Are you absolutely sure? This cannot be undone.",
-                          "Delete Account",
-                        );
-                        if (approved)
-                          setStatus(
-                            "Account deletion request submitted for review.",
-                          );
-                      }}
-                    >
-                      Delete Account Permanently
-                    </button>
-                  </section>
-
-                  <section className="card">
-                    <h4>Security Privacy</h4>
-                    <label>
-                      <input type="checkbox" /> Log out of all other sessions
-                    </label>
-                    <label>
-                      <input type="checkbox" /> Show security alerts
-                    </label>
-                    <button
-                      onClick={() => setStatus("Privacy settings saved.")}
-                    >
-                      Save Security Settings
-                    </button>
-                  </section>
-                </>
+                <SecuritySettingsSection
+                  lastLoginInfo={lastLoginInfo}
+                  showPasswordChange={showPasswordChange}
+                  setShowPasswordChange={setShowPasswordChange}
+                  currentPassword={currentPassword}
+                  setCurrentPassword={setCurrentPassword}
+                  newPassword={newPassword}
+                  setNewPassword={setNewPassword}
+                  confirmPassword={confirmPassword}
+                  setConfirmPassword={setConfirmPassword}
+                  api={api}
+                  accessToken={accessToken}
+                  setStatus={setStatus}
+                  securitySettings={securitySettings}
+                  show2FASetup={show2FASetup}
+                  twoFactorVerified={twoFactorVerified}
+                  initiate2FASetup={initiate2FASetup}
+                  twoFactorQRCode={twoFactorQRCode}
+                  twoFactorToken={twoFactorToken}
+                  setTwoFactorToken={setTwoFactorToken}
+                  backupCodes={backupCodes}
+                  setTwoFactorSecret={setTwoFactorSecret}
+                  setBackupCodes={setBackupCodes}
+                  confirm2FA={confirm2FA}
+                  disable2FA={disable2FA}
+                  activeSessions={activeSessions}
+                  confirmDialog={confirmDialog}
+                />
               )}
 
               <p className="status">{status}</p>
-            </section>
-          </div>
-        </div>
-      )}
+      </SettingsOverlay>
     </div>
   );
 }

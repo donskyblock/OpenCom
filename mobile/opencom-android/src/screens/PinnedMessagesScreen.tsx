@@ -1,0 +1,367 @@
+import { useCallback, useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { useAuth } from "../context/AuthContext";
+import { Avatar } from "../components/Avatar";
+import type { CoreServer, Channel, DmThreadApi, PinnedMessage } from "../types";
+import { colors, radii, spacing, typography } from "../theme";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type PinnedMessagesScreenProps = {
+  onBack: () => void;
+} & (
+  | {
+      mode: "channel";
+      server: CoreServer;
+      channel: Channel;
+      thread?: undefined;
+    }
+  | {
+      mode: "dm";
+      thread: DmThreadApi;
+      server?: undefined;
+      channel?: undefined;
+    }
+);
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+// ─── Pin card ─────────────────────────────────────────────────────────────────
+
+function PinCard({
+  pin,
+  onUnpin,
+  canUnpin,
+}: {
+  pin: PinnedMessage;
+  onUnpin: (pin: PinnedMessage) => void;
+  canUnpin: boolean;
+}) {
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <Avatar username={pin.author} pfpUrl={pin.pfp_url} size={32} />
+        <View style={styles.cardMeta}>
+          <Text style={styles.cardAuthor} numberOfLines={1}>
+            {pin.author}
+          </Text>
+          {pin.createdAt ? (
+            <Text style={styles.cardDate}>{formatDate(pin.createdAt)}</Text>
+          ) : null}
+        </View>
+        {canUnpin && (
+          <Pressable
+            style={({ pressed }) => [
+              styles.unpinBtn,
+              pressed && styles.unpinBtnPressed,
+            ]}
+            onPress={() => onUnpin(pin)}
+            hitSlop={8}
+          >
+            <Text style={styles.unpinBtnText}>Unpin</Text>
+          </Pressable>
+        )}
+      </View>
+
+      <View style={styles.cardDivider} />
+
+      <Text style={styles.cardContent}>{pin.content}</Text>
+
+      {pin.attachments && pin.attachments.length > 0 && (
+        <View style={styles.attachments}>
+          {pin.attachments.map((a) => (
+            <View key={a.id} style={styles.attachmentChip}>
+              <Text style={styles.attachmentName} numberOfLines={1}>
+                📎 {a.filename}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ─── Main screen ─────────────────────────────────────────────────────────────
+
+export function PinnedMessagesScreen(props: PinnedMessagesScreenProps) {
+  const { onBack, mode } = props;
+  const { api } = useAuth();
+
+  const [pins, setPins] = useState<PinnedMessage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState("");
+
+  // ── Load pins ──────────────────────────────────────────────────────────────
+
+  const loadPins = useCallback(async () => {
+    setLoading(true);
+    setStatus("");
+    try {
+      if (mode === "channel" && props.server && props.channel) {
+        const data = await api.getServerPins(props.server, props.channel.id);
+        setPins(data.pins ?? []);
+      } else if (mode === "dm" && props.thread) {
+        const data = await api.getDmPins(props.thread.id);
+        setPins(data.pins ?? []);
+      }
+    } catch {
+      setStatus("Failed to load pinned messages.");
+    } finally {
+      setLoading(false);
+    }
+  }, [api, mode, props.server, props.channel, props.thread]);
+
+  useEffect(() => {
+    loadPins();
+  }, [loadPins]);
+
+  // ── Unpin ──────────────────────────────────────────────────────────────────
+
+  const handleUnpin = useCallback(
+    (pin: PinnedMessage) => {
+      Alert.alert("Unpin Message", "Remove this message from pins?", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Unpin",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              if (mode === "channel" && props.server && props.channel) {
+                await api.unpinServerMessage(
+                  props.server,
+                  props.channel.id,
+                  pin.id,
+                );
+              } else if (mode === "dm" && props.thread) {
+                await api.unpinDmMessage(props.thread.id, pin.id);
+              }
+              setPins((prev) => prev.filter((p) => p.id !== pin.id));
+              setStatus("Message unpinned.");
+            } catch {
+              Alert.alert("Error", "Failed to unpin message.");
+            }
+          },
+        },
+      ]);
+    },
+    [api, mode, props.server, props.channel, props.thread],
+  );
+
+  // ── Derived ────────────────────────────────────────────────────────────────
+
+  const title =
+    mode === "channel"
+      ? `Pins — #${props.channel?.name ?? ""}`
+      : `Pins — ${props.thread?.name ?? "DM"}`;
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  return (
+    <View style={styles.container}>
+      {/* Header */}
+      <View style={styles.header}>
+        <Pressable onPress={onBack} style={styles.backBtn} hitSlop={8}>
+          <Text style={styles.backText}>←</Text>
+        </Pressable>
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          📌 {title}
+        </Text>
+      </View>
+
+      {loading ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.brand} />
+        </View>
+      ) : pins.length === 0 ? (
+        <View style={styles.centered}>
+          <Text style={styles.emptyIcon}>📌</Text>
+          <Text style={styles.emptyText}>No pinned messages</Text>
+          <Text style={styles.emptyHint}>
+            Long-press a message and tap Pin to save it here.
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={pins}
+          keyExtractor={(p) => p.id}
+          contentContainerStyle={styles.listContent}
+          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          renderItem={({ item }) => (
+            <PinCard pin={item} canUnpin onUnpin={handleUnpin} />
+          )}
+        />
+      )}
+
+      {!!status && (
+        <View style={styles.statusBar}>
+          <Text style={styles.statusText}>{status}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
+
+  // Header
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.sidebar,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    gap: spacing.sm,
+  },
+  backBtn: { padding: spacing.xs },
+  backText: { fontSize: 22, color: colors.text },
+  headerTitle: { ...typography.heading, color: colors.text, flex: 1 },
+
+  // States
+  centered: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: spacing.xl,
+    gap: spacing.md,
+  },
+  emptyIcon: { fontSize: 48 },
+  emptyText: {
+    ...typography.heading,
+    color: colors.text,
+    textAlign: "center",
+  },
+  emptyHint: {
+    ...typography.caption,
+    color: colors.textDim,
+    textAlign: "center",
+  },
+
+  // List
+  listContent: {
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  separator: {
+    height: spacing.sm,
+  },
+
+  // Card
+  card: {
+    backgroundColor: colors.sidebar,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: "hidden",
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  cardMeta: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  cardAuthor: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: "700",
+  },
+  cardDate: {
+    ...typography.caption,
+    color: colors.textDim,
+  },
+  cardDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginHorizontal: spacing.md,
+  },
+  cardContent: {
+    ...typography.body,
+    color: colors.text,
+    padding: spacing.md,
+    lineHeight: 22,
+  },
+
+  // Attachments
+  attachments: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+  },
+  attachmentChip: {
+    backgroundColor: colors.elev,
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  attachmentName: {
+    ...typography.caption,
+    color: colors.textSoft,
+  },
+
+  // Unpin button
+  unpinBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.danger,
+    flexShrink: 0,
+  },
+  unpinBtnPressed: {
+    backgroundColor: "rgba(239,95,118,0.15)",
+  },
+  unpinBtnText: {
+    color: colors.danger,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+
+  // Status
+  statusBar: {
+    padding: spacing.md,
+    backgroundColor: colors.elev,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    alignItems: "center",
+  },
+  statusText: {
+    ...typography.caption,
+    color: colors.textDim,
+  },
+});
