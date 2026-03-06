@@ -6,37 +6,18 @@ DO_PULL=0
 DO_BACKUP=0
 SKIP_BUILD=0
 
-COMPOSE_CMD=()
-
 print_usage() {
   cat <<'USAGE'
 Usage: ./scripts/ops/update-opencom.sh [--pull] [--backup] [--skip-build]
 
-Docker rolling update flow:
+Backend-only update flow:
   1) optionally pull latest code
-  2) optionally create portability backup
-  3) ensure infrastructure services are up
-  4) build app images (unless --skip-build)
-  5) run migrations in containers
-  6) restart core -> node -> frontend with health checks
+  2) optionally create backup
+  3) install backend dependencies
+  4) build backend (unless --skip-build)
+  5) run backend migrations
+  6) restart backend services
 USAGE
-}
-
-pick_compose() {
-  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    COMPOSE_CMD=(docker compose)
-    return 0
-  fi
-  if command -v docker-compose >/dev/null 2>&1; then
-    COMPOSE_CMD=(docker-compose)
-    return 0
-  fi
-  echo "[ERROR] Docker Compose is required (neither 'docker compose' nor 'docker-compose' found)."
-  exit 1
-}
-
-run_compose() {
-  "${COMPOSE_CMD[@]}" "$@"
 }
 
 require_file() {
@@ -47,37 +28,42 @@ require_file() {
   fi
 }
 
-wait_for_service() {
-  local service="$1"
-  local timeout="${2:-180}"
-  local deadline=$((SECONDS + timeout))
-  local container_id status
+require_dir() {
+  local dir="$1"
+  if [[ ! -d "$dir" ]]; then
+    echo "[ERROR] Required directory missing: $dir"
+    exit 1
+  fi
+}
 
-  container_id="$(run_compose ps -q "$service" | head -n 1)"
-  if [[ -z "$container_id" ]]; then
-    echo "[ERROR] Could not find container id for service '$service'"
+load_backend_env() {
+  local env_file="$ROOT_DIR/backend/.env"
+  if [[ ! -f "$env_file" ]]; then
+    echo "[ERROR] backend/.env not found"
     exit 1
   fi
 
-  while (( SECONDS < deadline )); do
-    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
-    case "$status" in
-      healthy|running)
-        echo "[ok] $service is $status"
-        return 0
-        ;;
-      unhealthy|exited|dead)
-        echo "[ERROR] $service is $status"
-        run_compose logs --tail 80 "$service" || true
-        exit 1
-        ;;
-    esac
-    sleep 2
-  done
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_file"
+  export CORE_HOST="${CORE_HOST:-127.0.0.1}"
+  export NODE_HOST="${NODE_HOST:-0.0.0.0}"
+  set +a
+}
 
-  echo "[ERROR] Timed out waiting for $service to become healthy/running"
-  run_compose logs --tail 80 "$service" || true
-  exit 1
+restart_service() {
+  local service="$1"
+
+  echo "Restarting service: $service"
+  sudo systemctl restart "$service"
+
+  if ! sudo systemctl is-active --quiet "$service"; then
+    echo "[ERROR] Failed to restart service: $service"
+    sudo systemctl status "$service" --no-pager || true
+    exit 1
+  fi
+
+  echo "[ok] $service is running"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -98,13 +84,8 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-pick_compose
-
-require_file "$ROOT_DIR/docker-compose.yml"
+require_dir "$ROOT_DIR/backend"
 require_file "$ROOT_DIR/backend/.env"
-require_file "$ROOT_DIR/backend/.env.docker"
-require_file "$ROOT_DIR/frontend/.env"
-require_file "$ROOT_DIR/frontend/.env.docker"
 
 if [[ $DO_PULL -eq 1 ]]; then
   echo "Pulling latest code..."
@@ -117,40 +98,28 @@ if [[ $DO_BACKUP -eq 1 ]]; then
   "$ROOT_DIR/scripts/ops/migrate-portability.sh" export "$backup_path"
 fi
 
-pushd "$ROOT_DIR" >/dev/null
+load_backend_env
 
-echo "Starting/ensuring infrastructure services..."
-run_compose up -d mariadb-core mariadb-node redis minio
-wait_for_service mariadb-core 180
-wait_for_service mariadb-node 180
-wait_for_service redis 90
+pushd "$ROOT_DIR/backend" >/dev/null
+
+echo "Installing backend dependencies..."
+npm ci
 
 if [[ $SKIP_BUILD -eq 0 ]]; then
-  echo "Building application images..."
-  run_compose build core node frontend
+  echo "Building backend..."
+  npm run build
 else
-  echo "Skipping image builds (--skip-build)."
+  echo "Skipping backend build (--skip-build)."
 fi
 
-echo "Running database migrations in containers..."
-run_compose run --rm --no-deps core npm run migrate:core
-run_compose run --rm --no-deps node npm run migrate:node
-
-echo "Rolling restart: core"
-run_compose up -d --no-deps core
-wait_for_service core 180
-
-echo "Rolling restart: node"
-run_compose up -d --no-deps node
-wait_for_service node 180
-
-echo "Rolling restart: frontend"
-run_compose up -d --no-deps frontend
-wait_for_service frontend 180
-
-echo "Current service status:"
-run_compose ps
+echo "Running backend migrations..."
+npm run migrate:core
+npm run migrate:node
 
 popd >/dev/null
+
+echo "Restarting backend services..."
+restart_service opencom-core
+restart_service opencom-node
 
 echo "Update complete."
