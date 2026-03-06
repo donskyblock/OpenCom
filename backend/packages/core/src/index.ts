@@ -27,7 +27,7 @@ import { themeRoutes } from "./routes/themes.js";
 import { env } from "./env.js";
 import { makeRedis } from "./redis.js";
 import { presenceUpsert } from "./presence.js";
-
+import { CallRoutes } from "./routes/PrivateCalls.js";
 const app = buildHttp();
 
 // attach helper to app
@@ -56,5 +56,7 @@ await linkPreviewRoutes(app);
 await downloadRoutes(app);
 await pushRoutes(app);
 await themeRoutes(app);
+await CallRoutes(app, gw.broadcastToUser);
+
 
 app.listen({ port: env.CORE_PORT, host: env.CORE_HOST });

@@ -6,10 +6,12 @@
     "newArchEnabled": false,
     "orientation": "portrait",
     "scheme": "opencom",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "android": {
       "package": "online.opencom.mobile",
-      "edgeToEdgeEnabled": true,
+      "compileSdkVersion": 36,
+      "targetSdkVersion": 36,
+      "minSdkVersion": 24,
       "permissions": [
         "POST_NOTIFICATIONS"
       ],

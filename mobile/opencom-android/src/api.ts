@@ -146,6 +146,69 @@ export function createApiClient(input: {
         method: "POST",
         body: { content }
       });
+    },
+
+    // Social: friends
+    getFriends() {
+      return coreRequest<{ friends: { id: string; username: string; pfp_url?: string | null; status?: string }[] }>(
+        "/v1/social/friends"
+      );
+    },
+    addFriend(username: string) {
+      return coreRequest<{ ok: boolean; threadId?: string; friend?: { id: string; username?: string }; requestId?: string; requestStatus?: string }>(
+        "/v1/social/friends",
+        { method: "POST", body: { username } }
+      );
+    },
+    removeFriend(friendId: string) {
+      return coreRequest<{ ok: boolean }>(
+        `/v1/social/friends/${encodeURIComponent(friendId)}`,
+        { method: "DELETE" }
+      );
+    },
+    getFriendRequests() {
+      return coreRequest<{
+        incoming: { id: string; userId: string; username: string; createdAt: string }[];
+        outgoing: { id: string; userId: string; username: string; createdAt: string }[];
+      }>("/v1/social/requests");
+    },
+    acceptFriendRequest(requestId: string) {
+      return coreRequest<{ ok: boolean }>(`/v1/social/requests/${encodeURIComponent(requestId)}/accept`, {
+        method: "POST"
+      });
+    },
+    declineFriendRequest(requestId: string) {
+      return coreRequest<{ ok: boolean }>(`/v1/social/requests/${encodeURIComponent(requestId)}/decline`, {
+        method: "POST"
+      });
+    },
+
+    // Social: DMs
+    getDms() {
+      return coreRequest<{ dms: { id: string; participantId: string; name: string; pfp_url?: string | null; lastMessageAt?: string | null }[] }>(
+        "/v1/social/dms"
+      );
+    },
+    openDm(friendId: string) {
+      return coreRequest<{ threadId: string }>("/v1/social/dms/open", {
+        method: "POST",
+        body: { friendId }
+      });
+    },
+    getDmMessages(threadId: string, options?: { limit?: number; before?: string }) {
+      const params = new URLSearchParams();
+      if (options?.limit) params.set("limit", String(options.limit));
+      if (options?.before) params.set("before", options.before);
+      const qs = params.toString();
+      return coreRequest<{ messages: { id: string; authorId: string; author: string; content: string; createdAt: string }[]; hasMore: boolean }>(
+        `/v1/social/dms/${encodeURIComponent(threadId)}/messages${qs ? `?${qs}` : ""}`
+      );
+    },
+    sendDmMessage(threadId: string, content: string) {
+      return coreRequest<{ id: string }>(`/v1/social/dms/${encodeURIComponent(threadId)}/messages`, {
+        method: "POST",
+        body: { content }
+      });
     }
   };
 }

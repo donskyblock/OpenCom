@@ -15,7 +15,7 @@ export const VOICE_NOISE_SUPPRESSION_PRESETS = Object.freeze({
     compressorKnee: 20,
     compressorRatio: 12,
     compressorAttack: 0.003,
-    compressorRelease: 0.24
+    compressorRelease: 0.24,
   }),
   balanced: Object.freeze({
     gateOpenRms: 0.014,
@@ -28,7 +28,7 @@ export const VOICE_NOISE_SUPPRESSION_PRESETS = Object.freeze({
     compressorKnee: 28,
     compressorRatio: 10,
     compressorAttack: 0.004,
-    compressorRelease: 0.2
+    compressorRelease: 0.2,
   }),
   light: Object.freeze({
     gateOpenRms: 0.009,
@@ -41,8 +41,8 @@ export const VOICE_NOISE_SUPPRESSION_PRESETS = Object.freeze({
     compressorKnee: 24,
     compressorRatio: 6,
     compressorAttack: 0.005,
-    compressorRelease: 0.16
-  })
+    compressorRelease: 0.16,
+  }),
 });
 
 export function createSfuVoiceClient({
@@ -50,13 +50,17 @@ export function createSfuVoiceClient({
   getSelfUserId,
   sendDispatch,
   waitForEvent,
+  debugLog = null,
   onLocalAudioProcessingInfo,
   onRemoteAudioAdded,
   onRemoteAudioRemoved,
   onRemoteVideoAdded,
   onRemoteVideoRemoved,
-  onScreenShareStateChange
+  onScreenShareStateChange,
 }) {
+  const log = (message, context = {}) => {
+    if (typeof debugLog === "function") debugLog(message, context);
+  };
   const state = {
     sessionToken: 0,
     guildId: "",
@@ -75,7 +79,11 @@ export function createSfuVoiceClient({
     isDeafened: false,
     noiseSuppression: true,
     noiseSuppressionPreset: VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET,
-    noiseSuppressionConfig: { ...VOICE_NOISE_SUPPRESSION_PRESETS[VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET] },
+    noiseSuppressionConfig: {
+      ...VOICE_NOISE_SUPPRESSION_PRESETS[
+        VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET
+      ],
+    },
     micGainPercent: DEFAULT_MIC_GAIN_PERCENT,
     audioInputDeviceId: "",
     audioOutputDeviceId: "",
@@ -85,13 +93,15 @@ export function createSfuVoiceClient({
     pendingAudioStartByProducerId: new Map(),
     userAudioPrefsByUserId: new Map(),
     selfMonitorAudio: null,
-    selfMonitorActive: false
+    selfMonitorActive: false,
   };
 
   function normalizeUserAudioPreference(pref = {}) {
     const muted = !!pref?.muted;
     const volumeRaw = Number(pref?.volume);
-    const volume = Number.isFinite(volumeRaw) ? Math.max(0, Math.min(100, volumeRaw)) : 100;
+    const volume = Number.isFinite(volumeRaw)
+      ? Math.max(0, Math.min(100, volumeRaw))
+      : 100;
     return { muted, volume };
   }
 
@@ -101,7 +111,9 @@ export function createSfuVoiceClient({
       audio.volume = 0;
       return;
     }
-    const pref = normalizeUserAudioPreference(state.userAudioPrefsByUserId.get(userId) || {});
+    const pref = normalizeUserAudioPreference(
+      state.userAudioPrefsByUserId.get(userId) || {},
+    );
     audio.volume = pref.muted ? 0 : pref.volume / 100;
   }
 
@@ -113,11 +125,17 @@ export function createSfuVoiceClient({
   }
 
   function scheduleAudioStartRetry(audio, producerId) {
-    if (!audio || !producerId || state.pendingAudioStartByProducerId.has(producerId)) return;
+    if (
+      !audio ||
+      !producerId ||
+      state.pendingAudioStartByProducerId.has(producerId)
+    )
+      return;
 
     const retryStart = () => {
       if (audio.paused) {
-        audio.play()
+        audio
+          .play()
           .then(() => {
             removePendingAudioStart(producerId);
           })
@@ -128,14 +146,18 @@ export function createSfuVoiceClient({
     };
 
     const events = ["pointerdown", "touchstart", "keydown", "click"];
-    events.forEach((eventName) => window.addEventListener(eventName, retryStart, { passive: true }));
+    events.forEach((eventName) =>
+      window.addEventListener(eventName, retryStart, { passive: true }),
+    );
     const timer = window.setInterval(retryStart, 1500);
 
     state.pendingAudioStartByProducerId.set(producerId, {
       cleanup: () => {
         window.clearInterval(timer);
-        events.forEach((eventName) => window.removeEventListener(eventName, retryStart));
-      }
+        events.forEach((eventName) =>
+          window.removeEventListener(eventName, retryStart),
+        );
+      },
     });
   }
 
@@ -171,7 +193,9 @@ export function createSfuVoiceClient({
   }
 
   function normalizeNoiseSuppressionPreset(value) {
-    const key = String(value || "").trim().toLowerCase();
+    const key = String(value || "")
+      .trim()
+      .toLowerCase();
     if (key === "custom") return "custom";
     if (VOICE_NOISE_SUPPRESSION_PRESETS[key]) return key;
     return VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET;
@@ -179,24 +203,78 @@ export function createSfuVoiceClient({
 
   function getNoiseSuppressionPresetConfig(preset) {
     const presetKey = normalizeNoiseSuppressionPreset(preset);
-    if (presetKey === "custom") return VOICE_NOISE_SUPPRESSION_PRESETS[VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET];
-    return VOICE_NOISE_SUPPRESSION_PRESETS[presetKey] || VOICE_NOISE_SUPPRESSION_PRESETS[VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET];
+    if (presetKey === "custom")
+      return VOICE_NOISE_SUPPRESSION_PRESETS[
+        VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET
+      ];
+    return (
+      VOICE_NOISE_SUPPRESSION_PRESETS[presetKey] ||
+      VOICE_NOISE_SUPPRESSION_PRESETS[VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET]
+    );
   }
 
   function normalizeNoiseSuppressionConfig(config = {}, fallbackConfig = null) {
-    const base = fallbackConfig || state.noiseSuppressionConfig || getNoiseSuppressionPresetConfig(state.noiseSuppressionPreset);
+    const base =
+      fallbackConfig ||
+      state.noiseSuppressionConfig ||
+      getNoiseSuppressionPresetConfig(state.noiseSuppressionPreset);
     const normalized = {
-      gateOpenRms: clampNoiseValue(config.gateOpenRms, 0.004, 0.06, base.gateOpenRms),
-      gateCloseRms: clampNoiseValue(config.gateCloseRms, 0.002, 0.05, base.gateCloseRms),
-      gateAttack: clampNoiseValue(config.gateAttack, 0.05, 0.95, base.gateAttack),
-      gateRelease: clampNoiseValue(config.gateRelease, 0.01, 0.8, base.gateRelease),
+      gateOpenRms: clampNoiseValue(
+        config.gateOpenRms,
+        0.004,
+        0.06,
+        base.gateOpenRms,
+      ),
+      gateCloseRms: clampNoiseValue(
+        config.gateCloseRms,
+        0.002,
+        0.05,
+        base.gateCloseRms,
+      ),
+      gateAttack: clampNoiseValue(
+        config.gateAttack,
+        0.05,
+        0.95,
+        base.gateAttack,
+      ),
+      gateRelease: clampNoiseValue(
+        config.gateRelease,
+        0.01,
+        0.8,
+        base.gateRelease,
+      ),
       highpassHz: clampNoiseValue(config.highpassHz, 40, 300, base.highpassHz),
       lowpassHz: clampNoiseValue(config.lowpassHz, 4200, 14000, base.lowpassHz),
-      compressorThreshold: clampNoiseValue(config.compressorThreshold, -70, -8, base.compressorThreshold),
-      compressorKnee: clampNoiseValue(config.compressorKnee, 0, 40, base.compressorKnee),
-      compressorRatio: clampNoiseValue(config.compressorRatio, 1, 20, base.compressorRatio),
-      compressorAttack: clampNoiseValue(config.compressorAttack, 0.001, 0.05, base.compressorAttack),
-      compressorRelease: clampNoiseValue(config.compressorRelease, 0.04, 0.8, base.compressorRelease)
+      compressorThreshold: clampNoiseValue(
+        config.compressorThreshold,
+        -70,
+        -8,
+        base.compressorThreshold,
+      ),
+      compressorKnee: clampNoiseValue(
+        config.compressorKnee,
+        0,
+        40,
+        base.compressorKnee,
+      ),
+      compressorRatio: clampNoiseValue(
+        config.compressorRatio,
+        1,
+        20,
+        base.compressorRatio,
+      ),
+      compressorAttack: clampNoiseValue(
+        config.compressorAttack,
+        0.001,
+        0.05,
+        base.compressorAttack,
+      ),
+      compressorRelease: clampNoiseValue(
+        config.compressorRelease,
+        0.04,
+        0.8,
+        base.compressorRelease,
+      ),
     };
     if (normalized.gateCloseRms >= normalized.gateOpenRms) {
       normalized.gateCloseRms = Math.max(0.002, normalized.gateOpenRms * 0.8);
@@ -208,12 +286,18 @@ export function createSfuVoiceClient({
   }
 
   function applyNoiseSuppressionProfile({ preset, config } = {}) {
-    const nextPreset = normalizeNoiseSuppressionPreset(preset || state.noiseSuppressionPreset);
+    const nextPreset = normalizeNoiseSuppressionPreset(
+      preset || state.noiseSuppressionPreset,
+    );
     const presetConfig = getNoiseSuppressionPresetConfig(nextPreset);
     state.noiseSuppressionPreset = nextPreset;
-    state.noiseSuppressionConfig = normalizeNoiseSuppressionConfig(config || {}, presetConfig);
+    state.noiseSuppressionConfig = normalizeNoiseSuppressionConfig(
+      config || {},
+      presetConfig,
+    );
     if (state.localAudioNodes?.noiseGateState) {
-      state.localAudioNodes.noiseGateState.config = state.noiseSuppressionConfig;
+      state.localAudioNodes.noiseGateState.config =
+        state.noiseSuppressionConfig;
     }
   }
 
@@ -222,23 +306,33 @@ export function createSfuVoiceClient({
       echoCancellation: true,
       noiseSuppression: !!state.noiseSuppression,
       autoGainControl: true,
-      ...(state.audioInputDeviceId ? { deviceId: { exact: state.audioInputDeviceId } } : {})
+      ...(state.audioInputDeviceId
+        ? { deviceId: { exact: state.audioInputDeviceId } }
+        : {}),
     };
   }
 
   function stopStreamTracks(stream) {
     if (!stream) return;
     for (const track of stream.getTracks?.() || []) {
-      try { track.stop(); } catch {}
+      try {
+        track.stop();
+      } catch {}
     }
   }
 
   function clearSelfMonitorState() {
     const audio = state.selfMonitorAudio;
     if (audio) {
-      try { audio.pause(); } catch {}
-      try { audio.srcObject = null; } catch {}
-      try { audio.remove(); } catch {}
+      try {
+        audio.pause();
+      } catch {}
+      try {
+        audio.srcObject = null;
+      } catch {}
+      try {
+        audio.remove();
+      } catch {}
     }
     state.selfMonitorAudio = null;
     state.selfMonitorActive = false;
@@ -270,7 +364,10 @@ export function createSfuVoiceClient({
 
   function setAudioParamValue(param, value, audioContextOverride = null) {
     if (!param || !Number.isFinite(value)) return;
-    const now = audioContextOverride?.currentTime ?? state.localAudioContext?.currentTime ?? 0;
+    const now =
+      audioContextOverride?.currentTime ??
+      state.localAudioContext?.currentTime ??
+      0;
     try {
       param.cancelScheduledValues(now);
       param.setTargetAtTime(value, now, 0.02);
@@ -279,23 +376,52 @@ export function createSfuVoiceClient({
     }
   }
 
-  function applyNoiseProcessingTuning({ audioContext = state.localAudioContext, nodes = state.localAudioNodes } = {}) {
+  function applyNoiseProcessingTuning({
+    audioContext = state.localAudioContext,
+    nodes = state.localAudioNodes,
+  } = {}) {
     const highpassNode = nodes?.highpassNode;
     const lowpassNode = nodes?.lowpassNode;
     const compressorNode = nodes?.compressorNode;
     if (!highpassNode || !lowpassNode || !compressorNode) return;
-    const config = state.noiseSuppressionConfig || getNoiseSuppressionPresetConfig(state.noiseSuppressionPreset);
+    const config =
+      state.noiseSuppressionConfig ||
+      getNoiseSuppressionPresetConfig(state.noiseSuppressionPreset);
 
     if (state.noiseSuppression) {
-      setAudioParamValue(highpassNode.frequency, config.highpassHz, audioContext);
+      setAudioParamValue(
+        highpassNode.frequency,
+        config.highpassHz,
+        audioContext,
+      );
       setAudioParamValue(highpassNode.Q, 0.71, audioContext);
       setAudioParamValue(lowpassNode.frequency, config.lowpassHz, audioContext);
       setAudioParamValue(lowpassNode.Q, 0.71, audioContext);
-      setAudioParamValue(compressorNode.threshold, config.compressorThreshold, audioContext);
-      setAudioParamValue(compressorNode.knee, config.compressorKnee, audioContext);
-      setAudioParamValue(compressorNode.ratio, config.compressorRatio, audioContext);
-      setAudioParamValue(compressorNode.attack, config.compressorAttack, audioContext);
-      setAudioParamValue(compressorNode.release, config.compressorRelease, audioContext);
+      setAudioParamValue(
+        compressorNode.threshold,
+        config.compressorThreshold,
+        audioContext,
+      );
+      setAudioParamValue(
+        compressorNode.knee,
+        config.compressorKnee,
+        audioContext,
+      );
+      setAudioParamValue(
+        compressorNode.ratio,
+        config.compressorRatio,
+        audioContext,
+      );
+      setAudioParamValue(
+        compressorNode.attack,
+        config.compressorAttack,
+        audioContext,
+      );
+      setAudioParamValue(
+        compressorNode.release,
+        config.compressorRelease,
+        audioContext,
+      );
       return;
     }
 
@@ -313,7 +439,8 @@ export function createSfuVoiceClient({
 
   function buildProcessedAudioStream(rawStream) {
     const rawTrack = rawStream?.getAudioTracks?.()?.[0] || null;
-    if (!rawTrack) return { stream: null, track: null, audioContext: null, nodes: null };
+    if (!rawTrack)
+      return { stream: null, track: null, audioContext: null, nodes: null };
 
     const AudioContextCtor = getAudioContextConstructor();
     if (!AudioContextCtor) {
@@ -321,7 +448,7 @@ export function createSfuVoiceClient({
         stream: rawStream,
         track: rawTrack,
         audioContext: null,
-        nodes: null
+        nodes: null,
       };
     }
 
@@ -344,13 +471,16 @@ export function createSfuVoiceClient({
 
     const noiseGateState = {
       enabled: !!state.noiseSuppression,
-      config: state.noiseSuppressionConfig || getNoiseSuppressionPresetConfig(state.noiseSuppressionPreset),
+      config:
+        state.noiseSuppressionConfig ||
+        getNoiseSuppressionPresetConfig(state.noiseSuppressionPreset),
       gate: 1,
-      isOpen: true
+      isOpen: true,
     };
-    const gateNode = typeof audioContext.createScriptProcessor === "function"
-      ? audioContext.createScriptProcessor(1024, 1, 1)
-      : null;
+    const gateNode =
+      typeof audioContext.createScriptProcessor === "function"
+        ? audioContext.createScriptProcessor(1024, 1, 1)
+        : null;
     if (gateNode) {
       gateNode.onaudioprocess = (event) => {
         const input = event.inputBuffer.getChannelData(0);
@@ -361,7 +491,10 @@ export function createSfuVoiceClient({
           noiseGateState.isOpen = true;
           return;
         }
-        const gateConfig = noiseGateState.config || state.noiseSuppressionConfig || getNoiseSuppressionPresetConfig(state.noiseSuppressionPreset);
+        const gateConfig =
+          noiseGateState.config ||
+          state.noiseSuppressionConfig ||
+          getNoiseSuppressionPresetConfig(state.noiseSuppressionPreset);
 
         let sum = 0;
         for (let i = 0; i < input.length; i += 1) {
@@ -375,7 +508,10 @@ export function createSfuVoiceClient({
         }
 
         const target = noiseGateState.isOpen ? 1 : 0;
-        const smoothing = target > noiseGateState.gate ? gateConfig.gateAttack : gateConfig.gateRelease;
+        const smoothing =
+          target > noiseGateState.gate
+            ? gateConfig.gateAttack
+            : gateConfig.gateRelease;
         noiseGateState.gate += (target - noiseGateState.gate) * smoothing;
         for (let i = 0; i < input.length; i += 1) {
           output[i] = input[i] * noiseGateState.gate;
@@ -397,12 +533,14 @@ export function createSfuVoiceClient({
 
     const processedTrack = destination.stream.getAudioTracks?.()?.[0] || null;
     if (!processedTrack) {
-      try { audioContext.close(); } catch {}
+      try {
+        audioContext.close();
+      } catch {}
       return {
         stream: rawStream,
         track: rawTrack,
         audioContext: null,
-        nodes: null
+        nodes: null,
       };
     }
 
@@ -418,17 +556,25 @@ export function createSfuVoiceClient({
         gainNode,
         gateNode,
         destination,
-        noiseGateState
-      }
+        noiseGateState,
+      },
     };
-    applyNoiseProcessingTuning({ audioContext: built.audioContext, nodes: built.nodes });
+    applyNoiseProcessingTuning({
+      audioContext: built.audioContext,
+      nodes: built.nodes,
+    });
     return built;
   }
 
-  async function closeLocalAudioPipeline({ stopLocalStream = true, stopRawStream = true } = {}) {
+  async function closeLocalAudioPipeline({
+    stopLocalStream = true,
+    stopRawStream = true,
+  } = {}) {
     clearSelfMonitorState();
     if (state.localAudioContext) {
-      try { await state.localAudioContext.close(); } catch {}
+      try {
+        await state.localAudioContext.close();
+      } catch {}
     }
     state.localAudioContext = null;
     state.localAudioNodes = null;
@@ -445,31 +591,44 @@ export function createSfuVoiceClient({
   function emitLocalAudioProcessingInfo(localTrack) {
     const rawTrack = state.rawLocalStream?.getAudioTracks?.()?.[0] || null;
     const trackForSettings = rawTrack || localTrack;
-    const trackSettings = trackForSettings && typeof trackForSettings.getSettings === "function" ? trackForSettings.getSettings() : {};
-    const supportedConstraints = navigator.mediaDevices?.getSupportedConstraints?.() || {};
+    const trackSettings =
+      trackForSettings && typeof trackForSettings.getSettings === "function"
+        ? trackForSettings.getSettings()
+        : {};
+    const supportedConstraints =
+      navigator.mediaDevices?.getSupportedConstraints?.() || {};
     onLocalAudioProcessingInfo?.({
       requested: {
         noiseSuppression: !!state.noiseSuppression,
         echoCancellation: true,
-        autoGainControl: true
+        autoGainControl: true,
       },
       applied: {
-        noiseSuppression: typeof trackSettings.noiseSuppression === "boolean" ? trackSettings.noiseSuppression : null,
-        echoCancellation: typeof trackSettings.echoCancellation === "boolean" ? trackSettings.echoCancellation : null,
-        autoGainControl: typeof trackSettings.autoGainControl === "boolean" ? trackSettings.autoGainControl : null
+        noiseSuppression:
+          typeof trackSettings.noiseSuppression === "boolean"
+            ? trackSettings.noiseSuppression
+            : null,
+        echoCancellation:
+          typeof trackSettings.echoCancellation === "boolean"
+            ? trackSettings.echoCancellation
+            : null,
+        autoGainControl:
+          typeof trackSettings.autoGainControl === "boolean"
+            ? trackSettings.autoGainControl
+            : null,
       },
       supported: {
         noiseSuppression: !!supportedConstraints.noiseSuppression,
         echoCancellation: !!supportedConstraints.echoCancellation,
-        autoGainControl: !!supportedConstraints.autoGainControl
+        autoGainControl: !!supportedConstraints.autoGainControl,
       },
       client: {
         processingActive: !!state.localAudioNodes,
         noiseGateActive: !!state.localAudioNodes?.noiseGateState?.enabled,
         micGainPercent: normalizeMicGainPercent(state.micGainPercent),
         noisePreset: state.noiseSuppressionPreset,
-        noiseConfig: state.noiseSuppressionConfig
-      }
+        noiseConfig: state.noiseSuppressionConfig,
+      },
     });
   }
 
@@ -481,7 +640,7 @@ export function createSfuVoiceClient({
     let nextRawStream = previousRawStream;
     if (reacquireInput || !nextRawStream?.getAudioTracks?.()?.[0]) {
       nextRawStream = await navigator.mediaDevices.getUserMedia({
-        audio: getRequestedAudioConstraints()
+        audio: getRequestedAudioConstraints(),
       });
     }
 
@@ -490,7 +649,9 @@ export function createSfuVoiceClient({
     if (!nextTrack) {
       if (nextRawStream !== previousRawStream) stopStreamTracks(nextRawStream);
       if (built.audioContext) {
-        try { await built.audioContext.close(); } catch {}
+        try {
+          await built.audioContext.close();
+        } catch {}
       }
       throw new Error("MIC_TRACK_NOT_FOUND");
     }
@@ -501,10 +662,13 @@ export function createSfuVoiceClient({
       }
     } catch (error) {
       if (built.audioContext) {
-        try { await built.audioContext.close(); } catch {}
+        try {
+          await built.audioContext.close();
+        } catch {}
       }
       if (nextRawStream !== previousRawStream) stopStreamTracks(nextRawStream);
-      if (built.stream && built.stream !== nextRawStream) stopStreamTracks(built.stream);
+      if (built.stream && built.stream !== nextRawStream)
+        stopStreamTracks(built.stream);
       throw error;
     }
 
@@ -525,8 +689,13 @@ export function createSfuVoiceClient({
     }
     applyLocalTrackEnabledState();
 
-    if (previousAudioContext && previousAudioContext !== state.localAudioContext) {
-      try { await previousAudioContext.close(); } catch {}
+    if (
+      previousAudioContext &&
+      previousAudioContext !== state.localAudioContext
+    ) {
+      try {
+        await previousAudioContext.close();
+      } catch {}
     }
     if (previousLocalStream && previousLocalStream !== state.localStream) {
       stopStreamTracks(previousLocalStream);
@@ -547,11 +716,20 @@ export function createSfuVoiceClient({
   }
 
   function setNoiseSuppressionConfig(nextProfile = {}) {
-    const nextPreset = normalizeNoiseSuppressionPreset(nextProfile?.preset || state.noiseSuppressionPreset);
-    const nextConfigInput = nextProfile && typeof nextProfile === "object" && nextProfile.config && typeof nextProfile.config === "object"
-      ? nextProfile.config
-      : nextProfile;
-    applyNoiseSuppressionProfile({ preset: nextPreset, config: nextConfigInput });
+    const nextPreset = normalizeNoiseSuppressionPreset(
+      nextProfile?.preset || state.noiseSuppressionPreset,
+    );
+    const nextConfigInput =
+      nextProfile &&
+      typeof nextProfile === "object" &&
+      nextProfile.config &&
+      typeof nextProfile.config === "object"
+        ? nextProfile.config
+        : nextProfile;
+    applyNoiseSuppressionProfile({
+      preset: nextPreset,
+      config: nextConfigInput,
+    });
     setNoiseGateEnabled(state.noiseSuppression);
     applyNoiseProcessingTuning();
     const localTrack = state.localStream?.getAudioTracks?.()?.[0] || null;
@@ -613,7 +791,8 @@ export function createSfuVoiceClient({
       return selectedId;
     }
 
-    const preferred = sources.find((source) => source?.type === "screen") || sources[0];
+    const preferred =
+      sources.find((source) => source?.type === "screen") || sources[0];
     if (!preferred?.id) throw new Error("SCREEN_SOURCE_NOT_FOUND");
     return preferred.id;
   }
@@ -638,24 +817,34 @@ export function createSfuVoiceClient({
           chromeMediaSourceId: sourceId,
           maxFrameRate: 30,
           maxWidth: 3840,
-          maxHeight: 2160
-        }
-      }
+          maxHeight: 2160,
+        },
+      },
     });
   }
 
   async function waitDispatch(type, match, timeoutMs = DEFAULT_TIMEOUT_MS) {
-    return waitForEvent({ type, match, timeoutMs, guildId: state.guildId, channelId: state.channelId, sessionToken: state.sessionToken });
+    return waitForEvent({
+      type,
+      match,
+      timeoutMs,
+      guildId: state.guildId,
+      channelId: state.channelId,
+      sessionToken: state.sessionToken,
+    });
   }
 
-  async function waitForTransportConnected(transportId, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  async function waitForTransportConnected(
+    transportId,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  ) {
     return waitForEvent({
       type: "VOICE_TRANSPORT_CONNECTED",
       timeoutMs,
       guildId: state.guildId,
       channelId: state.channelId,
       sessionToken: state.sessionToken,
-      transportId
+      transportId,
     });
   }
 
@@ -665,11 +854,14 @@ export function createSfuVoiceClient({
       timeoutMs,
       guildId: state.guildId,
       channelId: state.channelId,
-      sessionToken: state.sessionToken
+      sessionToken: state.sessionToken,
     });
   }
 
-  async function waitForVoiceResponse(waitForSuccess, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  async function waitForVoiceResponse(
+    waitForSuccess,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  ) {
     const successPromise = waitForSuccess();
     const errorPromise = waitForVoiceError(timeoutMs).then((errorData) => {
       throw new Error(`VOICE_ERROR: ${errorData?.error || "UNKNOWN"}`);
@@ -678,8 +870,15 @@ export function createSfuVoiceClient({
   }
 
   async function createTransport(direction, token) {
-    await sendDispatch("VOICE_CREATE_TRANSPORT", { guildId: state.guildId, channelId: state.channelId, direction });
-    const created = await waitDispatch("VOICE_TRANSPORT_CREATED", (d) => d?.direction === direction);
+    await sendDispatch("VOICE_CREATE_TRANSPORT", {
+      guildId: state.guildId,
+      channelId: state.channelId,
+      direction,
+    });
+    const created = await waitDispatch(
+      "VOICE_TRANSPORT_CREATED",
+      (d) => d?.direction === direction,
+    );
     if (!isActive(token)) throw new Error("VOICE_SESSION_CANCELLED");
     return direction === "send"
       ? state.device.createSendTransport(created.transport)
@@ -687,7 +886,13 @@ export function createSfuVoiceClient({
   }
 
   async function consumeProducer(producerId, userId, token) {
-    if (!producerId || !state.recvTransport || !state.device || !isActive(token)) return;
+    if (
+      !producerId ||
+      !state.recvTransport ||
+      !state.device ||
+      !isActive(token)
+    )
+      return;
     if (state.consumersByProducerId.has(producerId)) return;
 
     await sendDispatch("VOICE_CONSUME", {
@@ -695,11 +900,11 @@ export function createSfuVoiceClient({
       channelId: state.channelId,
       transportId: state.recvTransport.id,
       producerId,
-      rtpCapabilities: state.device.rtpCapabilities
+      rtpCapabilities: state.device.rtpCapabilities,
     });
 
-    const consumerOptions = await waitForVoiceResponse(
-      () => waitDispatch("VOICE_CONSUMED", (d) => d?.producerId === producerId)
+    const consumerOptions = await waitForVoiceResponse(() =>
+      waitDispatch("VOICE_CONSUMED", (d) => d?.producerId === producerId),
     );
     if (!isActive(token)) return;
 
@@ -716,27 +921,53 @@ export function createSfuVoiceClient({
       document.body.appendChild(audio);
       audio.addEventListener("loadedmetadata", () => {
         if (audio.paused) {
-          audio.play().catch(() => {
-            scheduleAudioStartRetry(audio, producerId);
-          });
+          audio
+            .play()
+            .then(() => {
+              log("audio.play() resolved", { producerId, userId });
+            })
+            .catch((err) => {
+              log("audio.play() failed, scheduling retry", {
+                producerId,
+                userId,
+                error: String(err?.message || err),
+              });
+              scheduleAudioStartRetry(audio, producerId);
+            });
         }
       });
       if (typeof audio.setSinkId === "function" && state.audioOutputDeviceId) {
         await audio.setSinkId(state.audioOutputDeviceId).catch(() => {});
       }
       applyAudioPreferenceToAudio(audio, userId || "");
-      await audio.play().catch(() => {
-        scheduleAudioStartRetry(audio, producerId);
-      });
+      await audio
+        .play()
+        .then(() => {
+          log("audio.play() resolved (eager)", { producerId, userId });
+        })
+        .catch((err) => {
+          log("audio.play() failed (eager), scheduling retry", {
+            producerId,
+            userId,
+            error: String(err?.message || err),
+          });
+          scheduleAudioStartRetry(audio, producerId);
+        });
       state.consumersByProducerId.set(producerId, {
         consumer,
         audio,
         stream,
         kind: "audio",
-        userId: userId || ""
+        userId: userId || "",
       });
       if (userId) state.producerOwnerByProducerId.set(producerId, userId);
-      onRemoteAudioAdded?.({ producerId, guildId: state.guildId, channelId: state.channelId, userId, audio });
+      onRemoteAudioAdded?.({
+        producerId,
+        guildId: state.guildId,
+        channelId: state.channelId,
+        userId,
+        audio,
+      });
       return;
     }
 
@@ -744,7 +975,7 @@ export function createSfuVoiceClient({
       consumer,
       stream,
       kind: consumer.kind,
-      userId: userId || ""
+      userId: userId || "",
     });
     if (userId) state.producerOwnerByProducerId.set(producerId, userId);
     onRemoteVideoAdded?.({ producerId, userId, stream, kind: consumer.kind });
@@ -760,7 +991,7 @@ export function createSfuVoiceClient({
     noiseSuppressionConfig = null,
     isMuted = false,
     isDeafened = false,
-    audioOutputDeviceId = ""
+    audioOutputDeviceId = "",
   }) {
     await cleanup();
     state.sessionToken += 1;
@@ -773,11 +1004,14 @@ export function createSfuVoiceClient({
     state.micGainPercent = normalizeMicGainPercent(micGain);
     applyNoiseSuppressionProfile({
       preset: noiseSuppressionPreset,
-      config: noiseSuppressionConfig || getNoiseSuppressionPresetConfig(noiseSuppressionPreset)
+      config:
+        noiseSuppressionConfig ||
+        getNoiseSuppressionPresetConfig(noiseSuppressionPreset),
     });
     state.audioInputDeviceId = audioInputDeviceId || "";
     state.audioOutputDeviceId = audioOutputDeviceId || "";
 
+    log("joining voice channel", { guildId, channelId, sessionToken: token });
     await sendDispatch("VOICE_JOIN", { guildId, channelId });
     const joined = await waitForEvent({
       type: "VOICE_JOINED",
@@ -785,89 +1019,105 @@ export function createSfuVoiceClient({
       timeoutMs: 12000,
       guildId,
       channelId,
-      sessionToken: token
+      sessionToken: token,
     });
     if (!isActive(token)) throw new Error("VOICE_SESSION_CANCELLED");
 
+    log("VOICE_JOINED received, loading device", {
+      guildId,
+      channelId,
+      producerCount: (joined.producers || []).length,
+    });
     state.device = new mediasoupClient.Device();
     await state.device.load({ routerRtpCapabilities: joined.rtpCapabilities });
 
     state.sendTransport = await createTransport("send", token);
-    state.sendTransport.on("connect", async ({ dtlsParameters }, callback, errback) => {
-      try {
-        if (import.meta.env.DEV) {
-          console.debug("[voice] sending VOICE_CONNECT_TRANSPORT", {
+    state.sendTransport.on(
+      "connect",
+      async ({ dtlsParameters }, callback, errback) => {
+        try {
+          log("send transport connecting", {
             transportId: state.sendTransport.id,
             guildId: state.guildId,
-            channelId: state.channelId
+            channelId: state.channelId,
           });
+          await sendDispatch("VOICE_CONNECT_TRANSPORT", {
+            guildId: state.guildId,
+            channelId: state.channelId,
+            transportId: state.sendTransport.id,
+            dtlsParameters,
+          });
+          await waitForVoiceResponse(() =>
+            waitForTransportConnected(state.sendTransport.id),
+          );
+          callback();
+        } catch (error) {
+          errback(error);
         }
-        await sendDispatch("VOICE_CONNECT_TRANSPORT", {
-          guildId: state.guildId,
-          channelId: state.channelId,
-          transportId: state.sendTransport.id,
-          dtlsParameters
-        });
-        await waitForVoiceResponse(() => waitForTransportConnected(state.sendTransport.id));
-        callback();
-      } catch (error) {
-        errback(error);
-      }
-    });
-    state.sendTransport.on("produce", async ({ kind, rtpParameters }, callback, errback) => {
-      try {
-        await sendDispatch("VOICE_PRODUCE", {
-          guildId: state.guildId,
-          channelId: state.channelId,
-          transportId: state.sendTransport.id,
-          kind,
-          rtpParameters
-        });
-        const produced = await waitForVoiceResponse(
-          () => waitDispatch(
-            "VOICE_PRODUCED",
-            (d) =>
-              d?.guildId === state.guildId &&
-              d?.channelId === state.channelId &&
-              d?.userId === resolveSelfUserId()
-          )
-        );
-        callback({ id: produced.producerId });
-      } catch (error) {
-        errback(error);
-      }
-    });
+      },
+    );
+    state.sendTransport.on(
+      "produce",
+      async ({ kind, rtpParameters }, callback, errback) => {
+        try {
+          await sendDispatch("VOICE_PRODUCE", {
+            guildId: state.guildId,
+            channelId: state.channelId,
+            transportId: state.sendTransport.id,
+            kind,
+            rtpParameters,
+          });
+          const produced = await waitForVoiceResponse(() =>
+            waitDispatch(
+              "VOICE_PRODUCED",
+              (d) =>
+                d?.guildId === state.guildId &&
+                d?.channelId === state.channelId &&
+                d?.userId === resolveSelfUserId(),
+            ),
+          );
+          callback({ id: produced.producerId });
+        } catch (error) {
+          errback(error);
+        }
+      },
+    );
 
     const localTrack = await rebuildLocalAudioTrack({ reacquireInput: true });
     if (!localTrack) throw new Error("MIC_TRACK_NOT_FOUND");
-    state.localAudioProducer = await state.sendTransport.produce({ track: localTrack });
+    state.localAudioProducer = await state.sendTransport.produce({
+      track: localTrack,
+    });
     if (state.isMuted) {
       state.localAudioProducer.pause();
       localTrack.enabled = false;
     }
 
     state.recvTransport = await createTransport("recv", token);
-    state.recvTransport.on("connect", async ({ dtlsParameters }, callback, errback) => {
-      try {
-        if (import.meta.env.DEV) {
-          console.debug("[voice] sending VOICE_CONNECT_TRANSPORT", {
+    state.recvTransport.on(
+      "connect",
+      async ({ dtlsParameters }, callback, errback) => {
+        try {
+          log("recv transport connecting", {
             transportId: state.recvTransport.id,
             guildId: state.guildId,
-            channelId: state.channelId
+            channelId: state.channelId,
           });
+          await sendDispatch("VOICE_CONNECT_TRANSPORT", {
+            guildId: state.guildId,
+            channelId: state.channelId,
+            transportId: state.recvTransport.id,
+            dtlsParameters,
+          });
+          await waitForVoiceResponse(() =>
+            waitForTransportConnected(state.recvTransport.id),
+          );
+          callback();
+        } catch (error) {
+          errback(error);
         }
-        await sendDispatch("VOICE_CONNECT_TRANSPORT", {
-          guildId: state.guildId,
-          channelId: state.channelId,
-          transportId: state.recvTransport.id,
-          dtlsParameters
-        });
-        await waitForVoiceResponse(() => waitForTransportConnected(state.recvTransport.id));
-        callback();
-      } catch (error) {
-        errback(error);
-      }
-    });
+      },
+    );
 
     for (const producer of joined.producers || []) {
       await consumeProducer(producer.producerId, producer.userId, token);
@@ -880,9 +1130,15 @@ export function createSfuVoiceClient({
     state.consumersByProducerId.delete(producerId);
     state.producerOwnerByProducerId.delete(producerId);
     removePendingAudioStart(producerId);
-    try { entry.consumer.close(); } catch {}
+    try {
+      entry.consumer.close();
+    } catch {}
     if (entry.audio) {
-      try { entry.audio.pause(); entry.audio.srcObject = null; entry.audio.remove(); } catch {}
+      try {
+        entry.audio.pause();
+        entry.audio.srcObject = null;
+        entry.audio.remove();
+      } catch {}
       onRemoteAudioRemoved?.({ producerId, userId: entry.userId || "" });
       return;
     }
@@ -896,7 +1152,9 @@ export function createSfuVoiceClient({
         track.removeEventListener("ended", state.localScreenTrackEndedHandler);
       }
       if (stopTracks) {
-        state.localScreenStream.getTracks().forEach((currentTrack) => currentTrack.stop());
+        state.localScreenStream
+          .getTracks()
+          .forEach((currentTrack) => currentTrack.stop());
       }
     }
     state.localScreenTrackEndedHandler = null;
@@ -912,14 +1170,17 @@ export function createSfuVoiceClient({
     }
 
     const producerId = state.localScreenProducer.id;
-    try { state.localScreenProducer.close(); } catch {}
+    try {
+      state.localScreenProducer.close();
+    } catch {}
     clearLocalScreenState({ stopTracks: true });
 
-    if (!notifyServer || !producerId || !state.guildId || !state.channelId) return;
+    if (!notifyServer || !producerId || !state.guildId || !state.channelId)
+      return;
     await sendDispatch("VOICE_CLOSE_PRODUCER", {
       guildId: state.guildId,
       channelId: state.channelId,
-      producerId
+      producerId,
     }).catch(() => {});
   }
 
@@ -929,7 +1190,9 @@ export function createSfuVoiceClient({
     }
     if (state.localScreenProducer) return;
     let displayStream = null;
-    const canUseDesktopBridgeCapture = !!getDesktopBridge()?.getDisplaySources && !!navigator?.mediaDevices?.getUserMedia;
+    const canUseDesktopBridgeCapture =
+      !!getDesktopBridge()?.getDisplaySources &&
+      !!navigator?.mediaDevices?.getUserMedia;
 
     if (canUseDesktopBridgeCapture) {
       try {
@@ -937,17 +1200,19 @@ export function createSfuVoiceClient({
       } catch (error) {
         if (error?.message === "SCREEN_SOURCE_CANCELLED") throw error;
         if (!navigator.mediaDevices?.getDisplayMedia) throw error;
-        displayStream = await navigator.mediaDevices.getDisplayMedia({
-          video: { frameRate: { ideal: 30, max: 60 } },
-          audio: false
-        }).catch(() => {
-          throw error;
-        });
+        displayStream = await navigator.mediaDevices
+          .getDisplayMedia({
+            video: { frameRate: { ideal: 30, max: 60 } },
+            audio: false,
+          })
+          .catch(() => {
+            throw error;
+          });
       }
     } else if (navigator.mediaDevices?.getDisplayMedia) {
       displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: { ideal: 30, max: 60 } },
-        audio: false
+        audio: false,
       });
     } else {
       throw new Error("SCREEN_SHARE_NOT_SUPPORTED");
@@ -961,7 +1226,7 @@ export function createSfuVoiceClient({
     try {
       const producer = await state.sendTransport.produce({
         track: screenTrack,
-        appData: { source: "screen" }
+        appData: { source: "screen" },
       });
       state.localScreenProducer = producer;
       state.localScreenStream = displayStream;
@@ -987,12 +1252,21 @@ export function createSfuVoiceClient({
       await cleanupConsumer(producerId);
     }
     await stopScreenShare({ notifyServer: false }).catch(() => {});
-    try { state.localAudioProducer?.close(); } catch {}
+    try {
+      state.localAudioProducer?.close();
+    } catch {}
     state.localAudioProducer = null;
-    await closeLocalAudioPipeline({ stopLocalStream: true, stopRawStream: true });
-    try { state.sendTransport?.close(); } catch {}
+    await closeLocalAudioPipeline({
+      stopLocalStream: true,
+      stopRawStream: true,
+    });
+    try {
+      state.sendTransport?.close();
+    } catch {}
     state.sendTransport = null;
-    try { state.recvTransport?.close(); } catch {}
+    try {
+      state.recvTransport?.close();
+    } catch {}
     state.recvTransport = null;
     state.device = null;
     state.guildId = "";
@@ -1003,16 +1277,26 @@ export function createSfuVoiceClient({
     if (!state.channelId || !state.guildId) return;
     if (data?.guildId && data.guildId !== state.guildId) return;
     if (data?.channelId && data.channelId !== state.channelId) return;
-    if (state.localAudioProducer && data.producerId === state.localAudioProducer.id) return;
-    if (state.localScreenProducer && data.producerId === state.localScreenProducer.id) return;
-
+    if (
+      state.localAudioProducer &&
+      data.producerId === state.localAudioProducer.id
+    )
+      return;
+    if (
+      state.localScreenProducer &&
+      data.producerId === state.localScreenProducer.id
+    )
+      return;
 
     if (type === "VOICE_NEW_PRODUCER" && data?.producerId) {
       if (data.userId && data.userId === resolveSelfUserId()) return; // ignore self
-        await consumeProducer(data.producerId, data.userId, state.sessionToken).catch(() => {});
-        return;
-      }
-      
+      await consumeProducer(
+        data.producerId,
+        data.userId,
+        state.sessionToken,
+      ).catch(() => {});
+      return;
+    }
 
     if (type === "VOICE_PRODUCER_CLOSED" && data?.producerId) {
       await cleanupConsumer(data.producerId);
@@ -1077,13 +1361,21 @@ export function createSfuVoiceClient({
     try {
       await audio.play();
     } catch (error) {
-      try { audio.pause(); } catch {}
-      try { audio.srcObject = null; } catch {}
-      try { audio.remove(); } catch {}
+      try {
+        audio.pause();
+      } catch {}
+      try {
+        audio.srcObject = null;
+      } catch {}
+      try {
+        audio.remove();
+      } catch {}
       state.selfMonitorAudio = null;
       state.selfMonitorActive = false;
       applyLocalTrackEnabledState();
-      throw error instanceof Error ? error : new Error("MIC_TEST_PLAYBACK_FAILED");
+      throw error instanceof Error
+        ? error
+        : new Error("MIC_TEST_PLAYBACK_FAILED");
     }
 
     state.selfMonitorAudio = audio;
@@ -1098,7 +1390,10 @@ export function createSfuVoiceClient({
     const key = String(userId || "").trim();
     if (!key) return;
     state.userAudioPrefsByUserId.set(key, normalizeUserAudioPreference(pref));
-    for (const { audio, userId: ownerId } of state.consumersByProducerId.values()) {
+    for (const {
+      audio,
+      userId: ownerId,
+    } of state.consumersByProducerId.values()) {
       if (!audio || ownerId !== key) continue;
       applyAudioPreferenceToAudio(audio, key);
     }
@@ -1112,7 +1407,10 @@ export function createSfuVoiceClient({
         audio.setSinkId(state.audioOutputDeviceId).catch(() => {});
       }
     }
-    if (state.selfMonitorAudio && typeof state.selfMonitorAudio.setSinkId === "function") {
+    if (
+      state.selfMonitorAudio &&
+      typeof state.selfMonitorAudio.setSinkId === "function"
+    ) {
       const sinkId = state.audioOutputDeviceId || "default";
       state.selfMonitorAudio.setSinkId(sinkId).catch(() => {});
     }
@@ -1144,6 +1442,6 @@ export function createSfuVoiceClient({
     startScreenShare,
     stopScreenShare,
     getLocalStream,
-    getContext
+    getContext,
   };
 }

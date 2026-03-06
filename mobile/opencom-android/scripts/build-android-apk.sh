@@ -158,15 +158,17 @@ fi
 
 if [[ "$RUN_SDK_SETUP" -eq 1 ]]; then
   if command -v sdkmanager >/dev/null 2>&1; then
-    echo "==> Accepting Android SDK licenses"
+    echo "==> Accepting Android SDK licenses (Java 17)"
     yes | sdkmanager --licenses >/dev/null || true
 
     echo "==> Installing required Android SDK components"
     sdkmanager --install \
       "platform-tools" \
-      "platforms;android-35" \
-      "build-tools;35.0.0" \
+      "platforms;android-36" \
+      "build-tools;36.0.0" \
       "ndk;27.1.12297006"
+
+    # No need to switch Java — stay on Java 17
   else
     cat >&2 <<EOF
 sdkmanager not found on PATH.

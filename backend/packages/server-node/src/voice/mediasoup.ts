@@ -19,6 +19,31 @@ const rooms = new Map<RoomKey, Room>();
 
 let worker: mediasoup.types.Worker | null = null;
 
+export function getMediasoupDiagnostics() {
+  let peerCount = 0;
+  let transportCount = 0;
+  let producerCount = 0;
+  let consumerCount = 0;
+
+  for (const room of rooms.values()) {
+    for (const peer of room.peers.values()) {
+      peerCount += 1;
+      transportCount += peer.transports.size;
+      producerCount += peer.producers.size;
+      consumerCount += peer.consumers.size;
+    }
+  }
+
+  return {
+    worker: !!worker,
+    rooms: rooms.size,
+    peers: peerCount,
+    transports: transportCount,
+    producers: producerCount,
+    consumers: consumerCount,
+  };
+}
+
 export async function initMediasoup() {
   worker = await mediasoup.createWorker({
     rtcMinPort: env.MEDIASOUP_RTC_MIN_PORT,
@@ -81,7 +106,12 @@ export async function ensurePeer(guildId: string, channelId: string, userId: str
   return room.peers.get(userId)!;
 }
 
-export async function createWebRtcTransport(guildId: string, channelId: string, userId: string) {
+export async function createWebRtcTransport(
+  guildId: string,
+  channelId: string,
+  userId: string,
+  direction?: "send" | "recv",
+) {
   const room = await getOrCreateRoom(guildId, channelId);
   const peer = await ensurePeer(guildId, channelId, userId);
 
@@ -89,8 +119,18 @@ export async function createWebRtcTransport(guildId: string, channelId: string, 
     listenIps: [{ ip: env.MEDIASOUP_LISTEN_IP, announcedIp: env.MEDIASOUP_ANNOUNCED_IP }],
     enableUdp: true,
     enableTcp: true,
-    preferUdp: true
+    preferUdp: true,
   });
+
+  try {
+    (transport as any).appData = {
+      ...(transport as any).appData,
+      guildId,
+      channelId,
+      userId,
+      direction,
+    };
+  } catch {}
 
   peer.transports.set(transport.id, transport);
 

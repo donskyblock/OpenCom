@@ -34,7 +34,7 @@ const Env = z.object({
   ADMIN_PANEL_PASSWORD: z.string().min(8),
   REDIS_URL: z.string().url(),
   CORE_NODE_SYNC_SECRET: z.string().min(16).optional(),
-  
+
   // Profile image storage
   PROFILE_IMAGE_STORAGE_DIR: z.string().default("./storage/profiles"),
   PROFILE_IMAGE_BASE_URL: z.string().default("/v1/profile-images"),
@@ -49,6 +49,14 @@ const Env = z.object({
   OFFICIAL_NODE_BASE_URL: z.string().url().optional(),
   /** Must match NODE_SERVER_ID on that node so the node accepts the membership token */
   OFFICIAL_NODE_SERVER_ID: z.string().min(1).optional(),
+  /**
+   * The ID of the system guild (is_system=1) that lives on the official node and is used
+   * exclusively to host ephemeral voice channels for private (1:1) calls.
+   * Run `scripts/create-private-calls-guild.mjs` once to bootstrap it, then paste the
+   * returned guild ID here.  Without this set, /call/create will still record the call in
+   * the DB but will not provision a real voice channel on the node.
+   */
+  PRIVATE_CALLS_GUILD_ID: z.string().min(1).optional(),
 
   // Stripe subscriptions (OpenCom Boost)
   STRIPE_SECRET_KEY: z.string().min(1).optional(),

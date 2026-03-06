@@ -7,6 +7,12 @@ import {
 import { LandingPage } from "./components/LandingPage";
 import { AuthShell } from "./components/AuthShell";
 import { TermsPage } from "./components/TermsPage";
+import {
+  IncomingCallToast,
+  ActiveCallBar,
+  CallMessageCard,
+  OutgoingCallToast,
+} from "./components/PrivateCallOverlay";
 import { DOWNLOAD_TARGETS, getPreferredDownloadTarget } from "./lib/downloads";
 import {
   APP_ROUTE_CLIENT,
@@ -1602,6 +1608,18 @@ export function App() {
   const [allowFriendRequests, setAllowFriendRequests] = useState(true);
 
   const [collapsedCategories, setCollapsedCategories] = useState({});
+
+  // ── Private call state ─────────────────────────────────────────────────────
+  // incomingCall: set when another user calls you (you haven't answered yet)
+  const [incomingCall, setIncomingCall] = useState(null);
+  // outgoingCall: set while you're waiting for the other person to pick up
+  const [outgoingCall, setOutgoingCall] = useState(null);
+  // activePrivateCall: set once both sides are in the call
+  const [activePrivateCall, setActivePrivateCall] = useState(null);
+  // seconds elapsed since the call connected (driven by useEffect below)
+  const [callDuration, setCallDuration] = useState(0);
+  // ──────────────────────────────────────────────────────────────────────────
+
   const [voiceSession, setVoiceSession] = useState({
     guildId: "",
     channelId: "",
@@ -1827,6 +1845,12 @@ export function App() {
   const voiceRecoveringRef = useRef(false);
   const voiceLastRecoverAttemptAtRef = useRef(0);
   const selfUserIdRef = useRef("");
+  // Private call gateway — a standalone WS to the official node (or core proxy)
+  // used exclusively while a 1:1 call is active. Kept separate so it doesn't
+  // disrupt the normal server node gateway.
+  const privateCallGatewayWsRef = useRef(null);
+  const privateCallGatewayReadyRef = useRef(false);
+  const privateCallGatewayHeartbeatRef = useRef(null);
   const voiceMemberAudioPrefsByGuildRef = useRef(voiceMemberAudioPrefsByGuild);
   voiceMemberAudioPrefsByGuildRef.current = voiceMemberAudioPrefsByGuild;
   selfUserIdRef.current = me?.id || "";
@@ -1836,6 +1860,7 @@ export function App() {
       getSelfUserId: () => selfUserIdRef.current,
       sendDispatch: (type, data) => sendNodeVoiceDispatch(type, data),
       waitForEvent: waitForVoiceEvent,
+      debugLog: voiceDebug,
       onLocalAudioProcessingInfo: (info) => {
         setLocalAudioProcessingInfo(info || null);
       },
@@ -4276,6 +4301,75 @@ export function App() {
               ),
             );
           }
+
+          // ── Private call events ─────────────────────────────────────────
+          if (
+            msg.op === "DISPATCH" &&
+            msg.t === "PRIVATE_CALL_CREATE" &&
+            msg.d?.callId
+          ) {
+            const d = msg.d;
+            if (d.callerId !== me?.id) {
+              // We are the recipient — look up caller name from friends / DMs
+              setFriends((currentFriends) => {
+                const caller = currentFriends.find((f) => f.id === d.callerId);
+                setDms((currentDms) => {
+                  const dmThread = currentDms.find(
+                    (dm) => dm.participantId === d.callerId,
+                  );
+                  const callerName =
+                    caller?.username || dmThread?.name || "Unknown";
+                  const callerPfp = caller?.pfp_url || null;
+                  setIncomingCall({
+                    callId: d.callId,
+                    callerId: d.callerId,
+                    callerName,
+                    callerPfp,
+                    channelId: d.channelId,
+                    guildId: d.guildId,
+                    nodeBaseUrl: d.nodeBaseUrl,
+                  });
+                  return currentDms; // no mutation
+                });
+                return currentFriends; // no mutation
+              });
+              playNotificationBeep(selfStatusRef.current === "dnd");
+            } else {
+              // We are the caller — transition outgoing toast to "ringing" state
+              setOutgoingCall((prev) =>
+                prev ? { ...prev, callId: d.callId } : prev,
+              );
+            }
+          }
+
+          if (
+            msg.op === "DISPATCH" &&
+            msg.t === "PRIVATE_CALL_ENDED" &&
+            msg.d?.callId
+          ) {
+            const endedId = msg.d.callId;
+            setIncomingCall((prev) => (prev?.callId === endedId ? null : prev));
+            setOutgoingCall((prev) => (prev?.callId === endedId ? null : prev));
+            setActivePrivateCall((prev) => {
+              if (prev?.callId === endedId) {
+                // Close the dedicated private-call gateway WS
+                if (privateCallGatewayWsRef.current) {
+                  try {
+                    privateCallGatewayWsRef.current.close();
+                  } catch {}
+                  privateCallGatewayWsRef.current = null;
+                }
+                privateCallGatewayReadyRef.current = false;
+                if (privateCallGatewayHeartbeatRef.current) {
+                  clearInterval(privateCallGatewayHeartbeatRef.current);
+                  privateCallGatewayHeartbeatRef.current = null;
+                }
+                return null;
+              }
+              return prev;
+            });
+          }
+          // ── End private call events ─────────────────────────────────────
         } catch (_) {}
       };
 
@@ -4542,6 +4636,32 @@ export function App() {
           // Everything else stays the same as your existing handler:
           // MESSAGE_* + VOICE_* dispatches, etc.
           if (msg.op === "DISPATCH" && typeof msg.t === "string") {
+            if (msg.t === "VOICE_ERROR") {
+              const error = msg.d?.error || "VOICE_ERROR";
+              const details = msg.d?.details ? ` (${msg.d.details})` : "";
+              const activeVoiceContext =
+                voiceSfuRef.current?.getContext?.() || {};
+              voiceDebug("VOICE_ERROR received", {
+                error,
+                details: msg.d?.details,
+                code: msg.d?.code,
+                context: activeVoiceContext,
+              });
+              rejectPendingVoiceEventsByScope({
+                guildId: msg.d?.guildId ?? activeVoiceContext.guildId ?? null,
+                channelId:
+                  msg.d?.channelId ?? activeVoiceContext.channelId ?? null,
+              });
+              if (voiceSession?.channelId) {
+                cleanupVoiceRtc().catch(() => {});
+                return;
+              }
+              const message = `Voice connection failed: ${error}${details}`;
+              setStatus(message);
+              window.alert(message);
+              return;
+            }
+
             if (msg.t === "MESSAGE_CREATE") {
               const channelId = msg.d?.channelId || "";
               const created = msg.d?.message || null;
@@ -8664,24 +8784,35 @@ export function App() {
   async function waitForVoiceGatewayReady(timeoutMs = 15000) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
-      const ws = nodeGatewayWsRef.current;
+      // Prefer the dedicated private-call gateway when it's live — this keeps
+      // private-call voice traffic completely separate from the server node WS.
+      const pcWs = privateCallGatewayWsRef.current;
+      if (
+        pcWs &&
+        pcWs.readyState === WebSocket.OPEN &&
+        privateCallGatewayReadyRef.current
+      )
+        return pcWs;
 
-      // If ws is open AND we’ve seen READY, we’re good
+      const ws = nodeGatewayWsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN && nodeGatewayReadyRef.current)
         return ws;
 
       await new Promise((resolve) => setTimeout(resolve, 120));
     }
 
+    // Build a descriptive error so problems are easy to diagnose
+    const pcWs = privateCallGatewayWsRef.current;
+    const pcState = pcWs?.readyState;
     const wsState = nodeGatewayWsRef.current?.readyState;
-    const wsStateName =
-      wsState === WebSocket.CONNECTING
+    const stateName = (s) =>
+      s === WebSocket.CONNECTING
         ? "CONNECTING"
-        : wsState === WebSocket.OPEN
+        : s === WebSocket.OPEN
           ? "OPEN"
-          : wsState === WebSocket.CLOSING
+          : s === WebSocket.CLOSING
             ? "CLOSING"
-            : wsState === WebSocket.CLOSED
+            : s === WebSocket.CLOSED
               ? "CLOSED"
               : "MISSING";
 
@@ -8690,7 +8821,10 @@ export function App() {
       : "none";
 
     throw new Error(
-      `VOICE_GATEWAY_UNAVAILABLE:ready=${nodeGatewayReadyRef.current ? "1" : "0"},ws=${wsStateName},candidates=${candidates}`,
+      `VOICE_GATEWAY_UNAVAILABLE:` +
+        `pcReady=${privateCallGatewayReadyRef.current ? "1" : "0"},pcWs=${stateName(pcState)},` +
+        `nodeReady=${nodeGatewayReadyRef.current ? "1" : "0"},nodeWs=${stateName(wsState)},` +
+        `candidates=${candidates}`,
     );
   }
 
@@ -8850,6 +8984,235 @@ export function App() {
       await alertDialog(message, "Voice Error");
     }
   }
+
+  // ── Private call functions ──────────────────────────────────────────────────
+
+  /**
+   * Initiate a 1:1 voice call with a friend.
+   * Shows an outgoing call toast while waiting for them to accept.
+   */
+  async function initiatePrivateCall(friendId, friendName, friendPfp) {
+    if (!accessToken || !friendId) return;
+    setOutgoingCall({
+      calleeId: friendId,
+      calleeName: friendName || friendId,
+      calleePfp: friendPfp || null,
+      callId: null,
+    });
+    try {
+      const data = await api("/call/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ id: friendId }),
+      });
+      if (!data?.success) {
+        setOutgoingCall(null);
+        const reason = data?.message || data?.error || "CALL_CREATE_FAILED";
+        setStatus(`Call failed: ${reason}`);
+      }
+      // On success the WS will receive PRIVATE_CALL_CREATE which updates outgoingCall.callId
+    } catch (err) {
+      setOutgoingCall(null);
+      setStatus(`Call failed: ${err.message || "CALL_CREATE_FAILED"}`);
+    }
+  }
+
+  /**
+   * Connect to the voice channel for an accepted private call.
+   * Opens a dedicated WebSocket to the official node (via core gateway proxy)
+   * so it doesn't interfere with the current server node connection.
+   */
+  async function joinPrivateVoiceCall(callId) {
+    if (!accessToken || !callId) return;
+    setIncomingCall(null);
+
+    try {
+      setStatus("Joining voice call…");
+
+      // 1. Ask core for a membership token + channel info
+      const joinData = await api("/call/join", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ callId }),
+      });
+
+      if (!joinData?.success) {
+        const reason = joinData?.error || "CALL_JOIN_FAILED";
+        setStatus(`Voice join failed: ${reason}`);
+        await alertDialog(`Could not join the call: ${reason}`, "Call Error");
+        return;
+      }
+
+      const { membershipToken, nodeBaseUrl, guildId, channelId } = joinData;
+      if (!membershipToken || !nodeBaseUrl || !guildId || !channelId) {
+        setStatus("Voice join failed: incomplete call data from server.");
+        return;
+      }
+
+      // 2. Open a dedicated gateway WS to the official node.
+      //    The core gateway will proxy voice traffic when given a membershipToken.
+      const coreGatewayWsUrl = (() => {
+        const candidates = getCoreGatewayWsCandidates();
+        return candidates[0] || getDefaultCoreGatewayWsUrl();
+      })();
+
+      await new Promise((resolve, reject) => {
+        const ws = new WebSocket(coreGatewayWsUrl);
+        privateCallGatewayWsRef.current = ws;
+        privateCallGatewayReadyRef.current = false;
+
+        const timeout = setTimeout(() => {
+          ws.close();
+          reject(new Error("PRIVATE_CALL_GATEWAY_TIMEOUT"));
+        }, 15000);
+
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ op: "IDENTIFY", d: { membershipToken } }));
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            resolvePendingVoiceEvent(msg);
+
+            if (msg.op === "HELLO" && msg.d?.heartbeat_interval) {
+              if (privateCallGatewayHeartbeatRef.current)
+                clearInterval(privateCallGatewayHeartbeatRef.current);
+              privateCallGatewayHeartbeatRef.current = setInterval(() => {
+                if (
+                  privateCallGatewayWsRef.current?.readyState === WebSocket.OPEN
+                )
+                  privateCallGatewayWsRef.current.send(
+                    JSON.stringify({ op: "HEARTBEAT" }),
+                  );
+              }, msg.d.heartbeat_interval);
+              return;
+            }
+
+            if (msg.op === "READY") {
+              clearTimeout(timeout);
+              privateCallGatewayReadyRef.current = true;
+              resolve();
+              return;
+            }
+
+            if (msg.op === "ERROR") {
+              clearTimeout(timeout);
+              reject(new Error(msg.d?.error || "PRIVATE_CALL_GATEWAY_ERROR"));
+            }
+          } catch {}
+        };
+
+        ws.onerror = () => reject(new Error("PRIVATE_CALL_GATEWAY_WS_ERROR"));
+        ws.onclose = () => {
+          privateCallGatewayReadyRef.current = false;
+          if (privateCallGatewayHeartbeatRef.current) {
+            clearInterval(privateCallGatewayHeartbeatRef.current);
+            privateCallGatewayHeartbeatRef.current = null;
+          }
+        };
+      });
+
+      // 3. Join voice via the SFU (which now routes through privateCallGatewayWsRef)
+      await voiceSfuRef.current?.join({
+        guildId,
+        channelId,
+        audioInputDeviceId,
+        micGain,
+        noiseSuppression: noiseSuppressionEnabled,
+        noiseSuppressionPreset,
+        noiseSuppressionConfig,
+        isMuted,
+        isDeafened,
+        audioOutputDeviceId,
+      });
+
+      setVoiceSession({ guildId, channelId });
+      setActivePrivateCall({
+        callId,
+        channelId,
+        guildId,
+        nodeBaseUrl,
+        otherName: incomingCall?.callerName || outgoingCall?.calleeName || "",
+      });
+      setOutgoingCall(null);
+      setCallDuration(0);
+      setStatus("Voice call connected.");
+    } catch (err) {
+      privateCallGatewayReadyRef.current = false;
+      if (privateCallGatewayWsRef.current) {
+        try {
+          privateCallGatewayWsRef.current.close();
+        } catch {}
+        privateCallGatewayWsRef.current = null;
+      }
+      setOutgoingCall(null);
+      const reason = err.message || "VOICE_JOIN_FAILED";
+      setStatus(`Voice call failed: ${reason}`);
+      await alertDialog(`Could not connect to voice: ${reason}`, "Call Error");
+    }
+  }
+
+  /**
+   * End the active private call: marks it ended on the server, cleans up voice
+   * and tears down the private gateway WS.
+   */
+  async function endPrivateCall() {
+    const call = activePrivateCall;
+    setActivePrivateCall(null);
+    setOutgoingCall(null);
+    setIncomingCall(null);
+    setCallDuration(0);
+
+    // Tear down voice RTC
+    await cleanupVoiceRtc().catch(() => {});
+    setVoiceSession({ guildId: "", channelId: "" });
+
+    // Close the dedicated gateway
+    if (privateCallGatewayWsRef.current) {
+      try {
+        privateCallGatewayWsRef.current.close();
+      } catch {}
+      privateCallGatewayWsRef.current = null;
+    }
+    privateCallGatewayReadyRef.current = false;
+    if (privateCallGatewayHeartbeatRef.current) {
+      clearInterval(privateCallGatewayHeartbeatRef.current);
+      privateCallGatewayHeartbeatRef.current = null;
+    }
+
+    // Notify the server
+    if (call?.callId && accessToken) {
+      try {
+        await api("/call/end", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ callId: call.callId }),
+        });
+      } catch {}
+    }
+  }
+
+  // ── Call duration ticker ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!activePrivateCall) {
+      setCallDuration(0);
+      return;
+    }
+    const id = setInterval(() => setCallDuration((d) => d + 1), 1000);
+    return () => clearInterval(id);
+  }, [activePrivateCall?.callId]);
+
+  // ── End private call functions ──────────────────────────────────────────────
 
   async function toggleScreenShare() {
     if (!isInVoiceChannel) return;
@@ -11480,6 +11843,34 @@ export function App() {
             <header className="chat-header dm-header-actions">
               <h3>{activeDm ? `@ ${activeDm.name}` : "Direct Messages"}</h3>
               <div className="chat-actions">
+                {activeDm?.participantId && !activePrivateCall && (
+                  <button
+                    className="icon-btn ghost"
+                    title={`Call ${activeDm.name}`}
+                    onClick={() => {
+                      const friend = friends.find(
+                        (f) => f.id === activeDm.participantId,
+                      );
+                      initiatePrivateCall(
+                        activeDm.participantId,
+                        activeDm.name,
+                        friend?.pfp_url ?? null,
+                      );
+                    }}
+                  >
+                    📞
+                  </button>
+                )}
+                {activePrivateCall && (
+                  <button
+                    className="icon-btn ghost"
+                    style={{ color: "var(--danger, #ef5f76)" }}
+                    title="End call"
+                    onClick={endPrivateCall}
+                  >
+                    📵
+                  </button>
+                )}
                 <button
                   className="icon-btn ghost"
                   onClick={() => setShowPinned((value) => !value)}
@@ -11573,14 +11964,26 @@ export function App() {
                                   })
                                 }
                               >
-                                <p>
-                                  {activePinnedDmMessages.some(
-                                    (item) => item.id === message.id,
-                                  )
-                                    ? "📌 "
-                                    : ""}
-                                  {renderContentWithMentions(message)}
-                                </p>
+                                {message.content === "__CALL_REQUEST__" ? (
+                                  <CallMessageCard
+                                    message={message}
+                                    me={me}
+                                    activeCallId={
+                                      activePrivateCall?.callId ?? null
+                                    }
+                                    onJoin={joinPrivateVoiceCall}
+                                    callerName={group.author}
+                                  />
+                                ) : (
+                                  <p>
+                                    {activePinnedDmMessages.some(
+                                      (item) => item.id === message.id,
+                                    )
+                                      ? "📌 "
+                                      : ""}
+                                    {renderContentWithMentions(message)}
+                                  </p>
+                                )}
                                 {derivedLinkEmbeds.length > 0 && (
                                   <div className="message-embeds">
                                     {derivedLinkEmbeds.map((embed, index) =>

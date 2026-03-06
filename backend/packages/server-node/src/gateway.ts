@@ -18,6 +18,7 @@ import {
   listProducers,
   closeProducer,
   closePeer,
+  getMediasoupDiagnostics,
 } from "./voice/mediasoup.js";
 import { createLogger, sanitizeErrorMessage } from "./logger.js";
 
@@ -50,7 +51,7 @@ export function attachNodeGateway(app: FastifyInstance) {
   const wss = new WebSocketServer({ noServer: true });
   const conns = new Set<Conn>();
 
-  app.get("/health", async () => ({ ok: true }));
+  app.get("/health", async () => ({ ok: true, voice: getMediasoupDiagnostics() }));
 
 
   app.get("/debug/voice", async (req, rep) => {

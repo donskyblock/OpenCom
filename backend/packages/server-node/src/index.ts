@@ -20,6 +20,7 @@ import { extensionRoutes } from "./routes/extensions.js";
 import { restorePersistedExtensions } from "./extensions/host.js";
 import { createLogger } from "./logger.js";
 import { emoteRoutes } from "./routes/emotes.js";
+import { privateCallChannelRoutes } from "./routes/privateCallChannels.js";
 
 const logger = createLogger("server");
 
@@ -58,6 +59,7 @@ await meRoutes(app);
 await discordCompatRoutes(app);
 await extensionRoutes(app, gw.broadcastToChannel);
 
+await privateCallChannelRoutes(app);
 await attachmentRoutes(app);
 startAttachmentCleanupLoop();
 startNodeSyncLoop();

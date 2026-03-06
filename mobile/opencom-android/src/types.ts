@@ -69,3 +69,31 @@ export type DeepLinkTarget =
   | { kind: "join"; code: string }
   | { kind: "server"; serverId: string }
   | { kind: "channel"; serverId: string; guildId: string; channelId: string };
+
+// Social (friends, DMs)
+export type Friend = {
+  id: string;
+  username: string;
+  pfp_url?: string | null;
+  status?: string;
+};
+
+export type DmThreadApi = {
+  id: string;
+  participantId: string;
+  name: string;
+  pfp_url?: string | null;
+  lastMessageAt?: string | null;
+};
+
+export type DmMessageApi = {
+  id: string;
+  authorId: string;
+  author: string;
+  pfp_url?: string | null;
+  content: string;
+  createdAt: string;
+};
+
+export type FriendRequestIncoming = { id: string; userId: string; username: string; createdAt: string };
+export type FriendRequestOutgoing = { id: string; userId: string; username: string; createdAt: string };

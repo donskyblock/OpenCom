@@ -25,6 +25,7 @@ export async function guildRoutes(app: FastifyInstance) {
        LEFT JOIN guild_members gm ON gm.guild_id = g.id AND gm.user_id = :userId
        WHERE g.server_id = :coreServerId
          AND (g.owner_user_id = :userId OR gm.user_id = :userId)
+         AND g.is_system = 0
        ORDER BY g.created_at DESC`,
       { userId, coreServerId }
     );
