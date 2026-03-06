@@ -29,7 +29,10 @@ function useRingTone(active) {
         gain.gain.linearRampToValueAtTime(0.18, now + 0.03);
         gain.gain.linearRampToValueAtTime(0, now + 0.38);
 
-        [[440, 0], [550, 0.15]].forEach(([freq, offset]) => {
+        [
+          [440, 0],
+          [550, 0.15],
+        ].forEach(([freq, offset]) => {
           const osc = ctx.createOscillator();
           osc.type = "sine";
           osc.frequency.value = freq;
@@ -153,7 +156,11 @@ export function IncomingCallToast({ call, onAccept, onDecline }) {
               opacity: 0.55,
             }}
           />
-          <CallAvatar pfpUrl={call.callerPfp} username={call.callerName} size={68} />
+          <CallAvatar
+            pfpUrl={call.callerPfp}
+            username={call.callerName}
+            size={68}
+          />
         </div>
 
         <div>
@@ -181,7 +188,9 @@ export function IncomingCallToast({ call, onAccept, onDecline }) {
           </h2>
         </div>
 
-        <div style={{ display: "flex", gap: "clamp(10px,1vw,16px)", marginTop: 4 }}>
+        <div
+          style={{ display: "flex", gap: "clamp(10px,1vw,16px)", marginTop: 4 }}
+        >
           <button
             onClick={onDecline}
             style={{
@@ -318,7 +327,9 @@ export function ActiveCallBar({ call, isMuted, duration = 0, onMute, onEnd }) {
         onClick={onMute}
         title={isMuted ? "Unmute" : "Mute"}
         style={{
-          background: isMuted ? "var(--danger, #ef5f76)" : "rgba(255,255,255,0.08)",
+          background: isMuted
+            ? "var(--danger, #ef5f76)"
+            : "rgba(255,255,255,0.08)",
           border: "none",
           borderRadius: 8,
           padding: "6px 10px",
@@ -372,9 +383,17 @@ export function ActiveCallBar({ call, isMuted, duration = 0, onMute, onEnd }) {
 //   onJoin         – (callId) => void  (only shown when call is active)
 //   callerName     – string
 // ─────────────────────────────────────────────────────────────────────────────
-export function CallMessageCard({ message, me, activeCallId, onJoin, callerName }) {
+export function CallMessageCard({
+  message,
+  me,
+  activeCallId,
+  onJoin,
+  callerName,
+}) {
   const isOutgoing = message.authorId === me?.id;
-  const label = isOutgoing ? "You started a call" : `${callerName || "Someone"} is calling`;
+  const label = isOutgoing
+    ? "You started a call"
+    : `${callerName || "Someone"} is calling`;
   const isLive = !!activeCallId;
 
   return (
@@ -395,7 +414,8 @@ export function CallMessageCard({ message, me, activeCallId, onJoin, callerName 
       onClick={() => isLive && !isOutgoing && onJoin && onJoin(activeCallId)}
       onMouseEnter={(e) => {
         if (isLive && !isOutgoing)
-          e.currentTarget.style.background = "var(--bg-hover, rgba(132,165,255,0.16))";
+          e.currentTarget.style.background =
+            "var(--bg-hover, rgba(132,165,255,0.16))";
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.background = "var(--bg-chat-alt, #1a2a45)";
@@ -471,7 +491,11 @@ export function OutgoingCallToast({ call, onCancel }) {
         animation: "slideInRight 0.22s cubic-bezier(.22,1,.36,1)",
       }}
     >
-      <CallAvatar pfpUrl={call.calleePfp} username={call.calleeName} size={44} />
+      <CallAvatar
+        pfpUrl={call.calleePfp}
+        username={call.calleeName}
+        size={44}
+      />
 
       <div>
         <p
