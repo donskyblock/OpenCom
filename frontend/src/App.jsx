@@ -6752,6 +6752,10 @@ export function App() {
     });
   }
 
+  function openBoostUpsell(title, reason, cta) {
+    setBoostUpsell({ title, reason, cta });
+  }
+
   function openBoostSettingsFromUpsell() {
     setBoostUpsell(null);
     setSettingsOpen(true);
@@ -12094,7 +12098,9 @@ export function App() {
             profileStudioSelectedElementId={profileStudioSelectedElementId}
             getFullProfileElementFrameStyle={getFullProfileElementFrameStyle}
             onFullProfileElementMouseDown={onFullProfileElementMouseDown}
-            setProfileStudioSelectedElementId={setProfileStudioSelectedElementId}
+            setProfileStudioSelectedElementId={
+              setProfileStudioSelectedElementId
+            }
             renderFullProfileElement={renderFullProfileElement}
             profileStudioPreviewProfile={profileStudioPreviewProfile}
             openBoostUpsell={openBoostUpsell}
@@ -12237,7 +12243,9 @@ export function App() {
         profileImageUrl={profileImageUrl}
         getFullProfileFontFamily={getFullProfileFontFamily}
         getFullProfileElementFrameStyle={getFullProfileElementFrameStyle}
-        toggleFullProfileViewerMusicPlayback={toggleFullProfileViewerMusicPlayback}
+        toggleFullProfileViewerMusicPlayback={
+          toggleFullProfileViewerMusicPlayback
+        }
         renderFullProfileElement={renderFullProfileElement}
         fullProfileViewerMusicPlaying={fullProfileViewerMusicPlaying}
         fullProfileViewerHasPlayableMusic={fullProfileViewerHasPlayableMusic}
@@ -12284,257 +12292,257 @@ export function App() {
         resolveStaticPageHref={resolveStaticPageHref}
         logout={logout}
       >
-              {settingsTab === "profile" && (
-                <ProfileSettingsSection
-                  profileForm={profileForm}
-                  setProfileForm={setProfileForm}
-                  onAvatarUpload={onAvatarUpload}
-                  onBannerUpload={onBannerUpload}
-                  saveProfile={saveProfile}
-                  isDesktopRuntime={isDesktopRuntime}
-                  openPreferredDesktopDownload={openPreferredDesktopDownload}
-                  preferredDownloadTarget={preferredDownloadTarget}
-                  downloadTargets={DOWNLOAD_TARGETS}
-                  onOpenProfileStudio={() => {
-                    setSettingsOpen(false);
-                    setNavMode("profile");
-                  }}
-                  rpcForm={rpcForm}
-                  setRpcForm={setRpcForm}
-                  onImageFieldUpload={onImageFieldUpload}
-                  saveRichPresence={saveRichPresence}
-                  clearRichPresence={clearRichPresence}
-                />
-              )}
+        {settingsTab === "profile" && (
+          <ProfileSettingsSection
+            profileForm={profileForm}
+            setProfileForm={setProfileForm}
+            onAvatarUpload={onAvatarUpload}
+            onBannerUpload={onBannerUpload}
+            saveProfile={saveProfile}
+            isDesktopRuntime={isDesktopRuntime}
+            openPreferredDesktopDownload={openPreferredDesktopDownload}
+            preferredDownloadTarget={preferredDownloadTarget}
+            downloadTargets={DOWNLOAD_TARGETS}
+            onOpenProfileStudio={() => {
+              setSettingsOpen(false);
+              setNavMode("profile");
+            }}
+            rpcForm={rpcForm}
+            setRpcForm={setRpcForm}
+            onImageFieldUpload={onImageFieldUpload}
+            saveRichPresence={saveRichPresence}
+            clearRichPresence={clearRichPresence}
+          />
+        )}
 
-              {settingsTab === "server" && (
-                <ServerSettingsSection
-                  serverState={{
-                    activeServer,
-                    servers,
-                    canManageServer,
-                    activeServerVoiceGatewayPref,
-                    categoryChannels,
-                    sortedChannels,
-                    channelPermsChannelId,
-                    guildState,
-                  }}
-                  forms={{
-                    serverProfileForm,
-                    newServerName,
-                    newServerBaseUrl,
-                    newServerLogoUrl,
-                    newServerBannerUrl,
-                    newWorkspaceName,
-                    newChannelName,
-                    newChannelType,
-                    newChannelParentId,
-                    newServerEmoteName,
-                    newServerEmoteUrl,
-                  }}
-                  actions={{
-                    setServerProfileForm,
-                    onImageFieldUpload,
-                    saveActiveServerProfile,
-                    setNewServerName,
-                    setNewServerBaseUrl,
-                    setNewServerLogoUrl,
-                    setNewServerBannerUrl,
-                    createServer,
-                    updateActiveServerVoiceGatewayPref,
-                    setNewWorkspaceName,
-                    createWorkspace,
-                    setNewChannelName,
-                    setNewChannelType,
-                    setNewChannelParentId,
-                    createChannel,
-                    setNewServerEmoteName,
-                    setNewServerEmoteUrl,
-                    createServerEmote,
-                    removeServerEmote,
-                    setChannelPermsChannelId,
-                    channelOverwriteAllowsSend,
-                    setChannelRoleSend,
-                  }}
-                />
-              )}
+        {settingsTab === "server" && (
+          <ServerSettingsSection
+            serverState={{
+              activeServer,
+              servers,
+              canManageServer,
+              activeServerVoiceGatewayPref,
+              categoryChannels,
+              sortedChannels,
+              channelPermsChannelId,
+              guildState,
+            }}
+            forms={{
+              serverProfileForm,
+              newServerName,
+              newServerBaseUrl,
+              newServerLogoUrl,
+              newServerBannerUrl,
+              newWorkspaceName,
+              newChannelName,
+              newChannelType,
+              newChannelParentId,
+              newServerEmoteName,
+              newServerEmoteUrl,
+            }}
+            actions={{
+              setServerProfileForm,
+              onImageFieldUpload,
+              saveActiveServerProfile,
+              setNewServerName,
+              setNewServerBaseUrl,
+              setNewServerLogoUrl,
+              setNewServerBannerUrl,
+              createServer,
+              updateActiveServerVoiceGatewayPref,
+              setNewWorkspaceName,
+              createWorkspace,
+              setNewChannelName,
+              setNewChannelType,
+              setNewChannelParentId,
+              createChannel,
+              setNewServerEmoteName,
+              setNewServerEmoteUrl,
+              createServerEmote,
+              removeServerEmote,
+              setChannelPermsChannelId,
+              channelOverwriteAllowsSend,
+              setChannelRoleSend,
+            }}
+          />
+        )}
 
-              {settingsTab === "roles" && (
-                <RolesSettingsSection
-                  canManageServer={canManageServer}
-                  newRoleName={newRoleName}
-                  setNewRoleName={setNewRoleName}
-                  createRole={createRole}
-                  guildState={guildState}
-                  updateRole={updateRole}
-                  selectedMemberId={selectedMemberId}
-                  setSelectedMemberId={setSelectedMemberId}
-                  resolvedMemberList={resolvedMemberList}
-                  selectedRoleId={selectedRoleId}
-                  setSelectedRoleId={setSelectedRoleId}
-                  assignRoleToMember={assignRoleToMember}
-                />
-              )}
+        {settingsTab === "roles" && (
+          <RolesSettingsSection
+            canManageServer={canManageServer}
+            newRoleName={newRoleName}
+            setNewRoleName={setNewRoleName}
+            createRole={createRole}
+            guildState={guildState}
+            updateRole={updateRole}
+            selectedMemberId={selectedMemberId}
+            setSelectedMemberId={setSelectedMemberId}
+            resolvedMemberList={resolvedMemberList}
+            selectedRoleId={selectedRoleId}
+            setSelectedRoleId={setSelectedRoleId}
+            assignRoleToMember={assignRoleToMember}
+          />
+        )}
 
-              {settingsTab === "moderation" && (
-                <ModerationSettingsSection
-                  canModerateMembers={canModerateMembers}
-                  resolvedMemberList={resolvedMemberList}
-                  me={me}
-                  moderationMemberId={moderationMemberId}
-                  setModerationMemberId={setModerationMemberId}
-                  canBanMembers={canBanMembers}
-                  moderationBanReason={moderationBanReason}
-                  setModerationBanReason={setModerationBanReason}
-                  canKickMembers={canKickMembers}
-                  moderationBusy={moderationBusy}
-                  kickMember={kickMember}
-                  banMember={banMember}
-                  moderationUnbanUserId={moderationUnbanUserId}
-                  setModerationUnbanUserId={setModerationUnbanUserId}
-                  unbanMember={unbanMember}
-                />
-              )}
+        {settingsTab === "moderation" && (
+          <ModerationSettingsSection
+            canModerateMembers={canModerateMembers}
+            resolvedMemberList={resolvedMemberList}
+            me={me}
+            moderationMemberId={moderationMemberId}
+            setModerationMemberId={setModerationMemberId}
+            canBanMembers={canBanMembers}
+            moderationBanReason={moderationBanReason}
+            setModerationBanReason={setModerationBanReason}
+            canKickMembers={canKickMembers}
+            moderationBusy={moderationBusy}
+            kickMember={kickMember}
+            banMember={banMember}
+            moderationUnbanUserId={moderationUnbanUserId}
+            setModerationUnbanUserId={setModerationUnbanUserId}
+            unbanMember={unbanMember}
+          />
+        )}
 
-              {settingsTab === "invites" && (
-                <InvitesSettingsSection
-                  joinInviteCode={joinInviteCode}
-                  setJoinInviteCode={setJoinInviteCode}
-                  previewInvite={previewInvite}
-                  joinInvite={joinInvite}
-                  invitePendingCode={invitePendingCode}
-                  invitePreview={invitePreview}
-                  inviteServerId={inviteServerId}
-                  setInviteServerId={setInviteServerId}
-                  servers={servers}
-                  inviteCustomCode={inviteCustomCode}
-                  setInviteCustomCode={setInviteCustomCode}
-                  boostStatus={boostStatus}
-                  showBoostUpsell={showBoostUpsell}
-                  invitePermanent={invitePermanent}
-                  setInvitePermanent={setInvitePermanent}
-                  createInvite={createInvite}
-                  inviteCode={inviteCode}
-                  inviteJoinUrl={inviteJoinUrl}
-                  buildInviteJoinUrl={buildInviteJoinUrl}
-                  setStatus={setStatus}
-                />
-              )}
+        {settingsTab === "invites" && (
+          <InvitesSettingsSection
+            joinInviteCode={joinInviteCode}
+            setJoinInviteCode={setJoinInviteCode}
+            previewInvite={previewInvite}
+            joinInvite={joinInvite}
+            invitePendingCode={invitePendingCode}
+            invitePreview={invitePreview}
+            inviteServerId={inviteServerId}
+            setInviteServerId={setInviteServerId}
+            servers={servers}
+            inviteCustomCode={inviteCustomCode}
+            setInviteCustomCode={setInviteCustomCode}
+            boostStatus={boostStatus}
+            showBoostUpsell={showBoostUpsell}
+            invitePermanent={invitePermanent}
+            setInvitePermanent={setInvitePermanent}
+            createInvite={createInvite}
+            inviteCode={inviteCode}
+            inviteJoinUrl={inviteJoinUrl}
+            buildInviteJoinUrl={buildInviteJoinUrl}
+            setStatus={setStatus}
+          />
+        )}
 
-              {settingsTab === "extensions" && (
-                <ExtensionsSettingsSection
-                  activeServer={activeServer}
-                  canManageServer={canManageServer}
-                  refreshServerExtensions={refreshServerExtensions}
-                  serverExtensionsLoading={serverExtensionsLoading}
-                  serverExtensionsForDisplay={serverExtensionsForDisplay}
-                  serverExtensionBusyById={serverExtensionBusyById}
-                  toggleServerExtension={toggleServerExtension}
-                  serverExtensionCommands={serverExtensionCommands}
-                  clientExtensionCatalog={clientExtensionCatalog}
-                  enabledClientExtensions={enabledClientExtensions}
-                  toggleClientExtension={toggleClientExtension}
-                  clientExtensionLoadState={clientExtensionLoadState}
-                  clientExtensionDevMode={clientExtensionDevMode}
-                  setClientExtensionDevMode={setClientExtensionDevMode}
-                  newClientExtensionDevUrl={newClientExtensionDevUrl}
-                  setNewClientExtensionDevUrl={setNewClientExtensionDevUrl}
-                  addClientDevExtensionUrl={addClientDevExtensionUrl}
-                  clientExtensionDevUrls={clientExtensionDevUrls}
-                  setClientExtensionDevUrls={setClientExtensionDevUrls}
-                />
-              )}
+        {settingsTab === "extensions" && (
+          <ExtensionsSettingsSection
+            activeServer={activeServer}
+            canManageServer={canManageServer}
+            refreshServerExtensions={refreshServerExtensions}
+            serverExtensionsLoading={serverExtensionsLoading}
+            serverExtensionsForDisplay={serverExtensionsForDisplay}
+            serverExtensionBusyById={serverExtensionBusyById}
+            toggleServerExtension={toggleServerExtension}
+            serverExtensionCommands={serverExtensionCommands}
+            clientExtensionCatalog={clientExtensionCatalog}
+            enabledClientExtensions={enabledClientExtensions}
+            toggleClientExtension={toggleClientExtension}
+            clientExtensionLoadState={clientExtensionLoadState}
+            clientExtensionDevMode={clientExtensionDevMode}
+            setClientExtensionDevMode={setClientExtensionDevMode}
+            newClientExtensionDevUrl={newClientExtensionDevUrl}
+            setNewClientExtensionDevUrl={setNewClientExtensionDevUrl}
+            addClientDevExtensionUrl={addClientDevExtensionUrl}
+            clientExtensionDevUrls={clientExtensionDevUrls}
+            setClientExtensionDevUrls={setClientExtensionDevUrls}
+          />
+        )}
 
-              {settingsTab === "appearance" && (
-                <AppearanceSettingsSection
-                  themeEnabled={themeEnabled}
-                  setThemeEnabled={setThemeEnabled}
-                  onUploadTheme={onUploadTheme}
-                  themeCss={themeCss}
-                  setThemeCss={setThemeCss}
-                  openStaticPage={openStaticPage}
-                />
-              )}
+        {settingsTab === "appearance" && (
+          <AppearanceSettingsSection
+            themeEnabled={themeEnabled}
+            setThemeEnabled={setThemeEnabled}
+            onUploadTheme={onUploadTheme}
+            themeCss={themeCss}
+            setThemeCss={setThemeCss}
+            openStaticPage={openStaticPage}
+          />
+        )}
 
-              {settingsTab === "voice" && (
-                <VoiceSettingsSection
-                  audioInputDeviceId={audioInputDeviceId}
-                  setAudioInputDeviceId={setAudioInputDeviceId}
-                  audioInputDevices={audioInputDevices}
-                  audioOutputDeviceId={audioOutputDeviceId}
-                  setAudioOutputDeviceId={setAudioOutputDeviceId}
-                  audioOutputDevices={audioOutputDevices}
-                  isMicMonitorActive={isMicMonitorActive}
-                  toggleMicMonitor={toggleMicMonitor}
-                  isInVoiceChannel={isInVoiceChannel}
-                  micGain={micGain}
-                  setMicGain={setMicGain}
-                  micSensitivity={micSensitivity}
-                  setMicSensitivity={setMicSensitivity}
-                  noiseSuppressionEnabled={noiseSuppressionEnabled}
-                  setNoiseSuppressionEnabled={setNoiseSuppressionEnabled}
-                  noiseSuppressionPreset={noiseSuppressionPreset}
-                  applyNoiseSuppressionPreset={applyNoiseSuppressionPreset}
-                  noiseSuppressionConfig={noiseSuppressionConfig}
-                  updateNoiseSuppressionConfig={updateNoiseSuppressionConfig}
-                  localAudioProcessingInfo={localAudioProcessingInfo}
-                />
-              )}
+        {settingsTab === "voice" && (
+          <VoiceSettingsSection
+            audioInputDeviceId={audioInputDeviceId}
+            setAudioInputDeviceId={setAudioInputDeviceId}
+            audioInputDevices={audioInputDevices}
+            audioOutputDeviceId={audioOutputDeviceId}
+            setAudioOutputDeviceId={setAudioOutputDeviceId}
+            audioOutputDevices={audioOutputDevices}
+            isMicMonitorActive={isMicMonitorActive}
+            toggleMicMonitor={toggleMicMonitor}
+            isInVoiceChannel={isInVoiceChannel}
+            micGain={micGain}
+            setMicGain={setMicGain}
+            micSensitivity={micSensitivity}
+            setMicSensitivity={setMicSensitivity}
+            noiseSuppressionEnabled={noiseSuppressionEnabled}
+            setNoiseSuppressionEnabled={setNoiseSuppressionEnabled}
+            noiseSuppressionPreset={noiseSuppressionPreset}
+            applyNoiseSuppressionPreset={applyNoiseSuppressionPreset}
+            noiseSuppressionConfig={noiseSuppressionConfig}
+            updateNoiseSuppressionConfig={updateNoiseSuppressionConfig}
+            localAudioProcessingInfo={localAudioProcessingInfo}
+          />
+        )}
 
-              {settingsTab === "billing" && (
-                <BillingSettingsSection
-                  boostStatus={boostStatus}
-                  boostLoading={boostLoading}
-                  startBoostCheckout={startBoostCheckout}
-                  openBoostPortal={openBoostPortal}
-                  loadBoostStatus={loadBoostStatus}
-                  startBoostGiftCheckout={startBoostGiftCheckout}
-                  boostGiftCheckoutBusy={boostGiftCheckoutBusy}
-                  loadSentBoostGifts={loadSentBoostGifts}
-                  boostGiftCode={boostGiftCode}
-                  setBoostGiftCode={setBoostGiftCode}
-                  previewBoostGift={previewBoostGift}
-                  boostGiftLoading={boostGiftLoading}
-                  boostGiftPreview={boostGiftPreview}
-                  setBoostGiftPrompt={setBoostGiftPrompt}
-                  boostGiftSent={boostGiftSent}
-                  buildBoostGiftUrl={buildBoostGiftUrl}
-                  setStatus={setStatus}
-                />
-              )}
+        {settingsTab === "billing" && (
+          <BillingSettingsSection
+            boostStatus={boostStatus}
+            boostLoading={boostLoading}
+            startBoostCheckout={startBoostCheckout}
+            openBoostPortal={openBoostPortal}
+            loadBoostStatus={loadBoostStatus}
+            startBoostGiftCheckout={startBoostGiftCheckout}
+            boostGiftCheckoutBusy={boostGiftCheckoutBusy}
+            loadSentBoostGifts={loadSentBoostGifts}
+            boostGiftCode={boostGiftCode}
+            setBoostGiftCode={setBoostGiftCode}
+            previewBoostGift={previewBoostGift}
+            boostGiftLoading={boostGiftLoading}
+            boostGiftPreview={boostGiftPreview}
+            setBoostGiftPrompt={setBoostGiftPrompt}
+            boostGiftSent={boostGiftSent}
+            buildBoostGiftUrl={buildBoostGiftUrl}
+            setStatus={setStatus}
+          />
+        )}
 
-              {settingsTab === "security" && (
-                <SecuritySettingsSection
-                  lastLoginInfo={lastLoginInfo}
-                  showPasswordChange={showPasswordChange}
-                  setShowPasswordChange={setShowPasswordChange}
-                  currentPassword={currentPassword}
-                  setCurrentPassword={setCurrentPassword}
-                  newPassword={newPassword}
-                  setNewPassword={setNewPassword}
-                  confirmPassword={confirmPassword}
-                  setConfirmPassword={setConfirmPassword}
-                  api={api}
-                  accessToken={accessToken}
-                  setStatus={setStatus}
-                  securitySettings={securitySettings}
-                  show2FASetup={show2FASetup}
-                  twoFactorVerified={twoFactorVerified}
-                  initiate2FASetup={initiate2FASetup}
-                  twoFactorQRCode={twoFactorQRCode}
-                  twoFactorToken={twoFactorToken}
-                  setTwoFactorToken={setTwoFactorToken}
-                  backupCodes={backupCodes}
-                  setTwoFactorSecret={setTwoFactorSecret}
-                  setBackupCodes={setBackupCodes}
-                  confirm2FA={confirm2FA}
-                  disable2FA={disable2FA}
-                  activeSessions={activeSessions}
-                  confirmDialog={confirmDialog}
-                />
-              )}
+        {settingsTab === "security" && (
+          <SecuritySettingsSection
+            lastLoginInfo={lastLoginInfo}
+            showPasswordChange={showPasswordChange}
+            setShowPasswordChange={setShowPasswordChange}
+            currentPassword={currentPassword}
+            setCurrentPassword={setCurrentPassword}
+            newPassword={newPassword}
+            setNewPassword={setNewPassword}
+            confirmPassword={confirmPassword}
+            setConfirmPassword={setConfirmPassword}
+            api={api}
+            accessToken={accessToken}
+            setStatus={setStatus}
+            securitySettings={securitySettings}
+            show2FASetup={show2FASetup}
+            twoFactorVerified={twoFactorVerified}
+            initiate2FASetup={initiate2FASetup}
+            twoFactorQRCode={twoFactorQRCode}
+            twoFactorToken={twoFactorToken}
+            setTwoFactorToken={setTwoFactorToken}
+            backupCodes={backupCodes}
+            setTwoFactorSecret={setTwoFactorSecret}
+            setBackupCodes={setBackupCodes}
+            confirm2FA={confirm2FA}
+            disable2FA={disable2FA}
+            activeSessions={activeSessions}
+            confirmDialog={confirmDialog}
+          />
+        )}
 
-              <p className="status">{status}</p>
+        <p className="status">{status}</p>
       </SettingsOverlay>
     </div>
   );
