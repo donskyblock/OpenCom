@@ -20,6 +20,7 @@ Development:
 ./scripts/dev/start.sh all
 ./scripts/client.sh
 ./scripts/client.sh --build
+./scripts/client.sh --build-aur
 ```
 
 Docs:
@@ -60,6 +61,7 @@ Legacy commands still work, for example:
 Client wrappers:
 
 - Linux/macOS shell: `./scripts/client.sh` (or `./scripts/client.sh --build`)
+- Linux/macOS AUR skeleton: `./scripts/client.sh --build-aur` or `./scripts/client.sh --stage-aur`
 - Windows CMD: `scripts\client.bat` (or `scripts\client.bat --build`)
 
 These wrappers forward to the new directory layout.

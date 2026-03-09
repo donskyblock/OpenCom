@@ -107,12 +107,36 @@ Direct script entrypoints are also available:
 
 ```bash
 ./scripts/build-linux.sh
+./scripts/build-aur.sh
 ./scripts/build-win.sh
 ./scripts/build-all.sh
 ```
 
 On Arch-based systems, `.deb` packaging may fail if bundled `fpm` cannot load `libcrypt.so.1`.
 `npm run build:linux` now auto-falls back to `tar.gz` in that case. Install `libxcrypt-compat` and rerun to restore `.deb` output.
+
+### Release metadata and AUR foundations
+
+Linux builds now also emit packaging metadata:
+
+- `client/dist/linux-release-manifest.json`
+- `client/dist/linux-release.sha256`
+
+Generate an Arch/AUR skeleton for the prebuilt tarball:
+
+```bash
+cd client
+npm run build:aur
+```
+
+That produces:
+
+- `client/dist/aur/opencom-bin/PKGBUILD`
+- `client/dist/aur/opencom-bin/.SRCINFO`
+- `client/dist/aur/opencom-bin/opencom.desktop`
+- `client/dist/aur/opencom-bin/opencom.png`
+
+The packaging inputs live in `client/packaging/linux.json`, so future Linux targets can reuse the same metadata instead of duplicating package names, install paths, or runtime dependency lists across scripts.
 
 ### Windows build from Linux (no VM)
 

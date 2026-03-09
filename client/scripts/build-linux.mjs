@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs/promises";
+import { writeLinuxReleaseManifest } from "./release-manifest.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -67,6 +68,11 @@ async function main() {
     if (requireSnap) throw error;
     console.warn(`Snap packaging failed (optional): ${error?.message || error}`);
   }
+
+  const manifest = await writeLinuxReleaseManifest();
+  console.log(
+    `Wrote Linux release metadata for ${manifest.version} to dist/linux-release-manifest.json`,
+  );
 }
 
 main().catch((error) => {

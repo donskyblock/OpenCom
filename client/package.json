@@ -21,6 +21,8 @@
     "build:win:local": "npm run sync:web && npm run prepare:vendored-minimatch && OPENCOM_WIN_BUILD_MODE=local node scripts/build-win.mjs",
     "build:win:container": "npm run sync:web && npm run prepare:vendored-minimatch && OPENCOM_WIN_BUILD_MODE=container node scripts/build-win.mjs",
     "build:linux": "npm run sync:web && npm run prepare:vendored-minimatch && node scripts/build-linux.mjs",
+    "build:aur": "npm run build:linux && node scripts/build-aur.mjs",
+    "stage:aur": "node scripts/build-aur.mjs",
     "build:stage:linux": "node scripts/build-and-stage.mjs linux",
     "build:stage:win": "node scripts/build-and-stage.mjs win",
     "build:stage:all": "npm run build:stage:linux && npm run build:stage:win",
