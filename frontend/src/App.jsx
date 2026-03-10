@@ -4652,7 +4652,7 @@ export function App() {
     }
 
     const wsCandidates = getLastSuccessfulGateway(
-      getVoiceGatewayWsCandidates(server.baseUrl, true),
+      getVoiceGatewayWsCandidates(server.baseUrl),
       LAST_SERVER_GATEWAY_KEY,
     );
     voiceGatewayCandidatesRef.current = wsCandidates;

@@ -43,7 +43,7 @@ VITE_VOICE_ICE_SERVERS=[{"urls":["stun:stun.l.google.com:19302"]},{"urls":["turn
 VITE_VOICE_ICE_TRANSPORT_POLICY=all
 ```
 
-For OpenCom voice, STUN/TURN helps the browser gather better ICE candidates, but the mediasoup node still needs a reachable announced address and its RTC port range reachable from the public internet. If `MEDIASOUP_ANNOUNCED_IP` is left blank, the node now tries to infer it from `PUBLIC_BASE_URL`.
+For OpenCom voice, STUN/TURN helps the browser gather better ICE candidates, but the mediasoup node still needs a reachable announced address and its RTC port range reachable from the public internet. Prefer `MEDIASOUP_ANNOUNCED_ADDRESS`; if both that and the legacy `MEDIASOUP_ANNOUNCED_IP` are blank, the node tries to infer the address from `PUBLIC_BASE_URL`.
 
 ## Run locally
 ```bash

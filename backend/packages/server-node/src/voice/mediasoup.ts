@@ -1,5 +1,11 @@
 import mediasoup from "mediasoup";
-import { env, resolvedMediasoupAnnouncedIp } from "../env.js";
+import {
+  env,
+  mediasoupNetworkingWarnings,
+  resolvedMediasoupAnnouncedAddress,
+  resolvedMediasoupAnnouncedAddressKind,
+  resolvedMediasoupAnnouncedAddressSource,
+} from "../env.js";
 
 type RoomKey = string; // `${guildId}:${channelId}`
 
@@ -43,9 +49,17 @@ export function getMediasoupDiagnostics() {
     producers: producerCount,
     consumers: consumerCount,
     listenIp: env.MEDIASOUP_LISTEN_IP,
-    announcedIp: resolvedMediasoupAnnouncedIp || null,
+    announcedAddress: resolvedMediasoupAnnouncedAddress || null,
+    announcedAddressKind: resolvedMediasoupAnnouncedAddressKind,
+    announcedAddressSource: resolvedMediasoupAnnouncedAddressSource,
     rtcMinPort: env.MEDIASOUP_RTC_MIN_PORT,
     rtcMaxPort: env.MEDIASOUP_RTC_MAX_PORT,
+    transportProtocols: {
+      udp: env.MEDIASOUP_ENABLE_UDP,
+      tcp: env.MEDIASOUP_ENABLE_TCP,
+      preferUdp: env.MEDIASOUP_PREFER_UDP,
+    },
+    warnings: mediasoupNetworkingWarnings,
   };
 }
 
@@ -179,16 +193,26 @@ export async function createWebRtcTransport(
     sessionId,
   );
 
+  const listenInfos: mediasoup.types.TransportListenInfo[] = [];
+  if (env.MEDIASOUP_ENABLE_UDP) {
+    listenInfos.push({
+      protocol: "udp",
+      ip: env.MEDIASOUP_LISTEN_IP,
+      announcedAddress: resolvedMediasoupAnnouncedAddress,
+    });
+  }
+  if (env.MEDIASOUP_ENABLE_TCP) {
+    listenInfos.push({
+      protocol: "tcp",
+      ip: env.MEDIASOUP_LISTEN_IP,
+      announcedAddress: resolvedMediasoupAnnouncedAddress,
+    });
+  }
+
   const transport = await room.router.createWebRtcTransport({
-    listenIps: [
-      {
-        ip: env.MEDIASOUP_LISTEN_IP,
-        announcedIp: resolvedMediasoupAnnouncedIp,
-      },
-    ],
-    enableUdp: true,
-    enableTcp: true,
-    preferUdp: true,
+    listenInfos,
+    preferUdp: env.MEDIASOUP_ENABLE_UDP && env.MEDIASOUP_PREFER_UDP,
+    preferTcp: env.MEDIASOUP_ENABLE_TCP && !env.MEDIASOUP_PREFER_UDP,
   });
 
   try {
