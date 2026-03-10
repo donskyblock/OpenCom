@@ -56,11 +56,34 @@ Example:
 
 OpenCom voice is SFU-based (`mediasoup`), so the browser connects to the server node. That means:
 
-- The node must advertise a reachable public address via `MEDIASOUP_ANNOUNCED_IP`.
-- If `MEDIASOUP_ANNOUNCED_IP` is blank, OpenCom will try to infer it from `PUBLIC_BASE_URL` when that host is not loopback.
+- The node must advertise a reachable public address via `MEDIASOUP_ANNOUNCED_ADDRESS` (or the legacy `MEDIASOUP_ANNOUNCED_IP` alias).
+- Prefer `MEDIASOUP_ANNOUNCED_ADDRESS` for the node's public IP or hostname. `MEDIASOUP_ANNOUNCED_IP` remains a legacy alias.
+- If both announced-address variables are blank, OpenCom will try to infer the address from `PUBLIC_BASE_URL` when that host is not loopback.
 - The node must have `MEDIASOUP_RTC_MIN_PORT` to `MEDIASOUP_RTC_MAX_PORT` open over UDP and TCP.
 - STUN/TURN improves browser-side ICE candidate gathering, but it does not replace the need for the node's RTC port range to be reachable.
 - If you deploy TURN for stricter NAT/firewall environments, the most common listener ports are `3478` and `5349`, with `443/TCP` or `443/TLS` often needed on restrictive networks.
+
+For no-TURN deployments, verify the direct path explicitly:
+
+```bash
+curl http://127.0.0.1:3002/health
+```
+
+The `voice` object now reports:
+- `announcedAddress`
+- `announcedAddressSource`
+- `announcedAddressKind`
+- `transportProtocols`
+- `warnings`
+
+Typical host firewall examples:
+
+```bash
+sudo ufw allow 40000:40100/udp
+sudo ufw allow 40000:40100/tcp
+```
+
+If your provider has a cloud firewall or security group, open the same range there too. Docker port publishing alone is not enough when the provider firewall still blocks the traffic.
 
 ## REST fallback behavior
 

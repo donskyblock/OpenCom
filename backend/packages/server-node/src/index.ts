@@ -3,7 +3,13 @@ import { attachNodeGateway } from "./gateway.js";
 import { guildRoutes } from "./routes/guilds.js";
 import { channelRoutes } from "./routes/channels.js";
 import { messageRoutes } from "./routes/messages.js";
-import { env, resolvedMediasoupAnnouncedIp } from "./env.js";
+import {
+  env,
+  mediasoupNetworkingWarnings,
+  resolvedMediasoupAnnouncedAddress,
+  resolvedMediasoupAnnouncedAddressKind,
+  resolvedMediasoupAnnouncedAddressSource,
+} from "./env.js";
 import { initMediasoup } from "./voice/mediasoup.js";
 import { attachmentRoutes } from "./routes/attachments.js";
 import { startAttachmentCleanupLoop } from "./jobs/attachmentCleanup.js";
@@ -29,33 +35,48 @@ logger.info("Starting node server", {
   logLevel: env.LOG_LEVEL,
   debugHttp: env.DEBUG_HTTP,
   debugVoice: env.DEBUG_VOICE,
-  mediasoupAnnouncedIp: resolvedMediasoupAnnouncedIp || "(unset)",
+  mediasoupAnnouncedAddress: resolvedMediasoupAnnouncedAddress || "(unset)",
+  mediasoupAnnouncedAddressKind: resolvedMediasoupAnnouncedAddressKind,
+  mediasoupAnnouncedAddressSource: resolvedMediasoupAnnouncedAddressSource || "(unset)",
+  mediasoupEnableUdp: env.MEDIASOUP_ENABLE_UDP,
+  mediasoupEnableTcp: env.MEDIASOUP_ENABLE_TCP,
+  mediasoupPreferUdp: env.MEDIASOUP_PREFER_UDP,
   rtcMinPort: env.MEDIASOUP_RTC_MIN_PORT,
   rtcMaxPort: env.MEDIASOUP_RTC_MAX_PORT
 });
 
-if (!resolvedMediasoupAnnouncedIp) {
-  logger.warn(
-    "MEDIASOUP_ANNOUNCED_IP is unset. External voice clients may fail unless the node is directly reachable. Set MEDIASOUP_ANNOUNCED_IP to the public IP and open the RTC port range over UDP/TCP.",
-    {
-      listenIp: env.MEDIASOUP_LISTEN_IP,
-      rtcMinPort: env.MEDIASOUP_RTC_MIN_PORT,
-      rtcMaxPort: env.MEDIASOUP_RTC_MAX_PORT,
-    },
-  );
-} else if (!env.MEDIASOUP_ANNOUNCED_IP) {
+if (!env.MEDIASOUP_ANNOUNCED_ADDRESS && !env.MEDIASOUP_ANNOUNCED_IP && resolvedMediasoupAnnouncedAddress) {
   logger.info("Using inferred mediasoup announced address from PUBLIC_BASE_URL", {
-    announcedIp: resolvedMediasoupAnnouncedIp,
+    announcedAddress: resolvedMediasoupAnnouncedAddress,
     publicBaseUrl: env.PUBLIC_BASE_URL,
   });
 }
 
 logger.info("Voice RTC networking", {
   listenIp: env.MEDIASOUP_LISTEN_IP,
-  announcedIp: resolvedMediasoupAnnouncedIp || "(unset)",
-  protocols: ["udp", "tcp"],
+  announcedAddress: resolvedMediasoupAnnouncedAddress || "(unset)",
+  announcedAddressKind: resolvedMediasoupAnnouncedAddressKind,
+  announcedAddressSource: resolvedMediasoupAnnouncedAddressSource || "(unset)",
+  protocols: [
+    ...(env.MEDIASOUP_ENABLE_UDP ? ["udp"] : []),
+    ...(env.MEDIASOUP_ENABLE_TCP ? ["tcp"] : []),
+  ],
   rtcPortRange: `${env.MEDIASOUP_RTC_MIN_PORT}-${env.MEDIASOUP_RTC_MAX_PORT}`,
 });
+
+if (mediasoupNetworkingWarnings.length) {
+  logger.warn("Voice RTC networking warnings detected", {
+    warnings: mediasoupNetworkingWarnings,
+    listenIp: env.MEDIASOUP_LISTEN_IP,
+    announcedAddress: resolvedMediasoupAnnouncedAddress || "(unset)",
+    rtcPortRange: `${env.MEDIASOUP_RTC_MIN_PORT}-${env.MEDIASOUP_RTC_MAX_PORT}`,
+    protocols: {
+      udp: env.MEDIASOUP_ENABLE_UDP,
+      tcp: env.MEDIASOUP_ENABLE_TCP,
+      preferUdp: env.MEDIASOUP_PREFER_UDP,
+    },
+  });
+}
 
 await initMediasoup();
 const app = buildHttp();
