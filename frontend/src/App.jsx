@@ -684,6 +684,21 @@ function decodeJwtPayload(token = "") {
   }
 }
 
+const MEMBERSHIP_TOKEN_REFRESH_LEEWAY_MS = 90 * 1000;
+const pendingMembershipTokenRefreshByServerId = new Map();
+
+function getMembershipTokenServerId(membershipToken = "") {
+  const claims = decodeJwtPayload(membershipToken);
+  return String(claims?.core_server_id || claims?.server_id || "").trim();
+}
+
+function getMembershipTokenExpiryMs(membershipToken = "") {
+  const claims = decodeJwtPayload(membershipToken);
+  const expSeconds = Number(claims?.exp || 0);
+  if (!Number.isFinite(expSeconds) || expSeconds <= 0) return 0;
+  return expSeconds * 1000;
+}
+
 async function refreshAccessTokenWithRefreshToken() {
   const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY) || "";
   if (!refreshToken) return null;
@@ -718,31 +733,59 @@ async function refreshAccessTokenWithRefreshToken() {
 async function refreshMembershipTokenForNode(baseUrl, membershipToken) {
   if (!membershipToken) return null;
   const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY) || "";
-  if (!accessToken) return null;
-  const claims = decodeJwtPayload(membershipToken);
-  const serverId = claims?.core_server_id || claims?.server_id;
+  const serverId = getMembershipTokenServerId(membershipToken);
   if (!serverId) return null;
 
-  const response = await fetch(
-    `${CORE_API}/v1/servers/${encodeURIComponent(serverId)}/membership-token`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}` },
-    },
-  );
-  if (!response.ok) return null;
-  const data = await response.json().catch(() => null);
-  const nextToken = data?.membershipToken;
-  if (!nextToken) return null;
+  const existingRefresh = pendingMembershipTokenRefreshByServerId.get(serverId);
+  if (existingRefresh) return existingRefresh;
 
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(
-      new CustomEvent("opencom-membership-token-refresh", {
-        detail: { serverId, membershipToken: nextToken },
-      }),
-    );
+  const refreshPromise = (async () => {
+    const data = await api(
+      `/v1/servers/${encodeURIComponent(serverId)}/membership-token`,
+      {
+        method: "POST",
+        headers: accessToken
+          ? { Authorization: `Bearer ${accessToken}` }
+          : undefined,
+      },
+    ).catch(() => null);
+    const nextToken = data?.membershipToken;
+    if (!nextToken) return null;
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("opencom-membership-token-refresh", {
+          detail: { serverId, membershipToken: nextToken },
+        }),
+      );
+    }
+    return nextToken;
+  })();
+
+  pendingMembershipTokenRefreshByServerId.set(serverId, refreshPromise);
+  try {
+    return await refreshPromise;
+  } finally {
+    if (pendingMembershipTokenRefreshByServerId.get(serverId) === refreshPromise)
+      pendingMembershipTokenRefreshByServerId.delete(serverId);
   }
-  return nextToken;
+}
+
+async function ensureFreshMembershipToken(
+  baseUrl,
+  membershipToken,
+  { minValidityMs = MEMBERSHIP_TOKEN_REFRESH_LEEWAY_MS } = {},
+) {
+  if (!membershipToken) return null;
+  const expiresAtMs = getMembershipTokenExpiryMs(membershipToken);
+  if (expiresAtMs && expiresAtMs - Date.now() > minValidityMs) {
+    return membershipToken;
+  }
+  return (
+    (await refreshMembershipTokenForNode(baseUrl, membershipToken).catch(
+      () => null,
+    )) || membershipToken
+  );
 }
 
 function getLastSuccessfulGateway(candidates, storageKey) {
@@ -1017,10 +1060,14 @@ async function nodeApi(baseUrl, path, token, options = {}) {
   const hasBody = nextOptions.body !== undefined && nextOptions.body !== null;
   const normalizedBaseUrl = normalizeServerBaseUrl(baseUrl);
   if (!normalizedBaseUrl) throw new Error("NODE_BASE_URL_INVALID");
+  const usableToken = await ensureFreshMembershipToken(
+    normalizedBaseUrl,
+    token,
+  ).catch(() => token);
   const response = await fetch(`${normalizedBaseUrl}${path}`, {
     headers: {
       ...(hasBody ? { "Content-Type": "application/json" } : {}),
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${usableToken || token}`,
       ...(nextOptions.headers || {}),
     },
     ...nextOptions,
@@ -1030,7 +1077,7 @@ async function nodeApi(baseUrl, path, token, options = {}) {
     if (response.status === 401 && !retried) {
       const nextMembershipToken = await refreshMembershipTokenForNode(
         normalizedBaseUrl,
-        token,
+        usableToken || token,
       ).catch(() => null);
       if (nextMembershipToken) {
         return nodeApi(normalizedBaseUrl, path, nextMembershipToken, {
@@ -2061,6 +2108,7 @@ export function App() {
   const autoJoinInviteAttemptRef = useRef("");
   const previousDmIdRef = useRef("");
   const previousServerChannelIdRef = useRef("");
+  const previousSelectedServerIdRef = useRef("");
   const dmScrollPositionsRef = useRef({});
   const serverScrollPositionsRef = useRef({});
   const activeServerMessagesRef = useRef([]);
@@ -4666,11 +4714,20 @@ export function App() {
       reconnectTimer = setTimeout(connectNext, delay);
     };
 
-    const connectNext = () => {
+    const connectNext = async () => {
       if (disposed || !wsCandidates.length) return;
 
       const wsUrl = wsCandidates[candidateIndex % wsCandidates.length];
       candidateIndex += 1;
+      const membershipToken =
+        (await ensureFreshMembershipToken(
+          server.baseUrl,
+          server.membershipToken,
+          {
+            minValidityMs: 2 * 60 * 1000,
+          },
+        ).catch(() => server.membershipToken)) || server.membershipToken;
+      if (disposed || !membershipToken) return;
 
       const ws = new WebSocket(wsUrl);
       nodeGatewayWsRef.current = ws;
@@ -4680,7 +4737,7 @@ export function App() {
         ws.send(
           JSON.stringify({
             op: "IDENTIFY",
-            d: { membershipToken: server.membershipToken },
+            d: { membershipToken },
           }),
         );
       };
@@ -4959,7 +5016,7 @@ export function App() {
       ws.onerror = () => {};
     };
 
-    connectNext();
+    void connectNext();
 
     return () => {
       disposed = true;
@@ -5976,6 +6033,18 @@ export function App() {
   activeGuildIdRef.current = activeGuildId;
   activeServerIdRef.current = activeServerId;
   activeDmIdRef.current = activeDmId;
+
+  useEffect(() => {
+    const previousServerId = previousSelectedServerIdRef.current;
+    if (previousServerId === activeServerId) return;
+    previousSelectedServerIdRef.current = activeServerId;
+    if (!previousServerId) return;
+
+    setActiveGuildId("");
+    setActiveChannelId("");
+    setGuildState(null);
+    setMessages([]);
+  }, [activeServerId]);
 
   useEffect(() => {
     window.dispatchEvent(
