@@ -1002,9 +1002,70 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
   to { opacity: 1; transform: scale(1); }
 }
 
-.server-pill { background: rgba(153, 176, 225, 0.12); border: 1px solid transparent; color: var(--text-soft);}
-.server-pill.active { background: linear-gradient(145deg, #7789ff, #8b8aff); color: #fff; box-shadow: 0 0.63vw 1.38vw rgba(101, 118, 236, 0.42);}
-.server-pill { position: relative; }
+.server-pill {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  isolation: isolate;
+  background: rgba(153, 176, 225, 0.12);
+  border: 1px solid rgba(132, 155, 205, 0.16);
+  color: var(--text-soft);
+  line-height: 1;
+}
+.server-pill.active {
+  background: linear-gradient(145deg, #7789ff, #8b8aff);
+  border-color: rgba(181, 196, 255, 0.36);
+  color: #fff;
+  box-shadow: 0 0.63vw 1.38vw rgba(101, 118, 236, 0.42);
+}
+.server-pill-surface {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  overflow: hidden;
+}
+.server-pill-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: calc(var(--space-xs) * 0.45);
+  font-size: 0.86em;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  background:
+    radial-gradient(circle at 26% 20%, rgba(255, 255, 255, 0.16), transparent 42%),
+    linear-gradient(160deg, rgba(103, 124, 176, 0.34), rgba(48, 60, 98, 0.55));
+  transition: opacity 0.18s ease, transform 0.18s ease, filter 0.18s ease;
+}
+.server-pill.has-art .server-pill-fallback {
+  color: rgba(255, 255, 255, 0.92);
+}
+.server-pill[data-image-state="loading"] .server-pill-fallback {
+  animation: server-pill-pulse 1.5s ease-in-out infinite;
+}
+.server-pill[data-image-state="ready"] .server-pill-fallback {
+  opacity: 0;
+  transform: scale(1.04);
+  filter: blur(3px);
+}
+.server-pill-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  opacity: 0;
+  transform: scale(1.04);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.server-pill-image.is-visible {
+  opacity: 1;
+  transform: scale(1);
+}
 .server-pill-ping-badge {
   position: absolute;
   right: -0.2em;
@@ -1020,8 +1081,14 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
   padding: 0 0.3em;
   font-weight: 700;
   border: 1px solid rgba(8, 14, 27, 0.95);
+  z-index: 2;
 }
 .nav-pill { font-size: 1.23em; }
+
+@keyframes server-pill-pulse {
+  0%, 100% { filter: saturate(1); }
+  50% { filter: saturate(1.18) brightness(1.08); }
+}
 
 /* Channel Sidebar & buttons */
 .channel-sidebar {

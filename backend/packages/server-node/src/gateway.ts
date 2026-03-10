@@ -10,7 +10,7 @@ import { resolveChannelPermissions } from "./permissions/resolve.js";
 import { Perm, has } from "./permissions/bits.js";
 import {
   getRouterRtpCapabilities,
-  ensurePeer,
+  replacePeerSession,
   createWebRtcTransport,
   connectTransport,
   restartIce,
@@ -51,6 +51,7 @@ function errorPayload(code: string, error: unknown) {
 export function attachNodeGateway(app: FastifyInstance) {
   const wss = new WebSocketServer({ noServer: true });
   const conns = new Set<Conn>();
+  const activeVoiceSessionByGuildUser = new Map<string, string>();
 
   app.get("/health", async () => ({ ok: true, voice: getMediasoupDiagnostics() }));
 
@@ -105,6 +106,18 @@ export function attachNodeGateway(app: FastifyInstance) {
     }
   }
 
+  function voiceSessionKey(guildId: string, userId: string) {
+    return `${guildId}:${userId}`;
+  }
+
+  function isVoiceSessionOwner(conn: Conn, voice = conn.voice) {
+    if (!voice) return false;
+    const owner = activeVoiceSessionByGuildUser.get(
+      voiceSessionKey(voice.guildId, conn.userId),
+    );
+    return !owner || owner === conn.connId;
+  }
+
   async function emitVoiceState(guildId: string, userId: string) {
     const rows = await q<any>(
       `SELECT guild_id, channel_id, user_id, muted, deafened, updated_at
@@ -132,17 +145,21 @@ export function attachNodeGateway(app: FastifyInstance) {
   async function leaveVoice(conn: Conn) {
     if (!conn.voice) return;
     const { guildId } = conn.voice;
+    const isOwner = isVoiceSessionOwner(conn);
+    conn.voice = undefined;
+    if (!isOwner) return;
+
+    activeVoiceSessionByGuildUser.delete(voiceSessionKey(guildId, conn.userId));
 
     await q(`DELETE FROM voice_states WHERE guild_id=:guildId AND user_id=:userId`, {
       guildId,
       userId: conn.userId
     });
 
-    conn.voice = undefined;
     await emitVoiceState(guildId, conn.userId);
   }
 
-  function notifyVoicePeerClosed(guildId: string, channelId: string, userId: string, closedProducerIds: string[]) {
+  function notifyVoiceProducersClosed(guildId: string, channelId: string, userId: string, closedProducerIds: string[]) {
     for (const producerId of closedProducerIds) {
       broadcastVoiceChannel(
         guildId,
@@ -152,7 +169,10 @@ export function attachNodeGateway(app: FastifyInstance) {
         userId
       );
     }
+  }
 
+  function notifyVoicePeerClosed(guildId: string, channelId: string, userId: string, closedProducerIds: string[]) {
+    notifyVoiceProducersClosed(guildId, channelId, userId, closedProducerIds);
     broadcastVoiceChannel(
       guildId,
       channelId,
@@ -164,9 +184,39 @@ export function attachNodeGateway(app: FastifyInstance) {
 
   function cleanupVoicePeerAndNotify(conn: Conn) {
     if (!conn.voice) return;
+    if (!isVoiceSessionOwner(conn)) return;
     const { guildId, channelId } = conn.voice;
-    const closedProducerIds = closePeer(guildId, channelId, conn.userId);
+    const closedProducerIds = closePeer(
+      guildId,
+      channelId,
+      conn.userId,
+      conn.connId,
+    );
     notifyVoicePeerClosed(guildId, channelId, conn.userId, closedProducerIds);
+  }
+
+  function supersedeVoiceConnections(conn: Conn, guildId: string) {
+    for (const other of conns) {
+      if (other === conn || other.userId !== conn.userId || !other.voice) {
+        continue;
+      }
+      if (other.voice.guildId !== guildId) continue;
+
+      const { guildId: otherGuildId, channelId: otherChannelId } = other.voice;
+      const closedProducerIds = closePeer(
+        otherGuildId,
+        otherChannelId,
+        other.userId,
+        other.connId,
+      );
+      notifyVoiceProducersClosed(
+        otherGuildId,
+        otherChannelId,
+        other.userId,
+        closedProducerIds,
+      );
+      other.voice = undefined;
+    }
   }
 
   app.server.on("upgrade", (req, socket, head) => {
@@ -344,7 +394,20 @@ export function attachNodeGateway(app: FastifyInstance) {
             }
           }
 
-          await ensurePeer(guildId, channelId, conn.userId);
+          supersedeVoiceConnections(conn, guildId);
+
+          const replacedProducerIds = await replacePeerSession(
+            guildId,
+            channelId,
+            conn.userId,
+            conn.connId,
+          );
+          notifyVoiceProducersClosed(
+            guildId,
+            channelId,
+            conn.userId,
+            replacedProducerIds,
+          );
 
           await q(
             `INSERT INTO voice_states (guild_id,channel_id,user_id,muted,deafened,updated_at)
@@ -353,6 +416,10 @@ export function attachNodeGateway(app: FastifyInstance) {
             { guildId, channelId, userId: conn.userId }
           );
 
+          activeVoiceSessionByGuildUser.set(
+            voiceSessionKey(guildId, conn.userId),
+            conn.connId,
+          );
           conn.voice = { guildId, channelId };
 
           const rtpCapabilities = await getRouterRtpCapabilities(guildId, channelId);
@@ -470,7 +537,13 @@ export function attachNodeGateway(app: FastifyInstance) {
             return;
           }
 
-          const transport = await createWebRtcTransport(guildId, channelId, conn.userId, direction);
+          const transport = await createWebRtcTransport(
+            guildId,
+            channelId,
+            conn.userId,
+            conn.connId,
+            direction,
+          );
           sendDispatch(conn, "VOICE_TRANSPORT_CREATED", { guildId, channelId, direction, transport, requestId });
         } catch (error) {
           sendVoiceError(conn, "VOICE_TRANSPORT_CREATE_FAILED", error);
@@ -497,7 +570,14 @@ export function attachNodeGateway(app: FastifyInstance) {
           }
 
           const { guildId, channelId } = conn.voice;
-          await connectTransport(guildId, channelId, conn.userId, transportId, dtlsParameters);
+          await connectTransport(
+            guildId,
+            channelId,
+            conn.userId,
+            transportId,
+            dtlsParameters,
+            conn.connId,
+          );
           sendDispatch(conn, "VOICE_TRANSPORT_CONNECTED", { transportId, guildId, channelId, requestId });
         } catch (error) {
           sendVoiceError(conn, "VOICE_TRANSPORT_CONNECT_FAILED", error);
@@ -523,7 +603,13 @@ export function attachNodeGateway(app: FastifyInstance) {
           }
 
           const { guildId, channelId } = conn.voice;
-          const result = await restartIce(guildId, channelId, conn.userId, transportId);
+          const result = await restartIce(
+            guildId,
+            channelId,
+            conn.userId,
+            transportId,
+            conn.connId,
+          );
           sendDispatch(conn, "VOICE_ICE_RESTARTED", {
             guildId,
             channelId,
@@ -566,7 +652,15 @@ export function attachNodeGateway(app: FastifyInstance) {
             return;
           }
 
-          const result = await produce(guildId, channelId, conn.userId, transportId, kind, rtpParameters);
+          const result = await produce(
+            guildId,
+            channelId,
+            conn.userId,
+            transportId,
+            kind,
+            rtpParameters,
+            conn.connId,
+          );
           sendDispatch(conn, "VOICE_PRODUCED", { ...result, userId: conn.userId, guildId, channelId, requestId });
           broadcastVoiceChannel(guildId, channelId, "VOICE_NEW_PRODUCER", {
             guildId,
@@ -606,7 +700,8 @@ export function attachNodeGateway(app: FastifyInstance) {
             conn.userId,
             transportId,
             producerId,
-            rtpCapabilities
+            rtpCapabilities,
+            conn.connId,
           );
 
           sendDispatch(conn, "VOICE_CONSUMED", { ...data, guildId: conn.voice.guildId, channelId: conn.voice.channelId, requestId });

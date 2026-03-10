@@ -10,6 +10,7 @@ type Room = {
 
 type Peer = {
   userId: string;
+  sessionId: string;
   transports: Map<string, mediasoup.types.WebRtcTransport>;
   producers: Map<string, mediasoup.types.Producer>;
   consumers: Map<string, mediasoup.types.Consumer>;
@@ -64,6 +65,43 @@ function key(guildId: string, channelId: string): RoomKey {
   return `${guildId}:${channelId}`;
 }
 
+function createPeer(userId: string, sessionId: string): Peer {
+  return {
+    userId,
+    sessionId,
+    transports: new Map(),
+    producers: new Map(),
+    consumers: new Map()
+  };
+}
+
+function closePeerResources(peer: Peer): string[] {
+  const closedProducerIds = [...peer.producers.keys()];
+
+  for (const producer of peer.producers.values()) {
+    try { producer.close(); } catch {}
+  }
+  peer.producers.clear();
+
+  for (const consumer of peer.consumers.values()) {
+    try { consumer.close(); } catch {}
+  }
+  peer.consumers.clear();
+
+  for (const transport of peer.transports.values()) {
+    try { transport.close(); } catch {}
+  }
+  peer.transports.clear();
+
+  return closedProducerIds;
+}
+
+function maybeCloseRoom(roomKey: RoomKey, room: Room) {
+  if (room.peers.size !== 0) return;
+  try { room.router.close(); } catch {}
+  rooms.delete(roomKey);
+}
+
 async function getOrCreateRoom(guildId: string, channelId: string) {
   if (!worker) throw new Error("MEDIASOUP_NOT_INIT");
   const k = key(guildId, channelId);
@@ -97,27 +135,49 @@ export async function getRouterRtpCapabilities(guildId: string, channelId: strin
   return room.router.rtpCapabilities;
 }
 
-export async function ensurePeer(guildId: string, channelId: string, userId: string) {
+async function getPeerForSession(
+  guildId: string,
+  channelId: string,
+  userId: string,
+  sessionId?: string,
+) {
   const room = await getOrCreateRoom(guildId, channelId);
-  if (!room.peers.has(userId)) {
-    room.peers.set(userId, {
-      userId,
-      transports: new Map(),
-      producers: new Map(),
-      consumers: new Map()
-    });
+  const peer = room.peers.get(userId);
+  if (!peer) throw new Error("PEER_NOT_FOUND");
+  if (sessionId && peer.sessionId && peer.sessionId !== sessionId) {
+    throw new Error("VOICE_SESSION_STALE");
   }
-  return room.peers.get(userId)!;
+  return { room, peer };
+}
+
+export async function replacePeerSession(
+  guildId: string,
+  channelId: string,
+  userId: string,
+  sessionId: string,
+) {
+  const room = await getOrCreateRoom(guildId, channelId);
+  const existing = room.peers.get(userId);
+  if (existing?.sessionId === sessionId) return [];
+
+  const closedProducerIds = existing ? closePeerResources(existing) : [];
+  room.peers.set(userId, createPeer(userId, sessionId));
+  return closedProducerIds;
 }
 
 export async function createWebRtcTransport(
   guildId: string,
   channelId: string,
   userId: string,
+  sessionId: string,
   direction?: "send" | "recv",
 ) {
-  const room = await getOrCreateRoom(guildId, channelId);
-  const peer = await ensurePeer(guildId, channelId, userId);
+  const { room, peer } = await getPeerForSession(
+    guildId,
+    channelId,
+    userId,
+    sessionId,
+  );
 
   const transport = await room.router.createWebRtcTransport({
     listenIps: [
@@ -151,8 +211,20 @@ export async function createWebRtcTransport(
   };
 }
 
-export async function connectTransport(guildId: string, channelId: string, userId: string, transportId: string, dtlsParameters: any) {
-  const peer = await ensurePeer(guildId, channelId, userId);
+export async function connectTransport(
+  guildId: string,
+  channelId: string,
+  userId: string,
+  transportId: string,
+  dtlsParameters: any,
+  sessionId?: string,
+) {
+  const { peer } = await getPeerForSession(
+    guildId,
+    channelId,
+    userId,
+    sessionId,
+  );
   const transport = peer.transports.get(transportId);
   if (!transport) throw new Error("TRANSPORT_NOT_FOUND");
   await transport.connect({ dtlsParameters });
@@ -163,16 +235,27 @@ export async function restartIce(
   channelId: string,
   userId: string,
   transportId: string,
+  sessionId?: string,
 ) {
-  const peer = await ensurePeer(guildId, channelId, userId);
+  const { peer } = await getPeerForSession(
+    guildId,
+    channelId,
+    userId,
+    sessionId,
+  );
   const transport = peer.transports.get(transportId);
   if (!transport) throw new Error("TRANSPORT_NOT_FOUND");
   const iceParameters = await transport.restartIce();
   return { transportId, iceParameters };
 }
 
-export async function produce(guildId: string, channelId: string, userId: string, transportId: string, kind: "audio" | "video", rtpParameters: any) {
-  const peer = await ensurePeer(guildId, channelId, userId);
+export async function produce(guildId: string, channelId: string, userId: string, transportId: string, kind: "audio" | "video", rtpParameters: any, sessionId?: string) {
+  const { peer } = await getPeerForSession(
+    guildId,
+    channelId,
+    userId,
+    sessionId,
+  );
   const transport = peer.transports.get(transportId);
   if (!transport) throw new Error("TRANSPORT_NOT_FOUND");
 
@@ -194,10 +277,16 @@ export async function consume(
   userId: string,
   transportId: string,
   producerId: string,
-  rtpCapabilities: any
+  rtpCapabilities: any,
+  sessionId?: string,
 ) {
   const room = await getOrCreateRoom(guildId, channelId);
-  const peer = await ensurePeer(guildId, channelId, userId);
+  const { peer } = await getPeerForSession(
+    guildId,
+    channelId,
+    userId,
+    sessionId,
+  );
   const transport = peer.transports.get(transportId);
   if (!transport) throw new Error("TRANSPORT_NOT_FOUND");
 
@@ -252,37 +341,24 @@ export function closeProducer(guildId: string, channelId: string, userId: string
   return true;
 }
 
-export function closePeer(guildId: string, channelId: string, userId: string): string[] {
+export function closePeer(
+  guildId: string,
+  channelId: string,
+  userId: string,
+  sessionId?: string,
+): string[] {
   const roomKey = key(guildId, channelId);
   const room = rooms.get(roomKey);
   if (!room) return [];
 
   const peer = room.peers.get(userId);
   if (!peer) return [];
+  if (sessionId && peer.sessionId && peer.sessionId !== sessionId) return [];
 
-  const closedProducerIds = [...peer.producers.keys()];
-
-  for (const producer of peer.producers.values()) {
-    try { producer.close(); } catch {}
-  }
-  peer.producers.clear();
-
-  for (const consumer of peer.consumers.values()) {
-    try { consumer.close(); } catch {}
-  }
-  peer.consumers.clear();
-
-  for (const transport of peer.transports.values()) {
-    try { transport.close(); } catch {}
-  }
-  peer.transports.clear();
+  const closedProducerIds = closePeerResources(peer);
 
   room.peers.delete(userId);
-
-  if (room.peers.size === 0) {
-    try { room.router.close(); } catch {}
-    rooms.delete(roomKey);
-  }
+  maybeCloseRoom(roomKey, room);
 
   return closedProducerIds;
 }
