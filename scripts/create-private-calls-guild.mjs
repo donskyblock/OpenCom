@@ -20,13 +20,11 @@
  *   CORE_ISSUER                  JWT issuer string (e.g. https://opencom.online)
  *   CORE_NODE_SYNC_SECRET        Shared secret for internal node-to-node calls
  *
- * On success the script prints:
- *   PRIVATE_CALLS_GUILD_ID=<id>
- *
- * Add that line to your core .env file and restart the core server.
+ * On success the script updates PRIVATE_CALLS_GUILD_ID in the target env file
+ * and prints the final value it wrote.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SignJWT, importJWK } from "jose";
@@ -74,6 +72,43 @@ function loadEnvFile(filePath) {
       process.env[key] = value;
     }
   }
+}
+
+function upsertEnvFileValue(filePath, key, value) {
+  let raw;
+  try {
+    raw = readFileSync(filePath, "utf8");
+  } catch (err) {
+    throw new Error(`Could not read env file at ${filePath}: ${err.message}`);
+  }
+
+  const lines = raw.split(/\r?\n/);
+  const keyPattern = new RegExp(`^\\s*${key}=`);
+  let replaced = false;
+  const nextLines = [];
+
+  for (const line of lines) {
+    if (!keyPattern.test(line)) {
+      nextLines.push(line);
+      continue;
+    }
+    if (!replaced) {
+      nextLines.push(`${key}=${value}`);
+      replaced = true;
+    }
+  }
+
+  if (!replaced) {
+    while (nextLines.length > 0 && nextLines[nextLines.length - 1] === "") {
+      nextLines.pop();
+    }
+    if (nextLines.length > 0) nextLines.push("");
+    nextLines.push(`${key}=${value}`);
+  }
+
+  writeFileSync(filePath, `${nextLines.join("\n")}\n`, "utf8");
+  process.env[key] = value;
+  return replaced ? "replaced" : "added";
 }
 
 console.log(`Loading environment from: ${envFilePath}`);
@@ -247,11 +282,30 @@ async function main() {
 
   // ── Done ──────────────────────────────────────────────────────────────────
 
-  console.log("\n✅  Done!  Add the following line to your backend/.env:\n");
-  console.log(`   PRIVATE_CALLS_GUILD_ID=${guildId}`);
-  console.log(
-    "\nThen restart the core server.  No server-node restart is needed.",
-  );
+  let envUpdateResult = null;
+  try {
+    envUpdateResult = upsertEnvFileValue(
+      envFilePath,
+      "PRIVATE_CALLS_GUILD_ID",
+      guildId,
+    );
+  } catch (error) {
+    console.warn(
+      "\n⚠️   Guild created, but the env file could not be updated automatically:",
+    );
+    console.warn(`    ${error.message ?? error}`);
+  }
+
+  console.log("\n✅  Done!");
+  if (envUpdateResult) {
+    console.log(
+      `   ${envUpdateResult === "replaced" ? "Updated" : "Added"} PRIVATE_CALLS_GUILD_ID in ${envFilePath}`,
+    );
+  } else {
+    console.log(`   Add this line to ${envFilePath}:`);
+    console.log(`   PRIVATE_CALLS_GUILD_ID=${guildId}`);
+  }
+  console.log("\nThen restart the core server.  No server-node restart is needed.");
   console.log();
 }
 

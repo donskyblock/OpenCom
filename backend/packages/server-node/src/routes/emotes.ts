@@ -3,10 +3,52 @@ import { z } from "zod";
 import { ulidLike } from "@ods/shared/ids.js";
 import { q } from "../db.js";
 import { requireGuildMember } from "../auth/requireGuildMember.js";
-import { requireManageChannels } from "../permissions/hierarchy.js";
+import { env } from "../env.js";
+import { resolveChannelPermissions } from "../permissions/resolve.js";
+import { Perm, has } from "../permissions/bits.js";
 
 const EmoteName = z.string().min(2).max(32).regex(/^[a-zA-Z0-9_+-]+$/);
-const EmoteImage = z.string().url().max(1000);
+const EmoteImage = z.string().trim().min(1).max(1000);
+
+function normalizeEmoteImageUrl(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  if (/^https?:\/\//i.test(raw)) {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("INVALID_EMOTE_IMAGE_URL");
+    }
+    return parsed.toString();
+  }
+
+  const coreBaseUrl = env.CORE_BASE_URL.replace(/\/$/, "");
+  if (raw.startsWith("/")) {
+    return `${coreBaseUrl}${raw}`;
+  }
+  if (raw.startsWith("users/")) {
+    return `${coreBaseUrl}/v1/profile-images/${raw}`;
+  }
+
+  throw new Error("INVALID_EMOTE_IMAGE_URL");
+}
+
+async function requireManageGuildAssets(guildId: string, channelIdForPerms: string, actorId: string, actorRoles: string[] = []) {
+  const perms = await resolveChannelPermissions({
+    guildId,
+    channelId: channelIdForPerms,
+    userId: actorId,
+    roles: actorRoles,
+  });
+
+  if (
+    !has(perms, Perm.ADMINISTRATOR) &&
+    !has(perms, Perm.MANAGE_CHANNELS) &&
+    !has(perms, Perm.MANAGE_ROLES)
+  ) {
+    throw new Error("MISSING_PERMS");
+  }
+}
 
 export async function emoteRoutes(app: FastifyInstance) {
   app.get("/v1/guilds/:guildId/emotes", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
@@ -43,9 +85,16 @@ export async function emoteRoutes(app: FastifyInstance) {
     if (!anyChannel.length) return rep.code(400).send({ error: "GUILD_HAS_NO_CHANNELS" });
 
     try {
-      await requireManageChannels({ guildId, channelIdForPerms: anyChannel[0].id, actorId: userId, actorRoles: req.auth.roles || [] });
+      await requireManageGuildAssets(guildId, anyChannel[0].id, userId, req.auth.roles || []);
     } catch {
       return rep.code(403).send({ error: "MISSING_PERMS" });
+    }
+
+    let normalizedImageUrl = "";
+    try {
+      normalizedImageUrl = normalizeEmoteImageUrl(body.imageUrl);
+    } catch {
+      return rep.code(400).send({ error: "INVALID_EMOTE_IMAGE_URL" });
     }
 
     const id = ulidLike();
@@ -57,7 +106,7 @@ export async function emoteRoutes(app: FastifyInstance) {
           id,
           guildId,
           name: body.name.toLowerCase(),
-          imageUrl: body.imageUrl,
+          imageUrl: normalizedImageUrl,
           createdBy: userId
         }
       );
@@ -88,7 +137,7 @@ export async function emoteRoutes(app: FastifyInstance) {
     if (!anyChannel.length) return rep.code(400).send({ error: "GUILD_HAS_NO_CHANNELS" });
 
     try {
-      await requireManageChannels({ guildId, channelIdForPerms: anyChannel[0].id, actorId: userId, actorRoles: req.auth.roles || [] });
+      await requireManageGuildAssets(guildId, anyChannel[0].id, userId, req.auth.roles || []);
     } catch {
       return rep.code(403).send({ error: "MISSING_PERMS" });
     }

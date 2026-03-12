@@ -3,8 +3,13 @@ import { z } from "zod";
 import { q } from "../db.js";
 import { parseBody } from "../validation.js";
 import { getActiveManualBoostGrant, getBoostTrialWindow, reconcileBoostBadge } from "../boost.js";
-import { buildOfficialBadgeDetail, ensureSocialDmThread, getOfficialAccount, isOfficialAccountName, isOfficialBadgeId } from "../officialAccount.js";
-import { ulidLike } from "@ods/shared/ids.js";
+import { buildOfficialBadgeDetail, getOfficialAccount, isOfficialAccountName, isOfficialBadgeId } from "../officialAccount.js";
+import {
+  OFFICIAL_MESSAGE_MAX_LENGTH,
+  getNewUserOfficialMessageConfig,
+  saveNewUserOfficialMessageConfig,
+  sendOfficialMessageToUser,
+} from "../officialMessages.js";
 import {
   PLATFORM_PANEL_PERMISSIONS,
   getLegacyPlatformRole,
@@ -23,6 +28,10 @@ const BOOST_GRANT_TYPE = z.enum(["permanent", "temporary"]);
 const BOOST_TRIAL_WINDOW_BODY = z.object({
   startsAt: z.string().datetime().nullable(),
   endsAt: z.string().datetime().nullable()
+});
+const OFFICIAL_WELCOME_MESSAGE_BODY = z.object({
+  enabled: z.boolean(),
+  content: z.string().max(OFFICIAL_MESSAGE_MAX_LENGTH),
 });
 type BroadcastToUser = (targetUserId: string, t: string, d: any) => Promise<void>;
 
@@ -521,6 +530,7 @@ export async function adminRoutes(app: FastifyInstance, broadcastToUser?: Broadc
     }
 
     const officialAccount = await getOfficialAccount();
+    const newUserWelcomeMessage = await getNewUserOfficialMessageConfig();
     const totalReachableRows = await q<{ count: number }>(
       `SELECT COUNT(*) AS count
        FROM users u
@@ -542,7 +552,38 @@ export async function adminRoutes(app: FastifyInstance, broadcastToUser?: Broadc
             isNoReply: true
           }
         : null,
-      reachableUserCount: Number(totalReachableRows[0]?.count || 0)
+      reachableUserCount: Number(totalReachableRows[0]?.count || 0),
+      newUserWelcomeMessage: {
+        enabled: newUserWelcomeMessage.enabled,
+        content: newUserWelcomeMessage.content,
+        active:
+          newUserWelcomeMessage.enabled &&
+          !!newUserWelcomeMessage.content.trim() &&
+          !!officialAccount,
+      },
+    };
+  });
+
+  app.put("/v1/admin/official-messages/welcome", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    try {
+      await requirePanelPermission(req, "send_official_messages");
+    } catch {
+      return rep.code(403).send({ error: "FORBIDDEN" });
+    }
+
+    const body = parseBody(OFFICIAL_WELCOME_MESSAGE_BODY, req.body);
+    if (body.enabled && !body.content.trim()) {
+      return rep.code(400).send({ error: "WELCOME_MESSAGE_REQUIRED" });
+    }
+
+    const saved = await saveNewUserOfficialMessageConfig({
+      enabled: body.enabled,
+      content: body.content,
+    });
+
+    return {
+      ok: true,
+      newUserWelcomeMessage: saved,
     };
   });
 
@@ -605,50 +646,24 @@ export async function adminRoutes(app: FastifyInstance, broadcastToUser?: Broadc
 
     if (!recipients.length) return rep.code(400).send({ error: "NO_ELIGIBLE_RECIPIENTS" });
 
-    const senderBadgeDetails = [buildOfficialBadgeDetail()];
-    const senderName = officialAccount.display_name || officialAccount.username;
     const summaryRecipients: Array<{ id: string; username: string; displayName: string | null; threadId: string }> = [];
 
     for (const recipient of recipients) {
-      const threadId = await ensureSocialDmThread(officialAccount.id, recipient.id);
-      const messageId = ulidLike();
-      await q(
-        `INSERT INTO social_dm_messages (id,thread_id,sender_user_id,content)
-         VALUES (:id,:threadId,:senderId,:content)`,
-        {
-          id: messageId,
-          threadId,
-          senderId: officialAccount.id,
-          content: body.content
-        }
-      );
-      await q(`UPDATE social_dm_threads SET last_message_at=NOW() WHERE id=:threadId`, { threadId });
+      const sent = await sendOfficialMessageToUser(recipient.id, body.content, {
+        officialAccount,
+        broadcastToUser,
+      });
+      if (!sent) {
+        skippedUserIds.push(recipient.id);
+        continue;
+      }
 
       if (summaryRecipients.length < 50) {
         summaryRecipients.push({
           id: recipient.id,
           username: recipient.username,
           displayName: recipient.display_name,
-          threadId
-        });
-      }
-
-      if (broadcastToUser) {
-        const createdAt = new Date().toISOString();
-        await broadcastToUser(recipient.id, "SOCIAL_DM_MESSAGE_CREATE", {
-          threadId,
-          message: {
-            id: messageId,
-            authorId: officialAccount.id,
-            author: senderName,
-            pfp_url: officialAccount.pfp_url ?? null,
-            content: body.content,
-            createdAt,
-            attachments: [],
-            badgeDetails: senderBadgeDetails,
-            isOfficial: true,
-            isNoReply: true
-          }
+          threadId: sent.threadId
         });
       }
     }

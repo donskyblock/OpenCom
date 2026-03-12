@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import { parseBody } from "../validation.js";
 import { env } from "../env.js";
 import { sendPasswordResetEmail, sendSigninEmail, sendVerificationEmail } from "../mail.js";
+import { getNewUserOfficialMessageConfig, sendOfficialMessageToUser } from "../officialMessages.js";
 import { isReservedUsername, isUsernameTaken, normalizeUsername } from "../usernames.js";
 
 const Register = z.object({
@@ -231,6 +232,18 @@ export async function authRoutes(app: FastifyInstance) {
       await q(`INSERT INTO platform_admins (user_id,added_by) VALUES (:id,:id) ON DUPLICATE KEY UPDATE user_id=user_id`, { id });
       await q(`INSERT INTO user_badges (user_id,badge) VALUES (:id,'PLATFORM_FOUNDER') ON DUPLICATE KEY UPDATE user_id=user_id`, { id });
       await q(`INSERT INTO user_badges (user_id,badge) VALUES (:id,'PLATFORM_ADMIN') ON DUPLICATE KEY UPDATE user_id=user_id`, { id });
+    }
+
+    try {
+      const newUserWelcomeMessage = await getNewUserOfficialMessageConfig();
+      if (newUserWelcomeMessage.enabled && newUserWelcomeMessage.content.trim()) {
+        await sendOfficialMessageToUser(id, newUserWelcomeMessage.content);
+      }
+    } catch (error) {
+      app.log.warn(
+        { err: error, userId: id },
+        "Failed to send configured official welcome message after registration",
+      );
     }
 
     return rep.send({

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { resolveStaticPageHref } from "../lib/routing";
+import { BlogMarkdown } from "../lib/blogMarkdown";
 
 const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://api.opencom.online";
 
@@ -161,6 +162,9 @@ export function AdminApp() {
   const [officialQueuedUsers, setOfficialQueuedUsers] = useState([]);
   const [officialSending, setOfficialSending] = useState(false);
   const [officialReport, setOfficialReport] = useState(null);
+  const [officialWelcomeEnabled, setOfficialWelcomeEnabled] = useState(false);
+  const [officialWelcomeMessage, setOfficialWelcomeMessage] = useState("");
+  const [officialWelcomeSaving, setOfficialWelcomeSaving] = useState(false);
   const [staffAssignments, setStaffAssignments] = useState([]);
   const [staffLoading, setStaffLoading] = useState(false);
   const [staffBusy, setStaffBusy] = useState(false);
@@ -303,6 +307,8 @@ export function AdminApp() {
     try {
       const data = await api("/v1/admin/official-messages/status", token, panelPassword);
       setOfficialStatus(data);
+      setOfficialWelcomeEnabled(data?.newUserWelcomeMessage?.enabled === true);
+      setOfficialWelcomeMessage(data?.newUserWelcomeMessage?.content || "");
     } catch (e) {
       setOfficialStatus(null);
       showStatus(`Official messaging status failed: ${e.message}`, "error");
@@ -851,6 +857,42 @@ export function AdminApp() {
     }
   }
 
+  function resetOfficialWelcomeDraft() {
+    setOfficialWelcomeEnabled(officialStatus?.newUserWelcomeMessage?.enabled === true);
+    setOfficialWelcomeMessage(officialStatus?.newUserWelcomeMessage?.content || "");
+  }
+
+  async function saveOfficialWelcomeMessage() {
+    if (officialWelcomeEnabled && !officialWelcomeMessage.trim()) {
+      showStatus("Write the welcome message before enabling it.", "info");
+      return;
+    }
+
+    setOfficialWelcomeSaving(true);
+    try {
+      const data = await api("/v1/admin/official-messages/welcome", token, panelPassword, {
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: officialWelcomeEnabled,
+          content: officialWelcomeMessage,
+        }),
+      });
+      setOfficialWelcomeEnabled(data?.newUserWelcomeMessage?.enabled === true);
+      setOfficialWelcomeMessage(data?.newUserWelcomeMessage?.content || "");
+      await loadOfficialStatus();
+      showStatus(
+        officialWelcomeEnabled
+          ? "New user welcome message saved."
+          : "New user welcome message disabled.",
+        "success",
+      );
+    } catch (e) {
+      showStatus(e.message || "Failed to save new user welcome message.", "error");
+    } finally {
+      setOfficialWelcomeSaving(false);
+    }
+  }
+
   const isOwner = adminStatus?.isPlatformOwner === true;
   const tabs = [
     { id: "overview", label: "Overview" },
@@ -1223,6 +1265,18 @@ export function AdminApp() {
                 <p><strong>{officialQueuedUsers.length}</strong> selected user(s)</p>
                 <p className="text-dim">Use the Users tab to queue specific people, or switch the audience to Everyone.</p>
               </div>
+
+              <div className="admin-card">
+                <h3>New user welcome</h3>
+                <p><strong>{officialStatus?.newUserWelcomeMessage?.enabled ? "Enabled" : "Disabled"}</strong></p>
+                <p className="text-dim">
+                  {officialStatus?.newUserWelcomeMessage?.active
+                    ? "Future signups will receive this DM from the official account."
+                    : officialStatus?.newUserWelcomeMessage?.enabled
+                      ? "Saved, but it will only send when the official account exists and the message is not blank."
+                      : "No automatic DM is sent after signup."}
+                </p>
+              </div>
             </div>
 
             <div className="admin-official-grid">
@@ -1266,6 +1320,44 @@ export function AdminApp() {
                   </button>
                   <button type="button" className="btn-sm" onClick={loadOfficialStatus}>
                     Refresh status
+                  </button>
+                </div>
+              </div>
+
+              <div className="admin-card">
+                <h3>New user welcome DM</h3>
+                <label className="admin-setting-check">
+                  <input
+                    type="checkbox"
+                    checked={officialWelcomeEnabled}
+                    onChange={(e) => setOfficialWelcomeEnabled(e.target.checked)}
+                  />
+                  <span>Automatically DM each newly created account from `opencom`.</span>
+                </label>
+
+                <textarea
+                  className="admin-official-textarea"
+                  placeholder="Write the DM every new user should receive after signup…"
+                  value={officialWelcomeMessage}
+                  onChange={(e) => setOfficialWelcomeMessage(e.target.value)}
+                />
+
+                <p className="text-dim">This affects future registrations only. Existing users are not backfilled.</p>
+
+                <div className="admin-badge-actions">
+                  <button
+                    type="button"
+                    onClick={saveOfficialWelcomeMessage}
+                    disabled={officialWelcomeSaving}
+                  >
+                    {officialWelcomeSaving ? "Saving…" : "Save welcome message"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-sm"
+                    onClick={resetOfficialWelcomeDraft}
+                  >
+                    Reset
                   </button>
                 </div>
               </div>
@@ -1537,7 +1629,11 @@ export function AdminApp() {
         {tab === "blogs" && (
           <section className="admin-section">
             <h2>Blog creator portal</h2>
-            <p className="admin-hint">Draft posts here, then publish them straight to `opencom.online/blogs/{blog-name}`.</p>
+            <p className="admin-hint">
+              Draft posts here, then publish them straight to{" "}
+              <code>opencom.online/blogs/your-post-slug</code>. Post bodies use
+              Markdown.
+            </p>
 
             <div className="admin-blog-layout">
               <div className="admin-card">
@@ -1637,12 +1733,24 @@ export function AdminApp() {
 
                 <textarea
                   className="admin-blog-editor"
-                  placeholder="Write the post body here. Basic headings, bullet lists, quotes, and code fences are supported."
+                  placeholder="Write the post body here in Markdown. Headings, links, lists, quotes, images, and code fences are supported."
                   value={blogForm.content}
                   onChange={(e) =>
                     setBlogForm((current) => ({ ...current, content: e.target.value }))
                   }
                 />
+
+                <div className="admin-blog-preview">
+                  <div className="admin-blog-preview-header">
+                    <strong>Markdown preview</strong>
+                    <span>Rendered the same way as the public blog post body.</span>
+                  </div>
+                  <BlogMarkdown
+                    content={blogForm.content}
+                    className="blog-post-content admin-blog-preview-content"
+                    emptyMessage="Nothing to preview yet."
+                  />
+                </div>
 
                 <div className="admin-badge-actions">
                   <button type="button" onClick={saveBlogPost} disabled={blogBusy}>

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { BlogMarkdown } from "../lib/blogMarkdown";
 
 function formatBlogDate(value) {
   const date = new Date(value || "");
@@ -8,91 +9,6 @@ function formatBlogDate(value) {
     month: "long",
     year: "numeric",
   }).format(date);
-}
-
-function parseBlogBlocks(content = "") {
-  return String(content || "")
-    .replace(/\r\n/g, "\n")
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .filter(Boolean)
-    .map((block, index) => {
-      if (/^```[\s\S]*```$/.test(block)) {
-        return {
-          id: `code-${index}`,
-          type: "code",
-          value: block.replace(/^```/, "").replace(/```$/, "").trim(),
-        };
-      }
-
-      const lines = block.split("\n").map((line) => line.trimEnd());
-      if (lines.every((line) => /^- /.test(line))) {
-        return {
-          id: `list-${index}`,
-          type: "list",
-          items: lines.map((line) => line.replace(/^- /, "").trim()),
-        };
-      }
-
-      if (/^### /.test(block)) {
-        return {
-          id: `h3-${index}`,
-          type: "heading3",
-          value: block.replace(/^### /, "").trim(),
-        };
-      }
-
-      if (/^## /.test(block)) {
-        return {
-          id: `h2-${index}`,
-          type: "heading2",
-          value: block.replace(/^## /, "").trim(),
-        };
-      }
-
-      if (/^> /.test(block)) {
-        return {
-          id: `quote-${index}`,
-          type: "quote",
-          value: block
-            .split("\n")
-            .map((line) => line.replace(/^> /, "").trim())
-            .join(" "),
-        };
-      }
-
-      return {
-        id: `p-${index}`,
-        type: "paragraph",
-        lines,
-      };
-    });
-}
-
-function renderBlock(block) {
-  if (block.type === "heading2") return <h2 key={block.id}>{block.value}</h2>;
-  if (block.type === "heading3") return <h3 key={block.id}>{block.value}</h3>;
-  if (block.type === "quote") return <blockquote key={block.id}>{block.value}</blockquote>;
-  if (block.type === "code") return <pre key={block.id}><code>{block.value}</code></pre>;
-  if (block.type === "list") {
-    return (
-      <ul key={block.id}>
-        {block.items.map((item, index) => (
-          <li key={`${block.id}-${index}`}>{item}</li>
-        ))}
-      </ul>
-    );
-  }
-  return (
-    <p key={block.id}>
-      {block.lines.map((line, index) => (
-        <span key={`${block.id}-${index}`}>
-          {index > 0 && <br />}
-          {line}
-        </span>
-      ))}
-    </p>
-  );
 }
 
 export function BlogPostPage({
@@ -137,8 +53,6 @@ export function BlogPostPage({
       cancelled = true;
     };
   }, [coreApi, slug]);
-
-  const blocks = useMemo(() => parseBlogBlocks(post?.content || ""), [post]);
 
   return (
     <div className="blogs-shell">
@@ -188,9 +102,7 @@ export function BlogPostPage({
             </div>
             <h1>{post.title}</h1>
             <p className="blog-post-summary">{post.summary}</p>
-            <div className="blog-post-content">
-              {blocks.map((block) => renderBlock(block))}
-            </div>
+            <BlogMarkdown content={post.content || ""} className="blog-post-content" />
           </article>
         )}
       </main>

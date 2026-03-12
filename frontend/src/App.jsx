@@ -9,6 +9,7 @@ import { AuthShell } from "./components/AuthShell";
 import { TermsPage } from "./components/TermsPage";
 import { BlogsPage } from "./components/BlogsPage";
 import { BlogPostPage } from "./components/BlogPostPage";
+import { parseBlogMarkdown } from "./lib/blogMarkdown";
 import {
   IncomingCallToast,
   ActiveCallBar,
@@ -1248,6 +1249,14 @@ function getSlashQuery(value = "") {
   return withoutPrefix.toLowerCase();
 }
 
+function getEmoteQuery(value = "") {
+  const match = String(value || "").match(/(?:^|\s):([a-zA-Z0-9_+-]*)$/);
+  if (!match) return null;
+  const query = match[1] || "";
+  const start = value.length - query.length - 1;
+  return { query: query.toLowerCase(), start };
+}
+
 function splitSlashInput(value = "") {
   const trimmed = String(value || "").trim();
   const withoutPrefix = trimmed.replace(/^\//, "").trim();
@@ -1926,6 +1935,7 @@ export function App() {
   const [clientExtensionLoadState, setClientExtensionLoadState] = useState({});
   const [serverExtensionCommands, setServerExtensionCommands] = useState([]);
   const [slashSelectionIndex, setSlashSelectionIndex] = useState(0);
+  const [emoteSelectionIndex, setEmoteSelectionIndex] = useState(0);
 
   function applyNoiseSuppressionPreset(nextPresetRaw) {
     const nextPreset = normalizeNoiseSuppressionPresetForUi(nextPresetRaw);
@@ -2548,6 +2558,10 @@ export function App() {
   useEffect(() => {
     setSlashSelectionIndex(0);
   }, [messageText, serverExtensionCommands]);
+
+  useEffect(() => {
+    setEmoteSelectionIndex(0);
+  }, [messageText, guildState?.emotes]);
 
   async function loadClientExtensionSource({
     extensionId,
@@ -3182,6 +3196,51 @@ export function App() {
       .slice(0, 10);
   }, [slashQuery, serverExtensionCommands]);
   const showingSlash = slashQuery != null;
+
+  const emoteQuery = useMemo(() => {
+    if (navMode !== "servers") return null;
+    return getEmoteQuery(messageText);
+  }, [messageText, navMode]);
+
+  const emoteSuggestions = useMemo(() => {
+    if (emoteQuery == null) return [];
+
+    const catalog = [];
+    const seenNames = new Set();
+
+    for (const emote of guildState?.emotes || []) {
+      const name = String(emote?.name || "").trim().toLowerCase();
+      if (!name || seenNames.has(name)) continue;
+      seenNames.add(name);
+      catalog.push({
+        id: emote.id || `custom:${name}`,
+        name,
+        type: "custom",
+        imageUrl: emote.imageUrl || emote.image_url || "",
+        value: "",
+      });
+    }
+
+    for (const [name, value] of Object.entries(BUILTIN_EMOTES)) {
+      if (seenNames.has(name)) continue;
+      seenNames.add(name);
+      catalog.push({
+        id: `builtin:${name}`,
+        name,
+        type: "builtin",
+        imageUrl: "",
+        value,
+      });
+    }
+
+    if (!emoteQuery.query) return catalog.slice(0, 10);
+
+    return catalog
+      .filter((emote) => emote.name.includes(emoteQuery.query))
+      .slice(0, 10);
+  }, [emoteQuery, guildState?.emotes]);
+
+  const showingEmoteSuggestions = emoteQuery != null;
 
   const memberByMentionToken = useMemo(() => {
     const map = new Map();
@@ -6505,6 +6564,27 @@ export function App() {
     });
   }
 
+  function applyEmoteSuggestion(emoteName) {
+    const normalizedName = String(emoteName || "").trim().toLowerCase();
+    if (!normalizedName) return;
+    const emote = getEmoteQuery(messageText);
+    if (!emote) {
+      insertEmoteToken(normalizedName);
+      return;
+    }
+
+    const prefix = messageText.slice(0, emote.start);
+    const nextText = `${prefix}:${normalizedName}: `;
+    setMessageText(nextText);
+    setShowEmotePicker(false);
+    window.requestAnimationFrame(() => {
+      const input = composerInputRef.current;
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(nextText.length, nextText.length);
+    });
+  }
+
   async function executeSlashCommand(rawInput) {
     const { commandToken, argText } = splitSlashInput(rawInput);
     if (!commandToken) return false;
@@ -6972,14 +7052,16 @@ export function App() {
 
   async function sendMessage() {
     if (!activeServer || !activeChannelId) return;
-    if (!messageText.trim() && pendingAttachments.length === 0) return;
+    const draftContent = normalizeComposerDraft(messageText);
+    const hasTextContent = draftContent.trim().length > 0;
+    if (!hasTextContent && pendingAttachments.length === 0) return;
 
-    if (messageText.trimStart().startsWith("/")) {
-      await executeSlashCommand(messageText);
+    if (draftContent.trimStart().startsWith("/")) {
+      await executeSlashCommand(draftContent);
       return;
     }
 
-    const content = `${replyTarget ? `> replying to ${replyTarget.author}: ${replyTarget.content}\n` : ""}${messageText.trim()}`;
+    const content = `${replyTarget ? `> replying to ${replyTarget.author}: ${replyTarget.content}\n` : ""}${hasTextContent ? draftContent : ""}`;
 
     try {
       setMessageText("");
@@ -7027,19 +7109,21 @@ export function App() {
       setPendingAttachments([]);
       if (attachmentInputRef.current) attachmentInputRef.current.value = "";
     } catch (error) {
-      setMessageText(content);
+      setMessageText(draftContent);
       setStatus(`Send failed: ${error.message}`);
     }
   }
   async function sendDm() {
-    if (!activeDm || (!dmText.trim() && pendingDmAttachments.length === 0))
+    const draftContent = normalizeComposerDraft(dmText);
+    const hasTextContent = draftContent.trim().length > 0;
+    if (!activeDm || (!hasTextContent && pendingDmAttachments.length === 0))
       return;
     if (activeDm.isNoReply) {
       setStatus("The OpenCom official account is no-reply.");
       return;
     }
 
-    const content = `${dmReplyTarget ? `> replying to ${dmReplyTarget.author}: ${dmReplyTarget.content}\n` : ""}${dmText.trim()}`;
+    const content = `${dmReplyTarget ? `> replying to ${dmReplyTarget.author}: ${dmReplyTarget.content}\n` : ""}${hasTextContent ? draftContent : ""}`;
     setDmText("");
 
     try {
@@ -7085,7 +7169,7 @@ export function App() {
       setPendingDmAttachments([]);
       if (dmAttachmentInputRef.current) dmAttachmentInputRef.current.value = "";
     } catch (error) {
-      setDmText(content);
+      setDmText(draftContent);
       setStatus(`DM send failed: ${error.message}`);
     }
   }
@@ -8466,6 +8550,11 @@ export function App() {
       !newServerEmoteUrl.trim()
     )
       return;
+    const normalizedImageUrl = normalizeImageUrlInput(newServerEmoteUrl);
+    if (!normalizedImageUrl) {
+      setStatus("Enter a valid emote image URL first.");
+      return;
+    }
     try {
       await nodeApi(
         activeServer.baseUrl,
@@ -8475,7 +8564,7 @@ export function App() {
           method: "POST",
           body: JSON.stringify({
             name: newServerEmoteName.trim().toLowerCase(),
-            imageUrl: newServerEmoteUrl.trim(),
+            imageUrl: normalizedImageUrl,
           }),
         },
       );
@@ -10616,14 +10705,17 @@ export function App() {
     composerInputRef.current?.focus();
   }
 
+  function normalizeComposerDraft(value = "") {
+    return String(value || "").replace(/\r\n?/g, "\n");
+  }
+
   function renderContentWithMentions(message) {
-    const content = message?.content || "";
-    const nodes = [];
+    const content = String(message?.content || "").replace(/\r\n?/g, "\n");
     const renderInlineMarkdown = (text, keyPrefix) => {
       if (!text) return [];
       const out = [];
       const inlineRegex =
-        /(\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]+)\)|https?:\/\/[^\s<>"'`]+|`([^`\n]+)`|\*\*([^*\n]+)\*\*|__([^_\n]+)__|~~([^~\n]+)~~|\*([^*\n]+)\*|_([^_\n]+)_|\n|:([a-zA-Z0-9_+-]{2,32}):)/g;
+        /@\{([^}\n]{1,64})\}|@([a-zA-Z0-9_.-]{2,64})|\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>"'`]+)|`([^`\n]+)`|\*\*([^*\n]+)\*\*|__([^_\n]+)__|~~([^~\n]+)~~|\*([^*\n]+)\*|_([^_\n]+)_|(\n)|:([a-zA-Z0-9_+-]{2,32}):/g;
       let cursorLocal = 0;
       let match = inlineRegex.exec(text);
       let localIndex = 0;
@@ -10640,17 +10732,69 @@ export function App() {
         }
 
         const full = match[0] || "";
-        const markdownLabel = match[2];
-        const markdownUrl = match[3];
-        const inlineCode = match[4];
-        const boldA = match[5];
-        const boldB = match[6];
-        const strike = match[7];
-        const italicA = match[8];
-        const italicB = match[9];
-        const emoteToken = match[10];
+        const bracedMention = match[1];
+        const simpleMention = match[2];
+        const markdownLabel = match[3];
+        const markdownUrl = match[4];
+        const rawUrl = match[5];
+        const inlineCode = match[6];
+        const boldA = match[7];
+        const boldB = match[8];
+        const strike = match[9];
+        const italicA = match[10];
+        const italicB = match[11];
+        const lineBreak = match[12];
+        const emoteToken = match[13];
 
-        if (markdownLabel && markdownUrl) {
+        if (bracedMention || simpleMention) {
+          const raw = (bracedMention || simpleMention || "").trim();
+          const prevChar = start > 0 ? text[start - 1] : "";
+          const mentionAtWordBoundary = start === 0 || /\s/.test(prevChar);
+
+          if (!mentionAtWordBoundary || !raw) {
+            out.push(
+              <span key={`${keyPrefix}-raw-mention-${localIndex}`}>{full}</span>,
+            );
+          } else if (raw.toLowerCase() === "everyone") {
+            out.push(
+              <span
+                key={`${keyPrefix}-everyone-${localIndex}`}
+                className="message-mention"
+              >
+                {full}
+              </span>,
+            );
+          } else {
+            const member = memberByMentionToken.get(raw.toLowerCase());
+            if (member) {
+              out.push(
+                <button
+                  key={`${keyPrefix}-mention-${localIndex}`}
+                  type="button"
+                  className="message-mention mention-click"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openMemberProfile(member, {
+                      x: event.clientX,
+                      y: event.clientY,
+                    });
+                  }}
+                >
+                  @{member.username || member.id}
+                </button>,
+              );
+            } else {
+              out.push(
+                <span
+                  key={`${keyPrefix}-unknown-mention-${localIndex}`}
+                  className="message-mention"
+                >
+                  {full}
+                </span>,
+              );
+            }
+          }
+        } else if (markdownLabel && markdownUrl) {
           out.push(
             <a
               key={`${keyPrefix}-md-link-${localIndex}`}
@@ -10664,15 +10808,15 @@ export function App() {
               )}
             </a>,
           );
-        } else if (/^https?:\/\//i.test(full)) {
+        } else if (rawUrl) {
           out.push(
             <a
               key={`${keyPrefix}-link-${localIndex}`}
-              href={full}
+              href={rawUrl}
               target="_blank"
               rel="noreferrer"
             >
-              {full}
+              {rawUrl}
             </a>,
           );
         } else if (inlineCode) {
@@ -10713,7 +10857,7 @@ export function App() {
               )}
             </em>,
           );
-        } else if (full === "\n") {
+        } else if (lineBreak) {
           out.push(<br key={`${keyPrefix}-br-${localIndex}`} />);
         } else if (emoteToken) {
           const token = String(emoteToken || "").toLowerCase();
@@ -10763,71 +10907,81 @@ export function App() {
       return out;
     };
 
-    const mentionRegex = /@\{([^}\n]{1,64})\}|@([a-zA-Z0-9_.-]{2,64})/g;
-    let cursor = 0;
+    const renderMarkdownBlock = (block, keyPrefix) => {
+      if (!block) return null;
 
-    for (const match of content.matchAll(mentionRegex)) {
-      const index = match.index ?? 0;
-      const raw = (match[1] || match[2] || "").trim();
-      const token = match[0];
-      const prevChar = index > 0 ? content[index - 1] : "";
-      const mentionAtWordBoundary = index === 0 || /\s/.test(prevChar);
+      if (block.type === "rule") {
+        return <hr key={`${keyPrefix}-rule`} className="message-rule" />;
+      }
 
-      if (!mentionAtWordBoundary || !raw) continue;
-
-      if (index > cursor) {
-        nodes.push(
-          ...renderInlineMarkdown(
-            content.slice(cursor, index),
-            `text-${cursor}`,
-          ),
+      if (block.type === "heading") {
+        const HeadingTag = `h${Math.min(Math.max(block.level || 1, 1), 6)}`;
+        return (
+          <HeadingTag
+            key={`${keyPrefix}-heading`}
+            className={`message-heading message-heading-${block.level || 1}`}
+          >
+            {renderInlineMarkdown(
+              block.value || "",
+              `${keyPrefix}-heading-inline`,
+            )}
+          </HeadingTag>
         );
       }
 
-      if (raw.toLowerCase() === "everyone") {
-        nodes.push(
-          <span key={`everyone-${index}`} className="message-mention">
-            {token}
-          </span>,
+      if (block.type === "code") {
+        return (
+          <pre key={`${keyPrefix}-code`} className="message-code-block">
+            <code>{block.value || ""}</code>
+          </pre>
         );
-      } else {
-        const member = memberByMentionToken.get(raw.toLowerCase());
-        if (member) {
-          nodes.push(
-            <button
-              key={`mention-${index}`}
-              type="button"
-              className="message-mention mention-click"
-              onClick={(event) => {
-                event.stopPropagation();
-                openMemberProfile(member, {
-                  x: event.clientX,
-                  y: event.clientY,
-                });
-              }}
-            >
-              @{member.username || member.id}
-            </button>,
-          );
-        } else {
-          nodes.push(
-            <span key={`unknown-${index}`} className="message-mention">
-              {token}
-            </span>,
-          );
-        }
       }
 
-      cursor = index + token.length;
-    }
+      if (block.type === "blockquote") {
+        return (
+          <blockquote key={`${keyPrefix}-quote`} className="message-quote">
+            {(block.blocks || []).map((child, childIndex) =>
+              renderMarkdownBlock(child, `${keyPrefix}-quote-${childIndex}`),
+            )}
+          </blockquote>
+        );
+      }
 
-    if (cursor < content.length) {
-      nodes.push(
-        ...renderInlineMarkdown(content.slice(cursor), `tail-${cursor}`),
+      if (block.type === "ordered-list" || block.type === "unordered-list") {
+        const ListTag = block.type === "ordered-list" ? "ol" : "ul";
+        return (
+          <ListTag key={`${keyPrefix}-list`} className="message-list">
+            {(block.items || []).map((item, itemIndex) => (
+              <li key={`${keyPrefix}-item-${itemIndex}`}>
+                {renderInlineMarkdown(
+                  item || "",
+                  `${keyPrefix}-item-inline-${itemIndex}`,
+                )}
+              </li>
+            ))}
+          </ListTag>
+        );
+      }
+
+      return (
+        <p key={`${keyPrefix}-paragraph`} className="message-paragraph">
+          {renderInlineMarkdown(
+            block.value || "",
+            `${keyPrefix}-paragraph-inline`,
+          )}
+        </p>
       );
-    }
+    };
 
-    return nodes.length ? nodes : content;
+    const blocks = parseBlogMarkdown(content);
+
+    return (
+      <div className="message-markdown">
+        {blocks.map((block, index) =>
+          renderMarkdownBlock(block, `message-block-${index}`),
+        )}
+      </div>
+    );
   }
 
   function normalizedLinkKey(value) {
@@ -12068,14 +12222,16 @@ export function App() {
                                     })
                                   }
                                 >
-                                  <p>
+                                  <div className="message-content-wrap">
                                     {activePinnedServerMessages.some(
                                       (item) => item.id === message.id,
-                                    )
-                                      ? "📌 "
-                                      : ""}
+                                    ) && (
+                                      <span className="message-pin-prefix">
+                                        📌 Pinned
+                                      </span>
+                                    )}
                                     {renderContentWithMentions(message)}
-                                  </p>
+                                  </div>
                                   {Array.isArray(message?.embeds) &&
                                     message.embeds.length > 0 && (
                                       <div className="message-embeds">
@@ -12234,7 +12390,35 @@ export function App() {
                       uploadAttachments(files, "clipboard").catch(() => {});
                     }}
                     placeholder={`Message #${activeChannel?.name || "channel"}`}
+                    title="Enter to send, Shift+Enter for a new line"
                     onKeyDown={(event) => {
+                      if (
+                        !showingSlash &&
+                        showingEmoteSuggestions &&
+                        event.key === "ArrowDown" &&
+                        emoteSuggestions.length > 0
+                      ) {
+                        event.preventDefault();
+                        setEmoteSelectionIndex(
+                          (current) =>
+                            (current + 1) % emoteSuggestions.length,
+                        );
+                        return;
+                      }
+                      if (
+                        !showingSlash &&
+                        showingEmoteSuggestions &&
+                        event.key === "ArrowUp" &&
+                        emoteSuggestions.length > 0
+                      ) {
+                        event.preventDefault();
+                        setEmoteSelectionIndex(
+                          (current) =>
+                            (current - 1 + emoteSuggestions.length) %
+                            emoteSuggestions.length,
+                        );
+                        return;
+                      }
                       if (
                         event.key === "ArrowDown" &&
                         slashCommandSuggestions.length > 0
@@ -12261,6 +12445,25 @@ export function App() {
                       if (event.key === "Escape" && showingSlash) {
                         event.preventDefault();
                         setMessageText("");
+                        return;
+                      }
+                      if (
+                        !showingSlash &&
+                        showingEmoteSuggestions &&
+                        (event.key === "Tab" ||
+                          (event.key === "Enter" && !event.shiftKey)) &&
+                        emoteSuggestions.length > 0
+                      ) {
+                        event.preventDefault();
+                        const selected =
+                          emoteSuggestions[
+                            Math.min(
+                              emoteSelectionIndex,
+                              emoteSuggestions.length - 1,
+                            )
+                          ] || emoteSuggestions[0];
+                        if (!selected) return;
+                        applyEmoteSuggestion(selected.name);
                         return;
                       }
                       if (
@@ -12331,7 +12534,54 @@ export function App() {
                       )}
                     </div>
                   )}
-                  {mentionSuggestions.length > 0 && !showingSlash && (
+                  {showingEmoteSuggestions && !showingSlash && (
+                    <div className="slash-command-suggestions">
+                      <div className="slash-command-header">
+                        EMOTES MATCHING :{(emoteQuery?.query || "").toUpperCase()}
+                      </div>
+                      {emoteSuggestions.length === 0 ? (
+                        <div className="slash-command-empty">
+                          No emotes found for this server.
+                        </div>
+                      ) : (
+                        emoteSuggestions.map((emote, index) => (
+                          <button
+                            key={emote.id}
+                            type="button"
+                            className={`slash-command-item ${index === emoteSelectionIndex ? "active" : ""}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              applyEmoteSuggestion(emote.name);
+                              setEmoteSelectionIndex(index);
+                            }}
+                          >
+                            <div className="emote-suggestion-row">
+                              {emote.type === "custom" ? (
+                                <img
+                                  className="message-custom-emote"
+                                  src={emote.imageUrl}
+                                  alt={`:${emote.name}:`}
+                                />
+                              ) : (
+                                <span className="emote-suggestion-glyph">
+                                  {emote.value}
+                                </span>
+                              )}
+                              <strong>:{emote.name}:</strong>
+                            </div>
+                            <span>
+                              {emote.type === "custom"
+                                ? "Custom"
+                                : "Built-in"}
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                  {mentionSuggestions.length > 0 &&
+                    !showingSlash &&
+                    !showingEmoteSuggestions && (
                     <div className="mention-suggestions">
                       {mentionSuggestions.map((name) => (
                         <button
@@ -12352,7 +12602,9 @@ export function App() {
                       ))}
                     </div>
                   )}
-                  {showEmotePicker && !showingSlash && (
+                  {showEmotePicker &&
+                    !showingSlash &&
+                    !showingEmoteSuggestions && (
                     <div className="emote-picker">
                       {Object.entries(BUILTIN_EMOTES).map(([name, value]) => (
                         <button
@@ -12700,14 +12952,16 @@ export function App() {
                                     callerName={group.author}
                                   />
                                 ) : (
-                                  <p>
+                                  <div className="message-content-wrap">
                                     {activePinnedDmMessages.some(
                                       (item) => item.id === message.id,
-                                    )
-                                      ? "📌 "
-                                      : ""}
+                                    ) && (
+                                      <span className="message-pin-prefix">
+                                        📌 Pinned
+                                      </span>
+                                    )}
                                     {renderContentWithMentions(message)}
-                                  </p>
+                                  </div>
                                 )}
                                 {derivedLinkEmbeds.length > 0 && (
                                   <div className="message-embeds">
@@ -12825,6 +13079,7 @@ export function App() {
                       ? "This official account does not accept replies"
                       : `Message ${activeDm?.name || "friend"}`
                   }
+                  title="Enter to send, Shift+Enter for a new line"
                   onPaste={(event) => {
                     const files = extractFilesFromClipboardData(
                       event.clipboardData,
