@@ -789,6 +789,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 640,
     backgroundColor: "#141621",
+    autoHideMenuBar: true,
     ...(fs.existsSync(LOCAL_ICON) ? { icon: LOCAL_ICON } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -799,6 +800,9 @@ function createWindow() {
       backgroundThrottling: false
     }
   });
+  if (process.platform !== "darwin") {
+    mainWindow.removeMenu();
+  }
 
   const desktopSearch = new URLSearchParams({
     desktop: "1",

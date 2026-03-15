@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { q } from "../db.js";
+import { pool, q } from "../db.js";
 
 export async function guildJoinRoutes(app: FastifyInstance) {
   app.post("/v1/guilds/:guildId/join", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
@@ -21,13 +21,13 @@ export async function guildJoinRoutes(app: FastifyInstance) {
     );
     if (ban.length) return rep.code(403).send({ error: "BANNED" });
 
-    await q(
-      `INSERT INTO guild_members (guild_id,user_id) VALUES (:guildId,:userId)
-       ON DUPLICATE KEY UPDATE guild_id=guild_id`,
+    const [insertResult] = await pool.execute(
+      `INSERT IGNORE INTO guild_members (guild_id,user_id) VALUES (:guildId,:userId)`,
       { guildId, userId }
     );
+    const joined = Number((insertResult as any)?.affectedRows || 0) > 0;
 
-    return rep.send({ ok: true });
+    return rep.send({ ok: true, joined });
   });
 
   app.post("/v1/guilds/:guildId/leave", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
