@@ -32,6 +32,23 @@ import { presenceUpsert } from "./presence.js";
 import { CallRoutes } from "./routes/PrivateCalls.js";
 const app = buildHttp();
 
+const missingPrivateCallConfig = [
+  ["OFFICIAL_NODE_BASE_URL", env.OFFICIAL_NODE_BASE_URL],
+  ["OFFICIAL_NODE_SERVER_ID", env.OFFICIAL_NODE_SERVER_ID],
+  ["PRIVATE_CALLS_GUILD_ID", env.PRIVATE_CALLS_GUILD_ID],
+  ["CORE_NODE_SYNC_SECRET", env.CORE_NODE_SYNC_SECRET],
+].filter(([, value]) => !value).map(([key]) => key);
+
+if (missingPrivateCallConfig.length) {
+  app.log.warn(
+    {
+      missing: missingPrivateCallConfig,
+      setupScript: "node scripts/create-private-calls-guild.mjs",
+    },
+    "Private-call voice provisioning is disabled until the official-node configuration is completed",
+  );
+}
+
 // attach helper to app
 (app as any).pgPresenceUpsert = presenceUpsert;
 

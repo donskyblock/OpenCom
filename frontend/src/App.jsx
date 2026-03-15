@@ -9722,10 +9722,14 @@ export function App() {
         },
         body: JSON.stringify({ id: friendId }),
       });
-      if (!data?.success) {
+      if (!data?.success || data?.warning) {
         setOutgoingCall(null);
         const reason = data?.message || data?.error || "CALL_CREATE_FAILED";
         setStatus(`Call failed: ${reason}`);
+        if (data?.warning === "voice_unavailable") {
+          await alertDialog(reason, "Call Error");
+        }
+        return;
       }
       // On success the WS will receive PRIVATE_CALL_CREATE which updates outgoingCall.callId
     } catch (err) {
