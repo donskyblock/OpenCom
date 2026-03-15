@@ -253,6 +253,66 @@ ensure_backend_deps() {
   popd >/dev/null
 }
 
+wait_for_databases() {
+  if [[ -z "${CORE_DATABASE_URL:-}" || -z "${NODE_DATABASE_URL:-}" ]]; then
+    return
+  fi
+
+  echo "[db-setup] Waiting for MariaDB to accept connections"
+  pushd "$BACKEND_DIR" >/dev/null
+  CORE_DATABASE_URL="$CORE_DATABASE_URL" NODE_DATABASE_URL="$NODE_DATABASE_URL" node <<'NODE'
+const mysql = require("mysql2/promise");
+
+const targets = [
+  { name: "core", url: process.env.CORE_DATABASE_URL },
+  { name: "node", url: process.env.NODE_DATABASE_URL },
+].filter((entry) => entry.url);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitForTarget(target) {
+  const maxAttempts = 60;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let connection;
+    try {
+      connection = await mysql.createConnection(target.url);
+      await connection.query("SELECT 1");
+      await connection.end();
+      console.log(`[db-setup] ${target.name} database is ready`);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (connection) {
+        try {
+          await connection.end();
+        } catch {}
+      }
+      const code = error?.code || error?.errno || "UNKNOWN";
+      console.log(
+        `[db-setup] Waiting for ${target.name} database (${attempt}/${maxAttempts}) - ${code}`,
+      );
+      await sleep(1000);
+    }
+  }
+
+  const detail = lastError?.message || lastError?.code || "unknown error";
+  throw new Error(`Database ${target.name} did not become ready: ${detail}`);
+}
+
+(async () => {
+  for (const target of targets) {
+    await waitForTarget(target);
+  }
+})().catch((error) => {
+  console.error(`[db-setup] ${error.message}`);
+  process.exit(1);
+});
+NODE
+  popd >/dev/null
+}
+
 run_migrations() {
   echo "[db-setup] Running database migrations"
   pushd "$BACKEND_DIR" >/dev/null
@@ -344,6 +404,7 @@ main() {
   start_docker_if_requested "$with_docker" "$with_minio"
   provision_local_db_if_requested "$provision_local_db" "$mariadb_root_user"
   ensure_backend_deps
+  wait_for_databases
   run_migrations
 }
 

@@ -4,7 +4,8 @@ export function AppearanceSettingsSection({
   onUploadTheme,
   themeCss,
   setThemeCss,
-  openStaticPage,
+  onOpenThemeCatalogue,
+  onOpenThemeCreator,
 }) {
   return (
     <section className="card">
@@ -28,14 +29,14 @@ export function AppearanceSettingsSection({
         <button
           type="button"
           className="ghost"
-          onClick={() => openStaticPage("theme-catalog.html")}
+          onClick={onOpenThemeCatalogue}
         >
           Open Theme Catalogue
         </button>
         <button
           type="button"
           className="ghost"
-          onClick={() => openStaticPage("theme-creator.html")}
+          onClick={onOpenThemeCreator}
         >
           Open Theme Creator
         </button>

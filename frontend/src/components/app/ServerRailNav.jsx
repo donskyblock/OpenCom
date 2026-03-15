@@ -71,14 +71,20 @@ export function ServerRailNav({
 
   return (
     <aside className="server-rail">
-      <div className="rail-header" title="OpenCom">
+      <button
+        type="button"
+        className={`rail-header ${navMode !== "servers" ? "active" : ""}`}
+        title="OpenCom Home"
+        aria-current={navMode !== "servers" ? "page" : undefined}
+        onClick={() => setNavMode("friends")}
+      >
         <img
           src="logo.png"
           alt="OpenCom"
           className="logo-img"
           style={{ width: "100%", height: "100%", objectFit: "contain" }}
         />
-      </div>
+      </button>
       {dmNotification &&
         (() => {
           const notifDm = dms.find((dm) => dm.id === dmNotification.dmId);
@@ -109,36 +115,6 @@ export function ServerRailNav({
             </button>
           ) : null;
         })()}
-      <button
-        type="button"
-        className={`server-pill nav-pill ${navMode === "friends" ? "active" : ""}`}
-        onClick={() => setNavMode("friends")}
-        title="Friends"
-        aria-current={navMode === "friends" ? "page" : undefined}
-        data-state={navMode === "friends" ? "active" : "idle"}
-      >
-        👥
-      </button>
-      <button
-        type="button"
-        className={`server-pill nav-pill ${navMode === "dms" ? "active" : ""}`}
-        onClick={() => setNavMode("dms")}
-        title="Direct messages"
-        aria-current={navMode === "dms" ? "page" : undefined}
-        data-state={navMode === "dms" ? "active" : "idle"}
-      >
-        💬
-      </button>
-      <button
-        type="button"
-        className={`server-pill nav-pill ${navMode === "profile" ? "active" : ""}`}
-        onClick={() => setNavMode("profile")}
-        title="Profile"
-        aria-current={navMode === "profile" ? "page" : undefined}
-        data-state={navMode === "profile" ? "active" : "idle"}
-      >
-        🪪
-      </button>
       <div className="server-list">
         {servers.map((server) => {
           const isActive =

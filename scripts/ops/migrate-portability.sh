@@ -102,6 +102,20 @@ parse_mysql_url_to_globals() {
   done
 }
 
+assert_bundle_database_match() {
+  local var_name="$1"
+  local db_url="$2"
+  local expected_db_name="$3"
+
+  [[ -n "$expected_db_name" ]] || return 0
+
+  parse_mysql_url_to_globals "$db_url"
+  if [[ "$DB_URL_NAME" != "$expected_db_name" ]]; then
+    echo "Database mismatch for $var_name: bundle expects $expected_db_name but $var_name points to $DB_URL_NAME"
+    exit 1
+  fi
+}
+
 sanitize_filename() {
   local input="$1"
   local lowered="${input,,}"
@@ -340,6 +354,7 @@ import_index_bundle() {
     [[ -n "${var_name:-}" ]] || continue
     db_url="${!var_name:-}"
     [[ -n "$db_url" ]] || { echo "$var_name is not set for import"; exit 1; }
+    assert_bundle_database_match "$var_name" "$db_url" "$_db_name"
 
     dump_path="$tmp_dir/$dump_file"
     [[ -f "$dump_path" ]] || { echo "Dump file missing from bundle: $dump_file"; exit 1; }

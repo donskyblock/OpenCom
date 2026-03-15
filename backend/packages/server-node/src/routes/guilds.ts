@@ -4,6 +4,8 @@ import { ulidLike } from "@ods/shared/ids.js";
 import { q } from "../db.js";
 import { DEFAULT_EVERYONE_PERMS } from "../permissions/defaults.js";
 import { Perm } from "../permissions/bits.js";
+import { requireGuildMember } from "../auth/requireGuildMember.js";
+import { requireManageChannels } from "../permissions/hierarchy.js";
 
 export async function guildRoutes(app: FastifyInstance) {
   // List only guilds the authenticated user is a member of (or owns) in this core server tenant.
@@ -123,5 +125,82 @@ export async function guildRoutes(app: FastifyInstance) {
         voice: generalVoiceId
       }
     });
+  });
+
+  app.patch("/v1/guilds/:guildId", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { guildId } = z.object({ guildId: z.string().min(3) }).parse(req.params);
+    const userId = req.auth.userId as string;
+    const body = z.object({
+      name: z.string().trim().min(1).max(64)
+    }).parse(req.body || {});
+
+    try {
+      await requireGuildMember(guildId, userId, req.auth.roles, req.auth.coreServerId);
+    } catch {
+      return rep.code(403).send({ error: "NOT_GUILD_MEMBER" });
+    }
+
+    const guildRows = await q<{ owner_user_id: string }>(
+      `SELECT owner_user_id FROM guilds WHERE id=:guildId LIMIT 1`,
+      { guildId }
+    );
+    if (!guildRows.length) return rep.code(404).send({ error: "GUILD_NOT_FOUND" });
+
+    const isGuildOwner = guildRows[0].owner_user_id === userId;
+    if (!isGuildOwner) {
+      const anyChannel = await q<{ id: string }>(
+        `SELECT id FROM channels WHERE guild_id=:guildId ORDER BY created_at ASC LIMIT 1`,
+        { guildId }
+      );
+      if (!anyChannel.length) return rep.code(400).send({ error: "GUILD_HAS_NO_CHANNELS" });
+      try {
+        await requireManageChannels({
+          guildId,
+          channelIdForPerms: anyChannel[0].id,
+          actorId: userId,
+          actorRoles: req.auth.roles || []
+        });
+      } catch {
+        return rep.code(403).send({ error: "MISSING_PERMS" });
+      }
+    }
+
+    await q(
+      `UPDATE guilds
+       SET name=:name
+       WHERE id=:guildId`,
+      { guildId, name: body.name }
+    );
+
+    return rep.send({ ok: true, guildId, name: body.name });
+  });
+
+  app.delete("/v1/guilds/:guildId", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { guildId } = z.object({ guildId: z.string().min(3) }).parse(req.params);
+    const userId = req.auth.userId as string;
+
+    try {
+      await requireGuildMember(guildId, userId, req.auth.roles, req.auth.coreServerId);
+    } catch {
+      return rep.code(403).send({ error: "NOT_GUILD_MEMBER" });
+    }
+
+    const guildRows = await q<{ owner_user_id: string }>(
+      `SELECT owner_user_id FROM guilds WHERE id=:guildId LIMIT 1`,
+      { guildId }
+    );
+    if (!guildRows.length) return rep.code(404).send({ error: "GUILD_NOT_FOUND" });
+
+    const isGuildOwner = guildRows[0].owner_user_id === userId;
+    const isServerOwner = Array.isArray(req.auth.roles) && req.auth.roles.includes("owner");
+    const isPlatformStaff = Array.isArray(req.auth.roles)
+      && (req.auth.roles.includes("platform_admin") || req.auth.roles.includes("platform_owner"));
+
+    if (!isGuildOwner && !isServerOwner && !isPlatformStaff) {
+      return rep.code(403).send({ error: "MISSING_PERMS" });
+    }
+
+    await q(`DELETE FROM guilds WHERE id=:guildId`, { guildId });
+    return rep.send({ ok: true, guildId });
   });
 }

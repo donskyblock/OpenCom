@@ -11,6 +11,7 @@ export function ServerSettingsSection({ serverState, forms, actions }) {
     activeServer,
     servers,
     canManageServer,
+    boostStatus,
     activeServerVoiceGatewayPref,
     categoryChannels,
     sortedChannels,
@@ -52,6 +53,7 @@ export function ServerSettingsSection({ serverState, forms, actions }) {
     setNewServerEmoteUrl,
     createServerEmote,
     removeServerEmote,
+    toggleActiveServerGlobalEmotes,
     setChannelPermsChannelId,
     channelOverwriteAllowsSend,
     setChannelRoleSend,
@@ -271,6 +273,28 @@ export function ServerSettingsSection({ serverState, forms, actions }) {
           <p className="hint">
             Use emotes in chat with <code>:name:</code>.
           </p>
+          {(activeServer?.roles || []).includes("owner") && (
+            <>
+              <label
+                style={{ display: "flex", alignItems: "center", gap: "8px" }}
+              >
+                <input
+                  type="checkbox"
+                  checked={!!activeServer?.globalEmotesEnabled}
+                  onChange={(event) =>
+                    toggleActiveServerGlobalEmotes(event.target.checked)
+                  }
+                />
+                Allow members to use this server&apos;s custom emotes globally
+                (Boost perk)
+              </label>
+              <p className="hint">
+                {activeServer?.globalEmotesEnabled && !boostStatus?.active
+                  ? "Saved as enabled, but it only works while your Boost is active."
+                  : "When enabled, your members can use these custom emotes in DMs and other servers too."}
+              </p>
+            </>
+          )}
           <input
             placeholder="Emote name (example: hype)"
             value={newServerEmoteName}

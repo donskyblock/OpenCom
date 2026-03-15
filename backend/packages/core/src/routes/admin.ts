@@ -21,6 +21,7 @@ import {
   requirePanelPermission,
   serializePlatformPermissions,
 } from "../platformStaff.js";
+import { getAdminStatsSnapshot } from "../adminStats.js";
 
 const PLATFORM_ADMIN_BADGE = "PLATFORM_ADMIN";
 const PLATFORM_FOUNDER_BADGE = "PLATFORM_FOUNDER";
@@ -121,6 +122,16 @@ export async function adminRoutes(app: FastifyInstance, broadcastToUser?: Broadc
       staffAssignmentsCount: Number(staffAssignments[0]?.count || 0),
       publishedBlogsCount: Number(publishedBlogs[0]?.count || 0)
     };
+  });
+
+  app.get("/v1/admin/stats", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    try {
+      await requirePanelAccess(req);
+    } catch {
+      return rep.code(403).send({ error: "FORBIDDEN" });
+    }
+
+    return getAdminStatsSnapshot();
   });
 
   app.get("/v1/admin/users", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {

@@ -105,3 +105,32 @@ The sole and only way to really support OpenCom is through the boost subscriptio
 
 - In either case ensure it runs correctly 
 
+## Dev reset / reconfigure
+
+- If your local config is cooked and you just want to wipe it all and rebuild it cleanly, run `./scripts/dev/reconfigure.sh --yes`
+
+- That will regenerate `backend/.env` + `frontend/.env`, clear local backend runtime state, recreate the local database stack, and rerun migrations
+
+- If you want the optional local object storage too, use `./scripts/dev/reconfigure.sh --yes --with-minio`
+
+## Docker launchers
+
+- You can now use `./docker/dev` for local Docker-driven development and `./docker/prod` for Docker-run hosting
+
+- Both support `all` or `node`
+
+- `all` starts the full stack: databases, redis, core, node, and frontend
+
+- `node` starts the backend-only stack: databases, redis, core, and node
+
+- First `./docker/dev up ...` run does a best-effort backup and then a full `reconfigure`
+
+- First `./docker/prod up ...` run just does the best-effort backup and leaves your config alone
+
+- Example: `./docker/dev all`
+
+- Example: `./docker/dev up node`
+
+- Example: `./docker/prod up all`
+
+- Example: `./docker/prod status`

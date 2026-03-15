@@ -31,6 +31,101 @@ const EmbedSchema = z.object({
   footer: z.object({ text: z.string().max(256) }).optional()
 });
 
+const reactionOptionalTextField = (maxLength: number) =>
+  z.preprocess(
+    (value) =>
+      typeof value === "string" && !value.trim() ? null : value,
+    z.string().trim().min(1).max(maxLength).optional().nullable()
+  );
+
+const MessageReactionBody = z.object({
+  key: z.string().trim().min(1).max(128).regex(/^[a-zA-Z0-9:_+-]+$/),
+  type: z.enum(["builtin", "custom", "unicode"]),
+  name: z.string().trim().min(1).max(64),
+  value: reactionOptionalTextField(64),
+  imageUrl: reactionOptionalTextField(1000)
+});
+
+type MessageReactionRow = {
+  message_id: string;
+  user_id: string;
+  reaction_key: string;
+  reaction_type: "builtin" | "custom" | "unicode";
+  reaction_name: string;
+  reaction_value: string | null;
+  reaction_image_url: string | null;
+};
+
+function isValidReactionImageUrl(value: string | null | undefined) {
+  if (value == null) return true;
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return false;
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
+  if (trimmed.startsWith("/")) return true;
+  if (trimmed.startsWith("users/")) return true;
+  return false;
+}
+
+function buildReactionSummaries(rows: MessageReactionRow[]) {
+  const byMessage = new Map<string, any[]>();
+  const byMessageAndKey = new Map<string, Map<string, any>>();
+
+  for (const row of rows) {
+    if (!byMessageAndKey.has(row.message_id)) {
+      byMessageAndKey.set(row.message_id, new Map());
+    }
+    const reactionMap = byMessageAndKey.get(row.message_id)!;
+    if (!reactionMap.has(row.reaction_key)) {
+      reactionMap.set(row.reaction_key, {
+        key: row.reaction_key,
+        type: row.reaction_type,
+        name: row.reaction_name,
+        value: row.reaction_value,
+        imageUrl: row.reaction_image_url,
+        userIds: [],
+        count: 0,
+      });
+    }
+    const summary = reactionMap.get(row.reaction_key)!;
+    if (!summary.userIds.includes(row.user_id)) {
+      summary.userIds.push(row.user_id);
+      summary.count = summary.userIds.length;
+    }
+  }
+
+  for (const [messageId, reactionMap] of byMessageAndKey.entries()) {
+    byMessage.set(
+      messageId,
+      Array.from(reactionMap.values()).sort((left, right) =>
+        String(left.key || "").localeCompare(String(right.key || "")),
+      ),
+    );
+  }
+
+  return byMessage;
+}
+
+async function loadMessageReactionMap(messageIds: string[]) {
+  if (!messageIds.length) return new Map<string, any[]>();
+  const params: Record<string, any> = {};
+  const inList = messageIds.map((id, index) => (params[`m${index}`] = id, `:m${index}`)).join(",");
+  const rows = await q<MessageReactionRow>(
+    `SELECT message_id,user_id,reaction_key,reaction_type,reaction_name,reaction_value,reaction_image_url
+     FROM message_reactions
+     WHERE message_id IN (${inList})
+     ORDER BY created_at ASC`,
+    params
+  );
+  return buildReactionSummaries(rows);
+}
+
 function normalizeMentionToken(value: string) {
   return value.trim().toLowerCase();
 }
@@ -304,6 +399,11 @@ export async function messageRoutes(
         });
       }
       for (const r of rows) r.attachments = byMsg.get(r.id) ?? [];
+
+      const reactionMap = await loadMessageReactionMap(ids);
+      for (const r of rows) r.reactions = reactionMap.get(r.id) ?? [];
+    } else {
+      for (const r of rows) r.reactions = [];
     }
 
     return { messages: rows, hasMore };
@@ -423,6 +523,7 @@ export async function messageRoutes(
         linkEmbeds: extractLinkEmbeds(body.content || ""),
         createdAt,
         attachments: resolvedAttachments,
+        reactions: [],
         mentionEveryone: mentionMeta.mentionEveryone,
         mentions: mentionMeta.mentions
       }
@@ -451,6 +552,118 @@ export async function messageRoutes(
     }
 
     return rep.send({ messageId: id, createdAt, mentionEveryone: mentionMeta.mentionEveryone, mentions: mentionMeta.mentions });
+  });
+
+  app.put("/v1/channels/:channelId/messages/:messageId/reactions", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { channelId, messageId } = z.object({ channelId: z.string().min(3), messageId: z.string().min(3) }).parse(req.params);
+    const userId = req.auth.userId as string;
+    const body = MessageReactionBody.parse(req.body || {});
+
+    const ch = await q<{ guild_id: string }>(`SELECT guild_id FROM channels WHERE id=:channelId`, { channelId });
+    if (!ch.length) return rep.code(404).send({ error: "CHANNEL_NOT_FOUND" });
+    const guildId = ch[0].guild_id;
+
+    try { await requireGuildMember(guildId, userId, req.auth.roles, req.auth.coreServerId); }
+    catch { return rep.code(403).send({ error: "NOT_GUILD_MEMBER" }); }
+
+    const perms = await resolveChannelPermissions({ guildId, channelId, userId, roles: req.auth.roles || [] });
+    if (!has(perms, Perm.VIEW_CHANNEL) || !has(perms, Perm.SEND_MESSAGES)) {
+      return rep.code(403).send({ error: "MISSING_PERMS" });
+    }
+
+    const message = await q<{ id: string }>(
+      `SELECT id FROM messages WHERE id=:messageId AND channel_id=:channelId LIMIT 1`,
+      { messageId, channelId }
+    );
+    if (!message.length) return rep.code(404).send({ error: "MESSAGE_NOT_FOUND" });
+
+    if (body.type === "builtin" && !body.value) return rep.code(400).send({ error: "REACTION_VALUE_REQUIRED" });
+    if (body.type === "unicode" && !body.value) return rep.code(400).send({ error: "REACTION_VALUE_REQUIRED" });
+    if (body.type === "custom" && !isValidReactionImageUrl(body.imageUrl)) {
+      return rep.code(400).send({ error: "INVALID_REACTION_IMAGE_URL" });
+    }
+
+    await q(
+      `INSERT INTO message_reactions
+         (message_id,channel_id,user_id,reaction_key,reaction_type,reaction_name,reaction_value,reaction_image_url)
+       VALUES
+         (:messageId,:channelId,:userId,:reactionKey,:reactionType,:reactionName,:reactionValue,:reactionImageUrl)
+       ON DUPLICATE KEY UPDATE
+         reaction_type=VALUES(reaction_type),
+         reaction_name=VALUES(reaction_name),
+         reaction_value=VALUES(reaction_value),
+         reaction_image_url=VALUES(reaction_image_url)`,
+      {
+        messageId,
+        channelId,
+        userId,
+        reactionKey: body.key,
+        reactionType: body.type,
+        reactionName: body.name,
+        reactionValue: body.value ?? null,
+        reactionImageUrl: body.imageUrl ?? null,
+      }
+    );
+
+    const reactions = (await loadMessageReactionMap([messageId])).get(messageId) ?? [];
+    if (broadcastChannelEvent) {
+      broadcastChannelEvent(channelId, "MESSAGE_REACTIONS_UPDATE", {
+        channelId,
+        messageId,
+        reactions,
+      });
+    }
+
+    return rep.send({ ok: true, reactions });
+  });
+
+  app.delete("/v1/channels/:channelId/messages/:messageId/reactions", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { channelId, messageId } = z.object({ channelId: z.string().min(3), messageId: z.string().min(3) }).parse(req.params);
+    const userId = req.auth.userId as string;
+    const body = MessageReactionBody.parse(req.body || {});
+
+    const ch = await q<{ guild_id: string }>(`SELECT guild_id FROM channels WHERE id=:channelId`, { channelId });
+    if (!ch.length) return rep.code(404).send({ error: "CHANNEL_NOT_FOUND" });
+    const guildId = ch[0].guild_id;
+
+    try { await requireGuildMember(guildId, userId, req.auth.roles, req.auth.coreServerId); }
+    catch { return rep.code(403).send({ error: "NOT_GUILD_MEMBER" }); }
+
+    const perms = await resolveChannelPermissions({ guildId, channelId, userId, roles: req.auth.roles || [] });
+    if (!has(perms, Perm.VIEW_CHANNEL) || !has(perms, Perm.SEND_MESSAGES)) {
+      return rep.code(403).send({ error: "MISSING_PERMS" });
+    }
+
+    const message = await q<{ id: string }>(
+      `SELECT id FROM messages WHERE id=:messageId AND channel_id=:channelId LIMIT 1`,
+      { messageId, channelId }
+    );
+    if (!message.length) return rep.code(404).send({ error: "MESSAGE_NOT_FOUND" });
+
+    await q(
+      `DELETE FROM message_reactions
+       WHERE message_id=:messageId
+         AND channel_id=:channelId
+         AND user_id=:userId
+         AND reaction_key=:reactionKey`,
+      {
+        messageId,
+        channelId,
+        userId,
+        reactionKey: body.key,
+      }
+    );
+
+    const reactions = (await loadMessageReactionMap([messageId])).get(messageId) ?? [];
+    if (broadcastChannelEvent) {
+      broadcastChannelEvent(channelId, "MESSAGE_REACTIONS_UPDATE", {
+        channelId,
+        messageId,
+        reactions,
+      });
+    }
+
+    return rep.send({ ok: true, reactions });
   });
   app.patch("/v1/channels/:channelId/messages/:messageId", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const { channelId, messageId } = z.object({ channelId: z.string().min(3), messageId: z.string().min(3) }).parse(req.params);

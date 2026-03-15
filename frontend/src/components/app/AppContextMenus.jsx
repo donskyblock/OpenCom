@@ -1,5 +1,6 @@
 export function AppContextMenus({
   messageContextMenu,
+  addMessageReaction,
   setReplyTarget,
   setDmReplyTarget,
   setMessageContextMenu,
@@ -59,6 +60,17 @@ export function AppContextMenus({
           style={{ top: messageContextMenu.y, left: messageContextMenu.x }}
           onClick={(event) => event.stopPropagation()}
         >
+          <button
+            onClick={() => {
+              addMessageReaction(
+                messageContextMenu.message,
+                messageContextMenu.message.kind,
+              );
+              setMessageContextMenu(null);
+            }}
+          >
+            Add Reaction
+          </button>
           {messageContextMenu.message.kind === "server" && (
             <button
               onClick={() => {

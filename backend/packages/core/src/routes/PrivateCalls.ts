@@ -20,6 +20,196 @@ import { isOfficialAccountUserId } from "../officialAccount.js";
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+type BroadcastToUser = (targetUserId: string, t: string, d: any) => Promise<void>;
+
+type PrivateCallRow = {
+  id: string;
+  user_1: string;
+  user_2: string;
+  channel_id: string;
+  guild_id: string | null;
+  node_base_url: string | null;
+  active: number;
+  created_at: string;
+  ended_at: string | null;
+};
+
+type PrivateCallStatusResult = {
+  active: boolean;
+  connectedParticipantIds: string[];
+  staleReason: string | null;
+};
+
+const PRIVATE_CALL_STALE_GRACE_MS = 45_000;
+
+function is_private_call_active(call: Pick<PrivateCallRow, "active" | "ended_at">) {
+  return !!call.active && !call.ended_at;
+}
+
+function is_same_private_call_pair(
+  call: Pick<PrivateCallRow, "user_1" | "user_2">,
+  user1Id: string,
+  user2Id: string
+) {
+  return (
+    (call.user_1 === user1Id && call.user_2 === user2Id) ||
+    (call.user_1 === user2Id && call.user_2 === user1Id)
+  );
+}
+
+function is_private_call_stale(call: Pick<PrivateCallRow, "created_at">) {
+  const createdAtMs = new Date(call.created_at).getTime();
+  if (!Number.isFinite(createdAtMs)) return true;
+  return Date.now() - createdAtMs >= PRIVATE_CALL_STALE_GRACE_MS;
+}
+
+async function end_private_call(
+  call: Pick<
+    PrivateCallRow,
+    "id" | "user_1" | "user_2" | "channel_id" | "node_base_url"
+  >,
+  endedBy: string,
+  broadcastToUser?: BroadcastToUser
+) {
+  await q(
+    `UPDATE PRIVATE_CALLS
+     SET ended_at = COALESCE(ended_at, NOW()), active = FALSE
+     WHERE id = :id`,
+    { id: call.id }
+  );
+
+  if (call.channel_id && call.node_base_url) {
+    await cleanup_voice_channel(
+      call.channel_id,
+      call.node_base_url,
+      call.user_1,
+      call.user_2
+    );
+  }
+
+  if (!broadcastToUser) return;
+
+  const payload = {
+    callId: call.id,
+    channelId: call.channel_id,
+    endedBy,
+    endedAt: new Date().toISOString()
+  };
+  await broadcastToUser(call.user_1, "PRIVATE_CALL_ENDED", payload);
+  await broadcastToUser(call.user_2, "PRIVATE_CALL_ENDED", payload);
+}
+
+async function fetch_private_call_channel_status(
+  call: Pick<PrivateCallRow, "channel_id" | "node_base_url" | "user_1" | "user_2">
+) {
+  const syncSecret = env.CORE_NODE_SYNC_SECRET;
+  if (!syncSecret || !call.channel_id || !call.node_base_url) {
+    return null;
+  }
+
+  try {
+    const resp = await fetch(
+      `${call.node_base_url.replace(/\/$/, "")}/v1/internal/private-call-channel/${encodeURIComponent(call.channel_id)}/status`,
+      {
+        headers: {
+          "x-node-sync-secret": syncSecret
+        }
+      }
+    );
+
+    if (resp.status === 404) {
+      return { channelMissing: true, connectedParticipantIds: [] as string[] };
+    }
+
+    if (!resp.ok) {
+      return null;
+    }
+
+    const data = (await resp.json()) as {
+      connectedUserIds?: string[];
+      voiceStates?: Array<{ userId?: string }>;
+    };
+    const rawUserIds = Array.isArray(data.connectedUserIds)
+      ? data.connectedUserIds
+      : Array.isArray(data.voiceStates)
+        ? data.voiceStates.map((row) => row?.userId || "")
+        : [];
+    const connectedParticipantIds = [...new Set(rawUserIds)].filter(
+      (userId) => userId === call.user_1 || userId === call.user_2
+    );
+
+    return { channelMissing: false, connectedParticipantIds };
+  } catch {
+    return null;
+  }
+}
+
+async function reconcile_private_call_state(
+  call: PrivateCallRow,
+  broadcastToUser?: BroadcastToUser,
+  options: { requireConnected?: boolean; requiredUserId?: string } = {}
+): Promise<PrivateCallStatusResult> {
+  if (!is_private_call_active(call)) {
+    return { active: false, connectedParticipantIds: [], staleReason: "already_ended" };
+  }
+
+  const shouldRequireConnected = options.requireConnected === true;
+  const requiredUserId = options.requiredUserId || "";
+  const canCheckNodeState =
+    !!call.channel_id && !!call.guild_id && !!call.node_base_url && !!env.CORE_NODE_SYNC_SECRET;
+
+  if (!canCheckNodeState) {
+    if (!shouldRequireConnected && !is_private_call_stale(call)) {
+      return { active: true, connectedParticipantIds: [], staleReason: null };
+    }
+
+    await end_private_call(call, "system", broadcastToUser);
+    return {
+      active: false,
+      connectedParticipantIds: [],
+      staleReason: shouldRequireConnected ? "not_connected" : "missing_voice_channel"
+    };
+  }
+
+  const status = await fetch_private_call_channel_status(call);
+  if (!status) {
+    if (!is_private_call_stale(call)) {
+      return { active: true, connectedParticipantIds: [], staleReason: null };
+    }
+
+    await end_private_call(call, "system", broadcastToUser);
+    return {
+      active: false,
+      connectedParticipantIds: [],
+      staleReason: "status_unavailable"
+    };
+  }
+
+  if (
+    status.connectedParticipantIds.length > 0 &&
+    (!shouldRequireConnected ||
+      !requiredUserId ||
+      status.connectedParticipantIds.includes(requiredUserId))
+  ) {
+    return {
+      active: true,
+      connectedParticipantIds: status.connectedParticipantIds,
+      staleReason: null
+    };
+  }
+
+  if (!status.channelMissing && !shouldRequireConnected && !is_private_call_stale(call)) {
+    return { active: true, connectedParticipantIds: [], staleReason: null };
+  }
+
+  await end_private_call(call, "system", broadcastToUser);
+  return {
+    active: false,
+    connectedParticipantIds: [],
+    staleReason: status.channelMissing ? "channel_missing" : "not_connected"
+  };
+}
+
 /**
  * Create an ephemeral voice channel in the private-calls system guild on the
  * official server-node and record the call in the PRIVATE_CALLS table.
@@ -29,7 +219,8 @@ import { isOfficialAccountUserId } from "../officialAccount.js";
  */
 async function generate_voice_channel(
   user1_id: string,
-  user2_id: string
+  user2_id: string,
+  broadcastToUser?: BroadcastToUser
 ): Promise<{
   call_id: string;
   channel_id: string;
@@ -39,18 +230,31 @@ async function generate_voice_channel(
   if (!user1_id || !user2_id) throw new Error("User ID missing");
   if (user1_id === user2_id) throw new Error("Cannot call yourself");
 
-  // Check if either user is already in an active call
-  const existing = await q(
-    `SELECT id
+  // Reconcile any stale call records before we decide a user is still busy.
+  const existing = await q<PrivateCallRow>(
+    `SELECT id, user_1, user_2, channel_id, guild_id, node_base_url, active, created_at, ended_at
      FROM PRIVATE_CALLS
      WHERE active = TRUE
        AND ended_at IS NULL
        AND (user_1 = :u1 OR user_2 = :u1
             OR user_1 = :u2 OR user_2 = :u2)
-     LIMIT 1`,
+     ORDER BY created_at DESC`,
     { u1: user1_id, u2: user2_id }
   );
-  if (existing.length) throw new Error("User already in an active call");
+  for (const call of existing) {
+    const reconciled = await reconcile_private_call_state(call, broadcastToUser);
+    if (
+      reconciled.active &&
+      reconciled.connectedParticipantIds.length === 0 &&
+      is_same_private_call_pair(call, user1_id, user2_id)
+    ) {
+      await end_private_call(call, "system", broadcastToUser);
+      continue;
+    }
+    if (reconciled.active) {
+      throw new Error("User already in an active call");
+    }
+  }
 
   const nodeBaseUrl = env.OFFICIAL_NODE_BASE_URL?.replace(/\/$/, "");
   const nodeServerId = env.OFFICIAL_NODE_SERVER_ID;
@@ -151,19 +355,20 @@ async function cleanup_voice_channel(
 
 export async function CallRoutes(
   app: FastifyInstance,
-  broadcastToUser?: (targetUserId: string, t: string, d: any) => Promise<void>
+  broadcastToUser?: BroadcastToUser
 ) {
   // ── GET STATUS ─────────────────────────────────────────────────────────────
 
   app.post("/call/get_status", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
-    const caller: string | undefined = req.body?.caller;
-    const call_id: string | undefined = req.body?.callid;
+    const caller = req.user.sub as string;
+    const call_id: string | undefined = req.body?.callId ?? req.body?.callid;
+    const requireConnected = req.body?.requireConnected === true;
 
     if (!caller) return rep.send({ error: true, code: 421 });
     if (!call_id) return rep.send({ error: true, code: 422 });
 
-    const existing = await q<{ active: number }>(
-      `SELECT active
+    const existing = await q<PrivateCallRow>(
+      `SELECT id, user_1, user_2, channel_id, guild_id, node_base_url, active, created_at, ended_at
        FROM PRIVATE_CALLS
        WHERE id = :callId
          AND (user_1 = :caller OR user_2 = :caller)
@@ -172,7 +377,18 @@ export async function CallRoutes(
     );
 
     if (existing.length) {
-      return rep.send({ success: true, active: !!existing[0].active });
+      const status = await reconcile_private_call_state(
+        existing[0],
+        broadcastToUser,
+        { requireConnected, requiredUserId: caller }
+      );
+      return rep.send({
+        success: true,
+        active: status.active,
+        connected: status.connectedParticipantIds.includes(caller),
+        connectedUserIds: status.connectedParticipantIds,
+        staleReason: status.staleReason
+      });
     }
     return rep.send({ success: false, error: true, code: 420 });
   });
@@ -236,7 +452,7 @@ export async function CallRoutes(
     // Provision the voice channel on the official server-node
     let callResult: Awaited<ReturnType<typeof generate_voice_channel>> = null;
     try {
-      callResult = await generate_voice_channel(userId, target_id);
+      callResult = await generate_voice_channel(userId, target_id, broadcastToUser);
     } catch (err: any) {
       app.log.warn(
         { err: err?.message ?? String(err) },
@@ -323,16 +539,8 @@ export async function CallRoutes(
     if (!userId) return rep.send({ success: false, error: true, code: 512 });
     if (!call_id) return rep.send({ success: false, error: true, code: 422 });
 
-    const calls = await q<{
-      id: string;
-      user_1: string;
-      user_2: string;
-      channel_id: string;
-      guild_id: string | null;
-      node_base_url: string | null;
-      active: number;
-    }>(
-      `SELECT id, user_1, user_2, channel_id, guild_id, node_base_url, active
+    const calls = await q<PrivateCallRow>(
+      `SELECT id, user_1, user_2, channel_id, guild_id, node_base_url, active, created_at, ended_at
        FROM PRIVATE_CALLS
        WHERE id = :callId
        LIMIT 1`,
@@ -350,7 +558,8 @@ export async function CallRoutes(
       return rep.code(403).send({ success: false, error: "NOT_A_PARTICIPANT" });
     }
 
-    if (!call.active || !call.channel_id || !call.guild_id || !call.node_base_url) {
+    const status = await reconcile_private_call_state(call, broadcastToUser);
+    if (!status.active || !call.channel_id || !call.guild_id || !call.node_base_url) {
       return rep.send({ success: false, error: "CALL_NOT_ACTIVE_OR_NO_VOICE_CHANNEL" });
     }
 
@@ -387,15 +596,8 @@ export async function CallRoutes(
 
     if (!userId) return rep.send({ success: false, error: true, code: 512 });
 
-    const calls = await q<{
-      id: string;
-      user_1: string;
-      user_2: string;
-      channel_id: string;
-      guild_id: string | null;
-      node_base_url: string | null;
-    }>(
-      `SELECT id, user_1, user_2, channel_id, guild_id, node_base_url
+    const calls = await q<PrivateCallRow>(
+      `SELECT id, user_1, user_2, channel_id, guild_id, node_base_url, active, created_at, ended_at
        FROM PRIVATE_CALLS
        WHERE active = TRUE
          AND ended_at IS NULL
@@ -409,37 +611,7 @@ export async function CallRoutes(
     }
 
     const call = calls[0];
-
-    // Mark the call as ended in the DB first (so it's consistent even if
-    // the node cleanup below fails)
-    await q(
-      `UPDATE PRIVATE_CALLS
-       SET ended_at = NOW(), active = FALSE
-       WHERE id = :id`,
-      { id: call.id }
-    );
-
-    // Clean up the ephemeral voice channel on the server-node
-    if (call.channel_id && call.node_base_url) {
-      await cleanup_voice_channel(
-        call.channel_id,
-        call.node_base_url,
-        call.user_1,
-        call.user_2
-      );
-    }
-
-    // Notify both participants
-    if (broadcastToUser) {
-      const payload = {
-        callId: call.id,
-        channelId: call.channel_id,
-        endedBy: userId,
-        endedAt: new Date().toISOString()
-      };
-      await broadcastToUser(call.user_1, "PRIVATE_CALL_ENDED", payload);
-      await broadcastToUser(call.user_2, "PRIVATE_CALL_ENDED", payload);
-    }
+    await end_private_call(call, userId, broadcastToUser);
 
     return rep.send({ success: true, message: "Call ended successfully" });
   });

@@ -262,8 +262,8 @@ export async function serverRoutes(app: FastifyInstance) {
     const platformRole = await getPlatformRole(userId);
     const boostEntitlement = await reconcileBoostBadge(userId);
 
-    const rows = await q<{ id: string; name: string; base_url: string; logo_url: string | null; banner_url: string | null; default_guild_id: string | null; owner_user_id: string; roles: string; display_order: number | null }>(
-      `SELECT s.id, s.name, s.base_url, s.logo_url, s.banner_url, s.default_guild_id, s.owner_user_id, m.roles, m.display_order
+    const rows = await q<{ id: string; name: string; base_url: string; logo_url: string | null; banner_url: string | null; default_guild_id: string | null; owner_user_id: string; roles: string; display_order: number | null; global_emotes_enabled: number }>(
+      `SELECT s.id, s.name, s.base_url, s.logo_url, s.banner_url, s.default_guild_id, s.owner_user_id, s.global_emotes_enabled, m.roles, m.display_order
        FROM memberships m
        JOIN servers s ON s.id = m.server_id
        WHERE m.user_id = :userId
@@ -328,6 +328,7 @@ export async function serverRoutes(app: FastifyInstance) {
         logoUrl: r.logo_url ?? null,
         bannerUrl: r.banner_url ?? null,
         defaultGuildId: r.default_guild_id ?? undefined,
+        globalEmotesEnabled: Boolean(r.global_emotes_enabled),
         roles: membershipRoles,
         membershipToken
       };

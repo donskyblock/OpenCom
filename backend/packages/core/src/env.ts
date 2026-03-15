@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+const emptyToUndefined = (value: unknown) => {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : undefined;
+};
+
 const boolFlag = z.preprocess(
   (value) => {
     if (typeof value === "boolean") return value;
@@ -18,9 +24,9 @@ const Env = z.object({
   /** Port for WebSocket gateway only. Default 9443 to avoid conflicting with nginx/other on 443; point ws.opencom.online to this port or proxy 443→9443. */
   CORE_GATEWAY_PORT: z.coerce.number().default(9443),
   /** Optional TLS cert file for native wss listener. If both cert+key are set, gateway serves HTTPS/WSS directly. */
-  CORE_GATEWAY_TLS_CERT_FILE: z.string().min(1).optional(),
+  CORE_GATEWAY_TLS_CERT_FILE: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
   /** Optional TLS key file for native wss listener. */
-  CORE_GATEWAY_TLS_KEY_FILE: z.string().min(1).optional(),
+  CORE_GATEWAY_TLS_KEY_FILE: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
   CORE_DATABASE_URL: z.string().min(1),
   CORE_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("warn"),
   CORE_LOG_DIR: z.string().default("./logs"),
@@ -33,7 +39,7 @@ const Env = z.object({
   CORE_ISSUER: z.string().min(1),
   ADMIN_PANEL_PASSWORD: z.string().min(8),
   REDIS_URL: z.string().url(),
-  CORE_NODE_SYNC_SECRET: z.string().min(16).optional(),
+  CORE_NODE_SYNC_SECRET: z.preprocess(emptyToUndefined, z.string().min(16).optional()),
 
   // Profile image storage
   PROFILE_IMAGE_STORAGE_DIR: z.string().default("./storage/profiles"),
@@ -46,9 +52,9 @@ const Env = z.object({
   ATTACHMENT_STORAGE_DIR: z.string().default("./data/attachments"),
 
   // Official server node (one server per user hosted by the platform)
-  OFFICIAL_NODE_BASE_URL: z.string().url().optional(),
+  OFFICIAL_NODE_BASE_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
   /** Must match NODE_SERVER_ID on that node so the node accepts the membership token */
-  OFFICIAL_NODE_SERVER_ID: z.string().min(1).optional(),
+  OFFICIAL_NODE_SERVER_ID: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
   /**
    * The ID of the system guild (is_system=1) that lives on the official node and is used
    * exclusively to host ephemeral voice channels for private (1:1) calls.
@@ -56,26 +62,26 @@ const Env = z.object({
    * returned guild ID here.  Without this set, /call/create will still record the call in
    * the DB but will not provision a real voice channel on the node.
    */
-  PRIVATE_CALLS_GUILD_ID: z.string().min(1).optional(),
+  PRIVATE_CALLS_GUILD_ID: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
 
   // Stripe subscriptions (OpenCom Boost)
-  STRIPE_SECRET_KEY: z.string().min(1).optional(),
-  STRIPE_PRICE_ID_BOOST_GBP_10: z.string().min(1).optional(),
-  STRIPE_SUCCESS_URL: z.string().url().optional(),
-  STRIPE_CANCEL_URL: z.string().url().optional(),
-  STRIPE_CUSTOMER_PORTAL_RETURN_URL: z.string().url().optional(),
+  STRIPE_SECRET_KEY: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  STRIPE_PRICE_ID_BOOST_GBP_10: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  STRIPE_SUCCESS_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  STRIPE_CANCEL_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  STRIPE_CUSTOMER_PORTAL_RETURN_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
 
   // Auth email verification
   AUTH_REQUIRE_EMAIL_VERIFICATION: boolFlag.default(true),
   AUTH_EMAIL_VERIFICATION_TOKEN_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
   AUTH_PASSWORD_RESET_TOKEN_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
   APP_BASE_URL: z.string().url().default("http://localhost:5173"),
-  SMTP_HOST: z.string().min(1).optional(),
+  SMTP_HOST: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
   SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
   SMTP_SECURE: boolFlag.default(false),
-  SMTP_USER: z.string().min(1).optional(),
-  SMTP_PASS: z.string().min(1).optional(),
-  SMTP_FROM: z.string().min(1).optional(),
+  SMTP_USER: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  SMTP_PASS: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  SMTP_FROM: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
 
   // Public downloadable desktop artifacts served by core (/downloads/:filename)
   DOWNLOADS_STORAGE_DIR: z.string().default("frontend/public/downloads")

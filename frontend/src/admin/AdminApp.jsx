@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { resolveStaticPageHref } from "../lib/routing";
 import { BlogMarkdown } from "../lib/blogMarkdown";
+import { AdminOverviewDashboard } from "./AdminOverviewDashboard.jsx";
 
 const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://api.opencom.online";
 
@@ -134,6 +135,8 @@ export function AdminApp() {
     staffAssignmentsCount: 0,
     publishedBlogsCount: 0,
   });
+  const [dashboardStats, setDashboardStats] = useState(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
   const [tab, setTab] = useState("overview");
   const [query, setQuery] = useState("");
   const [users, setUsers] = useState([]);
@@ -187,6 +190,14 @@ export function AdminApp() {
     if (panelPassword) sessionStorage.setItem("opencom_admin_panel_password", panelPassword);
     else sessionStorage.removeItem("opencom_admin_panel_password");
   }, [panelPassword]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    document.body.classList.add("admin-mode");
+    return () => {
+      document.body.classList.remove("admin-mode");
+    };
+  }, []);
 
   useEffect(() => {
     if (!token) return;
@@ -256,6 +267,11 @@ export function AdminApp() {
   }, [isPanelUnlocked, token, panelPassword]);
 
   useEffect(() => {
+    if (!isPanelUnlocked || !token || tab !== "overview") return;
+    loadDashboardStats();
+  }, [isPanelUnlocked, token, panelPassword, tab]);
+
+  useEffect(() => {
     if (!isPanelUnlocked || !token) return;
     if (tab === "official" && canSendOfficialMessages) {
       loadOfficialStatus();
@@ -293,13 +309,43 @@ export function AdminApp() {
     }
   }
 
-  async function loadOverview() {
+  async function loadOverview({ showSuccess = false } = {}) {
     try {
       const data = await api("/v1/admin/overview", token, panelPassword);
       setAdminOverview(data);
-      showStatus("Overview loaded.", "success");
+      if (showSuccess) showStatus("Overview loaded.", "success");
     } catch (e) {
       showStatus(`Overview failed: ${e.message}`, "error");
+    }
+  }
+
+  async function loadDashboardStats({ showSuccess = false } = {}) {
+    setDashboardLoading(true);
+    try {
+      const data = await api("/v1/admin/stats", token, panelPassword);
+      setDashboardStats(data);
+      if (showSuccess) showStatus("Dashboard stats refreshed.", "success");
+    } catch (e) {
+      showStatus(`Dashboard stats failed: ${e.message}`, "error");
+    } finally {
+      setDashboardLoading(false);
+    }
+  }
+
+  async function refreshDashboard() {
+    setDashboardLoading(true);
+    try {
+      const [overviewData, statsData] = await Promise.all([
+        api("/v1/admin/overview", token, panelPassword),
+        api("/v1/admin/stats", token, panelPassword),
+      ]);
+      setAdminOverview(overviewData);
+      setDashboardStats(statsData);
+      showStatus("Dashboard refreshed.", "success");
+    } catch (e) {
+      showStatus(`Dashboard refresh failed: ${e.message}`, "error");
+    } finally {
+      setDashboardLoading(false);
     }
   }
 
@@ -895,7 +941,7 @@ export function AdminApp() {
 
   const isOwner = adminStatus?.isPlatformOwner === true;
   const tabs = [
-    { id: "overview", label: "Overview" },
+    { id: "overview", label: "Dashboard" },
     { id: "users", label: "Users & moderation" },
     canManageStaff ? { id: "staff", label: "Staff & permissions" } : null,
     canSendOfficialMessages ? { id: "official", label: "Official Messages" } : null,
@@ -957,84 +1003,55 @@ export function AdminApp() {
 
   return (
     <div className="admin-panel">
-      <header className="admin-header">
-        <h1>OpenCom Control Panel</h1>
-        <div className="admin-header-meta">
-          {adminStatus && (
-            <span className="admin-role-badge" title="Your platform role">
-              {roleLabel}
-            </span>
-          )}
-          <a href={resolveStaticPageHref("server-admin.html")} target="_blank" rel="noopener noreferrer" className="admin-link-out">Server Admin →</a>
-          <button
-            type="button"
-            className="admin-lock-btn"
-            onClick={() => {
-              setPanelPassword("");
-              setAutoPlatformUnlock(false);
-              setAutoUnlockDisabled(true);
-              sessionStorage.removeItem("opencom_admin_panel_password");
-              showStatus("");
-            }}
-          >
-            Lock panel
-          </button>
+      <div className="admin-toprail">
+        <header className="admin-header">
+          <div className="admin-header-copy">
+            <p className="admin-eyebrow">Platform control</p>
+            <h1>OpenCom Control Panel</h1>
+          </div>
+          <div className="admin-header-meta">
+            {adminStatus && (
+              <span className="admin-role-badge" title="Your platform role">
+                {roleLabel}
+              </span>
+            )}
+            <a href={resolveStaticPageHref("server-admin.html")} target="_blank" rel="noopener noreferrer" className="admin-link-out">Server Admin →</a>
+            <button
+              type="button"
+              className="admin-lock-btn"
+              onClick={() => {
+                setPanelPassword("");
+                setAutoPlatformUnlock(false);
+                setAutoUnlockDisabled(true);
+                sessionStorage.removeItem("opencom_admin_panel_password");
+                showStatus("");
+              }}
+            >
+              Lock panel
+            </button>
+          </div>
+        </header>
+
+        <div className="admin-token-row">
+          <label>Access token (used for API calls)</label>
+          <input type="password" placeholder="Core access token" value={token} onChange={(e) => setToken(e.target.value)} />
         </div>
-      </header>
 
-      <div className="admin-token-row">
-        <label>Access token (used for API calls)</label>
-        <input type="password" placeholder="Core access token" value={token} onChange={(e) => setToken(e.target.value)} />
+        <nav className="admin-tabs">
+          {tabs.map((t) => (
+            <button key={t.id} type="button" className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id)}>{t.label}</button>
+          ))}
+        </nav>
       </div>
-
-      <nav className="admin-tabs">
-        {tabs.map((t) => (
-          <button key={t.id} type="button" className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id)}>{t.label}</button>
-        ))}
-      </nav>
 
       <div className="admin-content">
         {tab === "overview" && (
-          <section className="admin-section">
-            <h2>Platform overview</h2>
-            <div className="admin-cards">
-              <div className="admin-card">
-                <h3>Founder</h3>
-                {adminOverview.founder?.id ? (
-                  <p><strong>{adminOverview.founder.username || "—"}</strong><br /><code>{adminOverview.founder.id}</code></p>
-                ) : (
-                  <p className="text-dim">Not set. Use Users & moderation to set founder.</p>
-                )}
-              </div>
-              <div className="admin-card">
-                <h3>Platform admins</h3>
-                <p>{adminOverview.admins?.length ?? 0} admin(s)</p>
-                {adminOverview.admins?.length > 0 && (
-                  <ul className="admin-list">
-                    {(adminOverview.admins || []).map((a) => (
-                      <li key={a.id}><strong>{a.username}</strong> <code>{a.id}</code></li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              <div className="admin-card">
-                <h3>Active manual boost grants</h3>
-                <p><strong>{adminOverview.activeBoostGrants ?? 0}</strong> active grant(s)</p>
-                <p className="text-dim">Use Boost Grants tab for temporary/permanent access controls.</p>
-              </div>
-              <div className="admin-card">
-                <h3>Panel staff</h3>
-                <p><strong>{adminOverview.staffAssignmentsCount ?? 0}</strong> assignment(s)</p>
-                <p className="text-dim">Granular panel access for moderation, blogs, boosts, and badges.</p>
-              </div>
-              <div className="admin-card">
-                <h3>Published blogs</h3>
-                <p><strong>{adminOverview.publishedBlogsCount ?? 0}</strong> live post(s)</p>
-                <p className="text-dim">Create drafts and publish them from the Blogs tab.</p>
-              </div>
-            </div>
-            <button type="button" onClick={loadOverview}>Refresh overview</button>
-          </section>
+          <AdminOverviewDashboard
+            adminOverview={adminOverview}
+            stats={dashboardStats}
+            loading={dashboardLoading}
+            onRefresh={refreshDashboard}
+          />
         )}
 
         {tab === "users" && (

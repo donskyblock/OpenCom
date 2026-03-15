@@ -6,6 +6,7 @@ import { env } from "../env.js";
 import { saveProfileImage, saveProfileImageFromBuffer, deleteProfileImage } from "../storage.js";
 import { reconcileBoostBadge } from "../boost.js";
 import { buildOfficialBadgeDetail, isOfficialAccountName, isOfficialBadgeId } from "../officialAccount.js";
+import { isReservedUsername, isUsernameTaken, normalizeUsername } from "../usernames.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -45,6 +46,7 @@ function isValidMediaReference(value: string) {
 const imageValue = z.string().max(6_000_000).refine(isValidImageReference, "Invalid image format");
 
 const UpdateProfile = z.object({
+  username: z.string().trim().min(2).max(32).optional(),
   displayName: z.string().min(1).max(64).nullable().optional(),
   bio: z.string().max(400).nullable().optional(),
   pfpUrl: imageValue.nullable().optional(),
@@ -526,10 +528,20 @@ export async function profileRoutes(app: FastifyInstance) {
   app.patch("/v1/me/profile", { preHandler: [app.authenticate] } as any, async (req: any, rep: any) => {
     const userId = req.user.sub as string;
     const body = parseBody(UpdateProfile, req.body);
+    const nextUsername = body.username === undefined ? null : normalizeUsername(body.username);
+
+    if (nextUsername !== null) {
+      if (isReservedUsername(nextUsername)) {
+        return rep.code(409).send({ error: "USERNAME_RESERVED" });
+      }
+      if (await isUsernameTaken(nextUsername, userId)) {
+        return rep.code(409).send({ error: "USERNAME_TAKEN" });
+      }
+    }
 
     // Get current URLs to clean up old images
-    const current = await q<{ pfp_url: string | null; banner_url: string | null }>(
-      `SELECT pfp_url, banner_url FROM users WHERE id=:userId`,
+    const current = await q<{ username: string; pfp_url: string | null; banner_url: string | null }>(
+      `SELECT username, pfp_url, banner_url FROM users WHERE id=:userId`,
       { userId }
     );
 
@@ -584,15 +596,31 @@ export async function profileRoutes(app: FastifyInstance) {
       }
     }
 
-    await q(
-      `UPDATE users SET
-         display_name = COALESCE(:displayName, display_name),
-         bio = COALESCE(:bio, bio),
-         pfp_url = :pfpUrl,
-         banner_url = :bannerUrl
-       WHERE id=:userId`,
-      { userId, displayName: body.displayName ?? null, bio: body.bio ?? null, pfpUrl, bannerUrl }
-    );
+    try {
+      await q(
+        `UPDATE users SET
+           username = COALESCE(:username, username),
+           display_name = COALESCE(:displayName, display_name),
+           bio = COALESCE(:bio, bio),
+           pfp_url = :pfpUrl,
+           banner_url = :bannerUrl
+         WHERE id=:userId`,
+        {
+          userId,
+          username: nextUsername,
+          displayName: body.displayName ?? null,
+          bio: body.bio ?? null,
+          pfpUrl,
+          bannerUrl
+        }
+      );
+    } catch (error: any) {
+      const message = String(error?.message || "").toLowerCase();
+      if (message.includes("username")) {
+        return rep.code(409).send({ error: "USERNAME_TAKEN" });
+      }
+      throw error;
+    }
 
     return { ok: true };
   });

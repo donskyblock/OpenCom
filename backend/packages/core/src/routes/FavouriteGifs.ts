@@ -5,6 +5,11 @@ import { ulidLike } from "@ods/shared/ids.js";
 import { q } from "../db.js";
 import { parseBody } from "../validation.js";
 
+const optionalReferenceId = z.preprocess((value) => {
+  const trimmed = String(value || "").trim();
+  return trimmed ? trimmed : undefined;
+}, z.string().min(3).max(64).optional());
+
 const FavouriteMediaBody = z.object({
   sourceKind: z.enum(["server_attachment", "dm_attachment", "external_url"]),
   sourceUrl: z.string().min(1).max(4096),
@@ -12,9 +17,9 @@ const FavouriteMediaBody = z.object({
   title: z.string().max(255).optional(),
   fileName: z.string().max(255).optional(),
   contentType: z.string().max(255).optional(),
-  serverId: z.string().min(3).max(64).optional(),
-  threadId: z.string().min(3).max(64).optional(),
-  messageId: z.string().min(3).max(64).optional(),
+  serverId: optionalReferenceId,
+  threadId: optionalReferenceId,
+  messageId: optionalReferenceId,
 });
 
 const FavouriteMediaParams = z.object({
@@ -46,11 +51,36 @@ function normalizeShortText(value: unknown, maxLength: number) {
 function normalizeUrlValue(value: unknown) {
   const trimmed = String(value || "").trim();
   if (!trimmed) return "";
-  return trimmed.slice(0, 4096);
+  try {
+    const parsed = new URL(trimmed);
+    parsed.hash = "";
+    return parsed.toString().slice(0, 4096);
+  } catch {
+    return trimmed.slice(0, 4096);
+  }
 }
 
 function hashSourceUrl(value: string) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function favouriteMediaKey(sourceKind: string, sourceUrl: string) {
+  const normalizedKind = String(sourceKind || "").trim();
+  const normalizedUrl = normalizeUrlValue(sourceUrl);
+  if (!normalizedKind || !normalizedUrl) return "";
+  return `${normalizedKind}:${normalizedUrl}`;
+}
+
+function dedupeFavouriteRows(rows: FavouriteMediaRow[]) {
+  const seen = new Set<string>();
+  const out: FavouriteMediaRow[] = [];
+  for (const row of rows) {
+    const key = favouriteMediaKey(row.source_kind, row.source_url);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
 }
 
 function mapFavouriteMedia(row: FavouriteMediaRow) {
@@ -86,7 +116,7 @@ export async function FavouriteGifRoutes(app: FastifyInstance) {
       );
 
       return {
-        favourites: rows.map(mapFavouriteMedia),
+        favourites: dedupeFavouriteRows(rows).map(mapFavouriteMedia),
       };
     },
   );
@@ -103,24 +133,72 @@ export async function FavouriteGifRoutes(app: FastifyInstance) {
       }
 
       const sourceUrlHash = hashSourceUrl(sourceUrl);
-      const existing = await q<FavouriteMediaRow>(
+      const existingRows = await q<FavouriteMediaRow>(
         `SELECT id,user_id,source_kind,source_url,page_url,title,file_name,content_type,
                 server_id,thread_id,message_id,created_at,updated_at
          FROM favourite_media
          WHERE user_id=:userId
            AND source_kind=:sourceKind
-           AND source_url_hash=:sourceUrlHash
-         LIMIT 1`,
+         ORDER BY updated_at DESC, created_at DESC`,
         {
           userId,
           sourceKind: body.sourceKind,
-          sourceUrlHash,
         },
       );
+      const matchingRows = existingRows.filter(
+        (row) => favouriteMediaKey(row.source_kind, row.source_url) === favouriteMediaKey(body.sourceKind, sourceUrl),
+      );
 
-      if (existing.length) {
+      if (matchingRows.length) {
+        const primary = matchingRows[0];
+        for (const duplicate of matchingRows.slice(1)) {
+          await q(
+            `DELETE FROM favourite_media
+             WHERE id=:id
+               AND user_id=:userId`,
+            { id: duplicate.id, userId },
+          );
+        }
+
+        await q(
+          `UPDATE favourite_media
+           SET source_url_hash=:sourceUrlHash,
+               source_url=:sourceUrl,
+               page_url=:pageUrl,
+               title=:title,
+               file_name=:fileName,
+               content_type=:contentType,
+               server_id=:serverId,
+               thread_id=:threadId,
+               message_id=:messageId,
+               updated_at=NOW()
+           WHERE id=:id
+             AND user_id=:userId`,
+          {
+            id: primary.id,
+            userId,
+            sourceUrlHash,
+            sourceUrl,
+            pageUrl: normalizeShortText(body.pageUrl, 4096),
+            title: normalizeShortText(body.title, 255),
+            fileName: normalizeShortText(body.fileName, 255),
+            contentType: normalizeShortText(body.contentType, 255),
+            serverId: normalizeShortText(body.serverId, 64),
+            threadId: normalizeShortText(body.threadId, 64),
+            messageId: normalizeShortText(body.messageId, 64),
+          },
+        );
+
+        const refreshed = await q<FavouriteMediaRow>(
+          `SELECT id,user_id,source_kind,source_url,page_url,title,file_name,content_type,
+                  server_id,thread_id,message_id,created_at,updated_at
+           FROM favourite_media
+           WHERE id=:id
+           LIMIT 1`,
+          { id: primary.id },
+        );
         return rep.send({
-          favourite: mapFavouriteMedia(existing[0]),
+          favourite: refreshed.length ? mapFavouriteMedia(refreshed[0]) : null,
           created: false,
         });
       }
@@ -172,8 +250,14 @@ export async function FavouriteGifRoutes(app: FastifyInstance) {
       const userId = req.user.sub as string;
       const { favouriteId } = FavouriteMediaParams.parse(req.params);
 
-      const existing = await q<{ id: string }>(
+      const existing = await q<{
+        id: string;
+        source_kind: FavouriteMediaRow["source_kind"];
+        source_url: string;
+      }>(
         `SELECT id
+                ,source_kind
+                ,source_url
          FROM favourite_media
          WHERE id=:favouriteId
            AND user_id=:userId
@@ -185,14 +269,31 @@ export async function FavouriteGifRoutes(app: FastifyInstance) {
         return rep.code(404).send({ error: "FAVOURITE_NOT_FOUND" });
       }
 
-      await q(
-        `DELETE FROM favourite_media
-         WHERE id=:favouriteId
-           AND user_id=:userId`,
-        { favouriteId, userId },
+      const targetKey = favouriteMediaKey(existing[0].source_kind, existing[0].source_url);
+      const siblingRows = await q<{ id: string; source_kind: FavouriteMediaRow["source_kind"]; source_url: string }>(
+        `SELECT id,source_kind,source_url
+         FROM favourite_media
+         WHERE user_id=:userId
+           AND source_kind=:sourceKind`,
+        {
+          userId,
+          sourceKind: existing[0].source_kind,
+        },
       );
+      const duplicateIds = siblingRows
+        .filter((row) => favouriteMediaKey(row.source_kind, row.source_url) === targetKey)
+        .map((row) => row.id);
 
-      return rep.send({ ok: true });
+      for (const id of duplicateIds) {
+        await q(
+          `DELETE FROM favourite_media
+           WHERE id=:id
+             AND user_id=:userId`,
+          { id, userId },
+        );
+      }
+
+      return rep.send({ ok: true, deleted: duplicateIds.length || 1 });
     },
   );
 }

@@ -151,3 +151,6 @@ frontend/*.tar.gz
 frontend/*.snap
 frontend/*.deb
 client/src/web/downloads/OpenCom.exe
+.opencom-docker-state/
+backend/packages/core/storage
+backend/packages/core/data

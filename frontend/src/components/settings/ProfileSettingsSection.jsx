@@ -19,6 +19,23 @@ export function ProfileSettingsSection({
     <div className="card">
       <h4>Profile Settings</h4>
       <label>
+        Username
+        <input
+          value={profileForm.username}
+          onChange={(event) =>
+            setProfileForm((current) => ({
+              ...current,
+              username: event.target.value,
+            }))
+          }
+          minLength={2}
+          maxLength={32}
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+        />
+      </label>
+      <label>
         Display Name
         <input
           value={profileForm.displayName}

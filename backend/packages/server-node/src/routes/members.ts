@@ -98,6 +98,42 @@ export async function memberRoutes(
     });
   });
 
+  app.get("/v1/guilds/:guildId/bans", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { guildId } = z.object({ guildId: z.string().min(3) }).parse(req.params);
+    const actorId = req.auth.userId as string;
+
+    try { await requireGuildMember(guildId, actorId, req.auth.roles, req.auth.coreServerId); }
+    catch { return rep.code(403).send({ error: "NOT_GUILD_MEMBER" }); }
+
+    const actorCanBan = await requireModerationPermission(guildId, actorId, req.auth.roles || [], Perm.BAN_MEMBERS);
+    if (!actorCanBan) return rep.code(403).send({ error: "MISSING_PERMS" });
+
+    const bans = await q<{ user_id: string; reason: string | null; banned_by: string; created_at: string }>(
+      `SELECT user_id, reason, banned_by, created_at
+       FROM guild_bans
+       WHERE guild_id=:guildId
+       ORDER BY created_at DESC`,
+      { guildId }
+    );
+
+    const profiles = await resolveCoreUserProfiles(
+      Array.from(new Set(bans.flatMap((row) => [row.user_id, row.banned_by])))
+    );
+
+    return rep.send({
+      bans: bans.map((row) => ({
+        userId: row.user_id,
+        username: profiles.get(row.user_id)?.username || row.user_id,
+        displayName: profiles.get(row.user_id)?.displayName || null,
+        pfp_url: profiles.get(row.user_id)?.pfpUrl ?? null,
+        reason: row.reason ?? null,
+        bannedBy: row.banned_by,
+        bannedByUsername: profiles.get(row.banned_by)?.username || row.banned_by,
+        createdAt: row.created_at
+      }))
+    });
+  });
+
   app.get("/v1/members/:userId/profile", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const { userId } = z.object({ userId: z.string().min(3) }).parse(req.params);
     const profiles = await resolveCoreUserProfiles([userId]);

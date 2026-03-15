@@ -23,6 +23,7 @@ import { AppContextMenus } from "./components/app/AppContextMenus";
 import { AddServerModal } from "./components/app/AddServerModal";
 import { FavouriteMediaModal } from "./components/app/FavouriteMediaModal";
 import { MediaViewerModal } from "./components/app/MediaViewerModal";
+import { MessageReactionPickerModal } from "./components/app/MessageReactionPickerModal";
 import { MemberProfilePopout } from "./components/app/MemberProfilePopout";
 import { FullProfileViewerModal } from "./components/app/FullProfileViewerModal";
 import { AppDialogModal } from "./components/app/AppDialogModal";
@@ -42,7 +43,13 @@ import { VoiceSettingsSection } from "./components/settings/VoiceSettingsSection
 import { BillingSettingsSection } from "./components/settings/BillingSettingsSection";
 import { SecuritySettingsSection } from "./components/settings/SecuritySettingsSection";
 import { SafeAvatar } from "./components/ui/SafeAvatar";
+import { ThemeStudioApp } from "./theme/ThemeStudioApp.jsx";
 import { DOWNLOAD_TARGETS, getPreferredDownloadTarget } from "./lib/downloads";
+import {
+  BUILTIN_EMOTES,
+  BUILTIN_EMOTE_CATEGORIES,
+  BUILTIN_EMOTE_ENTRIES,
+} from "./lib/builtinEmotes";
 import { uploadFileInChunks } from "./utils/chunkedUploads";
 import {
   APP_ROUTE_CLIENT,
@@ -68,1554 +75,126 @@ import {
   resolveStaticPageHref,
   writeAppRoute,
 } from "./lib/routing";
+import {
+  ACCESS_TOKEN_KEY,
+  ACTIVE_DM_KEY,
+  AUDIO_INPUT_DEVICE_KEY,
+  AUDIO_OUTPUT_DEVICE_KEY,
+  CLIENT_EXTENSIONS_DEV_MODE_KEY,
+  CLIENT_EXTENSIONS_DEV_URLS_KEY,
+  CLIENT_EXTENSIONS_ENABLED_KEY,
+  CORE_API,
+  DEBUG_VOICE_STORAGE_KEY,
+  GATEWAY_DEVICE_ID_KEY,
+  GUILD_PERM,
+  LAST_CORE_GATEWAY_KEY,
+  LAST_SERVER_GATEWAY_KEY,
+  MESSAGE_HISTORY_PREFETCH_THRESHOLD_PX,
+  MESSAGE_PAGE_SIZE,
+  MIC_GAIN_KEY,
+  MIC_SENSITIVITY_KEY,
+  NOISE_SUPPRESSION_CONFIG_KEY,
+  NOISE_SUPPRESSION_KEY,
+  NOISE_SUPPRESSION_PRESET_KEY,
+  PENDING_INVITE_AUTO_JOIN_KEY,
+  PENDING_INVITE_CODE_KEY,
+  PINNED_DM_KEY,
+  REFRESH_TOKEN_KEY,
+  SELF_STATUS_KEY,
+  SERVER_VOICE_GATEWAY_PREFS_KEY,
+  VOICE_MEMBER_AUDIO_PREFS_KEY,
+  api,
+  buildFavouriteMediaKey,
+  buildPaginatedPath,
+  buildSlashCommandTemplate,
+  buildUnicodeReactionKey,
+  clampProfileCardPosition,
+  clampProfileElementRect,
+  contentMentionsSelf,
+  createBasicFullProfile,
+  decodeJwtPayload,
+  escapeRegex,
+  extensionForMimeType,
+  extractFilesFromClipboardData,
+  extractHttpUrls,
+  ensureFreshMembershipToken,
+  formatByteCount,
+  formatCallDurationLabel,
+  formatMessageDate,
+  formatMessageTime,
+  getContextMenuPoint,
+  getCoreGatewayWsCandidates,
+  getDesktopBridge,
+  getEmoteQuery,
+  getInitials,
+  getLastSuccessfulGateway,
+  getMentionQuery,
+  getMessageDayKey,
+  getReactionUserIds,
+  getSlashQuery,
+  getStoredJson,
+  getStoredStringArray,
+  getVoiceGatewayWsCandidates,
+  groupMessages,
+  guessFileNameFromUrl,
+  isVoiceDebugEnabled,
+  mergeMessagesChronologically,
+  messageHasReactionFromUser,
+  nodeApi,
+  normalizeAttachmentFile,
+  normalizeFavouriteMediaUrl,
+  normalizeFullProfile,
+  normalizeImageUrlInput,
+  normalizeNoiseSuppressionConfigForUi,
+  normalizeNoiseSuppressionPresetForUi,
+  normalizeServerBaseUrl,
+  normalizeServerList,
+  normalizeServerRecord,
+  parseCommandArgs,
+  parseCommandArgsByOptions,
+  parsePermissionBits,
+  playNotificationBeep,
+  prioritizeLastSuccessfulGateway,
+  profileImageUrl,
+  rpcActivityFromForm,
+  rpcFormFromActivity,
+  resolveSlashCommand,
+  splitSlashInput,
+  toIsoTimestamp,
+  toTimestampMs,
+  useThemeCss,
+} from "./lib/appCore";
 import { AdminApp } from "./admin/AdminApp.jsx";
 
-function resolveCoreApiBase() {
-  const fromEnv = String(import.meta.env.VITE_CORE_API_URL || "").trim();
-  let fromQuery = "";
-  if (typeof window !== "undefined") {
-    const qp = new URLSearchParams(window.location.search || "");
-    fromQuery = String(qp.get("coreApi") || "").trim();
-  }
-  const candidate = fromEnv || fromQuery || "https://api.opencom.online";
-  try {
-    const parsed = new URL(candidate);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-      return "https://api.opencom.online";
-    return parsed.toString().replace(/\/$/, "");
-  } catch {
-    return "https://api.opencom.online";
-  }
-}
+const BUILTIN_REACTION_ENTRY_BY_TOKEN = BUILTIN_EMOTE_ENTRIES.reduce(
+  (map, entry) => {
+    map[entry.name] = entry;
+    for (const alias of entry.aliases || []) {
+      if (!map[alias]) map[alias] = entry;
+    }
+    return map;
+  },
+  {},
+);
 
-const CORE_API = resolveCoreApiBase();
+const BUILTIN_REACTION_ENTRY_BY_VALUE = BUILTIN_EMOTE_ENTRIES.reduce(
+  (map, entry) => {
+    if (!map.has(entry.value)) map.set(entry.value, entry);
+    return map;
+  },
+  new Map(),
+);
 
-function isLoopbackHostname(hostname = "") {
-  const normalized = String(hostname || "")
-    .trim()
-    .toLowerCase()
-    .replace(/^\[|\]$/g, "");
-  if (!normalized) return false;
-  return (
-    normalized === "localhost" ||
-    normalized === "::1" ||
-    normalized === "0:0:0:0:0:0:0:1" ||
-    normalized === "0.0.0.0" ||
-    normalized.startsWith("127.")
-  );
-}
-
-function shouldAllowLoopbackTargets() {
-  if (typeof window === "undefined") return true;
-  if (window.location.protocol === "file:") return true;
-  const currentHost = String(window.location.hostname || "")
+function matchesReactionPickerQuery(searchText = "", query = "") {
+  const normalizedQuery = String(query || "")
     .trim()
     .toLowerCase();
-  return isLoopbackHostname(currentHost) || currentHost.endsWith(".localhost");
-}
-
-function normalizeHttpBaseUrl(value = "") {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  try {
-    const parsed = new URL(raw);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    parsed.search = "";
-    parsed.hash = "";
-    return parsed.toString().replace(/\/$/, "");
-  } catch {
-    return "";
-  }
-}
-
-function gatewayUrlToHttpBaseUrl(value = "") {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  try {
-    const parsed = new URL(raw);
-    if (parsed.protocol === "ws:") parsed.protocol = "http:";
-    else if (parsed.protocol === "wss:") parsed.protocol = "https:";
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    parsed.search = "";
-    parsed.hash = "";
-    parsed.pathname = parsed.pathname.replace(/\/gateway\/?$/i, "");
-    return parsed.toString().replace(/\/$/, "");
-  } catch {
-    return "";
-  }
-}
-
-function resolvePublicNodeBaseUrl() {
-  const explicit = normalizeHttpBaseUrl(
-    import.meta.env.VITE_OFFICIAL_NODE_BASE_URL ||
-      import.meta.env.OFFICIAL_NODE_BASE_URL ||
-      "",
-  );
-  if (explicit) return explicit;
-  const wsCandidates = [
-    import.meta.env.VITE_NODE_GATEWAY_WS_URL,
-    import.meta.env.VITE_VOICE_GATEWAY_URL,
-  ];
-  for (const candidate of wsCandidates) {
-    const derived = gatewayUrlToHttpBaseUrl(candidate);
-    if (derived) return derived;
-  }
-  return "";
-}
-
-const PUBLIC_NODE_BASE_URL = resolvePublicNodeBaseUrl();
-
-function normalizeServerBaseUrl(baseUrl = "") {
-  const normalized = normalizeHttpBaseUrl(baseUrl);
-  if (!normalized) return "";
-  try {
-    const parsed = new URL(normalized);
-    if (isLoopbackHostname(parsed.hostname)) {
-      if (PUBLIC_NODE_BASE_URL) return PUBLIC_NODE_BASE_URL;
-      if (!shouldAllowLoopbackTargets()) return "";
-    }
-  } catch {
-    return normalized;
-  }
-  return normalized;
-}
-
-function normalizeServerRecord(server) {
-  if (!server || typeof server !== "object") return server;
-  const currentBaseUrl = String(server.baseUrl ?? server.base_url ?? "").trim();
-  if (!currentBaseUrl) return server;
-  const normalizedBaseUrl = normalizeServerBaseUrl(currentBaseUrl);
-  if (normalizedBaseUrl === currentBaseUrl) return server;
-  if (!normalizedBaseUrl) {
-    const next = { ...server, baseUrl: "" };
-    if (Object.prototype.hasOwnProperty.call(server, "base_url")) {
-      next.base_url = "";
-    }
-    return next;
-  }
-  const next = { ...server, baseUrl: normalizedBaseUrl };
-  if (Object.prototype.hasOwnProperty.call(server, "base_url")) {
-    next.base_url = normalizedBaseUrl;
-  }
-  return next;
-}
-
-function normalizeServerList(list) {
-  if (!Array.isArray(list)) return [];
-  return list.map((server) => normalizeServerRecord(server)).filter(Boolean);
-}
-
-/** Resolve profile image URL so it loads from the API when relative (e.g. /v1/profile-images/...) */
-function profileImageUrl(url) {
-  if (!url || typeof url !== "string") return null;
-  const trimmed = url.trim();
-  if (
-    !trimmed ||
-    trimmed === "null" ||
-    trimmed === "undefined" ||
-    trimmed === "[object Object]"
-  )
-    return null;
-  url = trimmed;
-  if (url.startsWith("data:")) return url;
-  if (url.startsWith("http://") || url.startsWith("https://")) return url;
-  if (url.startsWith("users/"))
-    return `${CORE_API.replace(/\/$/, "")}/v1/profile-images/${url}`;
-  if (url.startsWith("/users/"))
-    return `${CORE_API.replace(/\/$/, "")}/v1/profile-images${url}`;
-  if (url.startsWith("/")) return `${CORE_API.replace(/\/$/, "")}${url}`;
-  return url;
-}
-
-function createBasicFullProfile(profileData = {}) {
-  const hasBio = !!String(profileData?.bio || "").trim();
-  return {
-    version: 1,
-    mode: "basic",
-    enabled: true,
-    theme: {
-      background: "linear-gradient(150deg, #16274b, #0f1a33 65%)",
-      card: "rgba(9, 14, 28, 0.62)",
-      text: "#dfe9ff",
-      accent: "#9bb6ff",
-      fontPreset: "sans",
-    },
-    elements: [
-      {
-        id: "banner",
-        type: "banner",
-        x: 0,
-        y: 0,
-        w: 100,
-        h: 34,
-        order: 0,
-        radius: 0,
-        opacity: 100,
-        fontSize: 16,
-        align: "left",
-        color: "",
-      },
-      {
-        id: "avatar",
-        type: "avatar",
-        x: 4,
-        y: 21,
-        w: 20,
-        h: 31,
-        order: 1,
-        radius: 18,
-        opacity: 100,
-        fontSize: 16,
-        align: "left",
-        color: "",
-      },
-      {
-        id: "name",
-        type: "name",
-        x: 30,
-        y: 30,
-        w: 66,
-        h: 10,
-        order: 2,
-        radius: 8,
-        opacity: 100,
-        fontSize: 22,
-        align: "left",
-        color: "",
-      },
-      {
-        id: "bio",
-        type: "bio",
-        x: 4,
-        y: 54,
-        w: 92,
-        h: hasBio ? 30 : 18,
-        order: 3,
-        radius: 8,
-        opacity: 100,
-        fontSize: 14,
-        align: "left",
-        color: "",
-      },
-    ],
-    links: [],
-    music: { url: "", autoplay: false, loop: true, volume: 60 },
-  };
-}
-
-function clampProfilePercent(value, min, max, fallback) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return fallback;
-  return Math.max(min, Math.min(max, numeric));
-}
-
-function clampProfileElementRect(rect = {}, fallback = {}) {
-  const fallbackWidth = clampProfilePercent(fallback.w, 1, 100, 20);
-  const fallbackHeight = clampProfilePercent(fallback.h, 1, 100, 12);
-  const w = clampProfilePercent(rect.w, 1, 100, fallbackWidth);
-  const h = clampProfilePercent(rect.h, 1, 100, fallbackHeight);
-  const maxX = Math.max(0, 100 - w);
-  const maxY = Math.max(0, 100 - h);
-  const fallbackX = clampProfilePercent(fallback.x, 0, maxX, 0);
-  const fallbackY = clampProfilePercent(fallback.y, 0, maxY, 0);
-  const x = clampProfilePercent(rect.x, 0, maxX, fallbackX);
-  const y = clampProfilePercent(rect.y, 0, maxY, fallbackY);
-  return { x, y, w, h };
-}
-
-function getContextMenuPoint(clientX, clientY, options = {}) {
-  const padding = Number.isFinite(Number(options.padding))
-    ? Math.max(0, Number(options.padding))
-    : 8;
-  const menuWidth = Number.isFinite(Number(options.width))
-    ? Math.max(1, Number(options.width))
-    : 240;
-  const menuHeight = Number.isFinite(Number(options.height))
-    ? Math.max(1, Number(options.height))
-    : 240;
-  const viewportWidth =
-    typeof window !== "undefined" ? window.innerWidth : 1280;
-  const viewportHeight =
-    typeof window !== "undefined" ? window.innerHeight : 720;
-  const maxX = Math.max(padding, viewportWidth - menuWidth - padding);
-  const maxY = Math.max(padding, viewportHeight - menuHeight - padding);
-  return {
-    x: Math.max(padding, Math.min(Number(clientX) || 0, maxX)),
-    y: Math.max(padding, Math.min(Number(clientY) || 0, maxY)),
-  };
-}
-
-function clampProfileCardPosition(left, top, options = {}) {
-  const padding = Number.isFinite(Number(options.padding))
-    ? Math.max(0, Number(options.padding))
-    : 8;
-  const cardWidth = Number.isFinite(Number(options.width))
-    ? Math.max(1, Number(options.width))
-    : 320;
-  const cardHeight = Number.isFinite(Number(options.height))
-    ? Math.max(1, Number(options.height))
-    : 280;
-  const viewportWidth =
-    typeof window !== "undefined" ? window.innerWidth : 1280;
-  const viewportHeight =
-    typeof window !== "undefined" ? window.innerHeight : 720;
-  const maxX = Math.max(padding, viewportWidth - cardWidth - padding);
-  const maxY = Math.max(padding, viewportHeight - cardHeight - padding);
-  return {
-    x: Math.max(padding, Math.min(Number(left) || 0, maxX)),
-    y: Math.max(padding, Math.min(Number(top) || 0, maxY)),
-  };
-}
-
-function normalizeFullProfile(profileData = {}, fullProfileCandidate) {
-  const basic = createBasicFullProfile(profileData);
-  const raw =
-    fullProfileCandidate && typeof fullProfileCandidate === "object"
-      ? fullProfileCandidate
-      : {};
-
-  const themeInput =
-    raw.theme && typeof raw.theme === "object" ? raw.theme : {};
-  const fontPresetRaw = String(themeInput.fontPreset || "")
-    .trim()
-    .toLowerCase();
-  const fontPreset = ["sans", "serif", "mono", "display"].includes(
-    fontPresetRaw,
-  )
-    ? fontPresetRaw
-    : basic.theme.fontPreset;
-  const theme = {
-    background:
-      typeof themeInput.background === "string" && themeInput.background.trim()
-        ? themeInput.background.trim().slice(0, 300)
-        : basic.theme.background,
-    card:
-      typeof themeInput.card === "string" && themeInput.card.trim()
-        ? themeInput.card.trim().slice(0, 120)
-        : basic.theme.card,
-    text:
-      typeof themeInput.text === "string" && themeInput.text.trim()
-        ? themeInput.text.trim().slice(0, 40)
-        : basic.theme.text,
-    accent:
-      typeof themeInput.accent === "string" && themeInput.accent.trim()
-        ? themeInput.accent.trim().slice(0, 40)
-        : basic.theme.accent,
-    fontPreset,
-  };
-
-  const rawElements = Array.isArray(raw.elements) ? raw.elements : [];
-  const elements = rawElements
-    .filter((item) => item && typeof item === "object")
-    .slice(0, 24)
-    .map((item, index) => {
-      const type = String(item.type || "").toLowerCase();
-      if (
-        !["avatar", "banner", "name", "bio", "links", "text", "music"].includes(
-          type,
-        )
-      )
-        return null;
-      const defaults = {
-        x: type === "banner" ? 0 : type === "music" ? 74 : 5,
-        y: type === "banner" ? 0 : 5 + index * 8,
-        w:
-          type === "banner"
-            ? 100
-            : type === "avatar"
-              ? 20
-              : type === "music"
-                ? 22
-                : 80,
-        h:
-          type === "banner"
-            ? 34
-            : type === "avatar"
-              ? 31
-              : type === "music"
-                ? 9
-                : 12,
-      };
-      const rect = clampProfileElementRect(
-        { x: item.x, y: item.y, w: item.w, h: item.h },
-        defaults,
-      );
-      const alignRaw = String(item.align || "")
-        .trim()
-        .toLowerCase();
-      const align =
-        alignRaw === "center" || alignRaw === "right" ? alignRaw : "left";
-      const defaultFontSize =
-        type === "name"
-          ? 22
-          : type === "bio"
-            ? 14
-            : type === "links"
-              ? 14
-              : type === "music"
-                ? 12
-                : 16;
-      return {
-        id: String(item.id || `${type}-${index + 1}`).slice(0, 40),
-        type,
-        ...rect,
-        order: Math.max(
-          0,
-          Math.min(
-            100,
-            Number.isFinite(Number(item.order))
-              ? Math.round(Number(item.order))
-              : index,
-          ),
-        ),
-        text: typeof item.text === "string" ? item.text.slice(0, 500) : "",
-        radius: Math.round(
-          clampProfilePercent(
-            item.radius,
-            0,
-            40,
-            type === "avatar" ? 18 : type === "banner" ? 0 : 8,
-          ),
-        ),
-        opacity: Math.round(clampProfilePercent(item.opacity, 20, 100, 100)),
-        fontSize: Math.round(
-          clampProfilePercent(item.fontSize, 10, 72, defaultFontSize),
-        ),
-        align,
-        color:
-          typeof item.color === "string" && item.color.trim()
-            ? item.color.trim().slice(0, 40)
-            : "",
-      };
-    })
-    .filter(Boolean);
-
-  const rawLinks = Array.isArray(raw.links) ? raw.links : [];
-  const links = rawLinks
-    .filter((item) => item && typeof item === "object")
-    .slice(0, 16)
-    .map((item, index) => {
-      const label = String(item.label || "")
-        .trim()
-        .slice(0, 40);
-      const url = String(item.url || "")
-        .trim()
-        .slice(0, 500);
-      if (!label || !/^https?:\/\//i.test(url)) return null;
-      return {
-        id: String(item.id || `link-${index + 1}`).slice(0, 40),
-        label,
-        url,
-        x: clampProfilePercent(item.x, 0, 100, 0),
-        y: clampProfilePercent(item.y, 0, 100, 0),
-      };
-    })
-    .filter(Boolean);
-
-  const rawMusic = raw.music && typeof raw.music === "object" ? raw.music : {};
-  const candidateMusicUrl = String(rawMusic.url || "")
-    .trim()
-    .slice(0, 500);
-  const music = {
-    url: /^(https?:\/\/|\/|users\/)/i.test(candidateMusicUrl)
-      ? candidateMusicUrl
-      : "",
-    autoplay: !!rawMusic.autoplay,
-    loop: rawMusic.loop !== false,
-    volume: Math.max(
-      0,
-      Math.min(
-        100,
-        Number.isFinite(Number(rawMusic.volume))
-          ? Math.round(Number(rawMusic.volume))
-          : 60,
-      ),
-    ),
-  };
-
-  return {
-    version: 1,
-    mode: raw.mode === "custom" ? "custom" : "basic",
-    enabled: raw.enabled !== false,
-    theme,
-    elements: elements.length ? elements : basic.elements,
-    links,
-    music,
-  };
-}
-
-const THEME_STORAGE_KEY = "opencom_custom_theme_css";
-const THEME_ENABLED_STORAGE_KEY = "opencom_custom_theme_enabled";
-const SELF_STATUS_KEY = "opencom_self_status";
-const PINNED_DM_KEY = "opencom_pinned_dm_messages";
-const ACTIVE_DM_KEY = "opencom_active_dm";
-const GATEWAY_DEVICE_ID_KEY = "opencom_gateway_device_id";
-const MIC_GAIN_KEY = "opencom_mic_gain";
-const MIC_SENSITIVITY_KEY = "opencom_mic_sensitivity";
-const AUDIO_INPUT_DEVICE_KEY = "opencom_audio_input_device";
-const AUDIO_OUTPUT_DEVICE_KEY = "opencom_audio_output_device";
-const NOISE_SUPPRESSION_KEY = "opencom_noise_suppression";
-const NOISE_SUPPRESSION_PRESET_KEY = "opencom_noise_suppression_preset";
-const NOISE_SUPPRESSION_CONFIG_KEY = "opencom_noise_suppression_config";
-const VOICE_MEMBER_AUDIO_PREFS_KEY = "opencom_voice_member_audio_prefs";
-// Kept for backward compatibility with any persisted/runtime references from older bundles.
-const SERVER_VOICE_GATEWAY_PREFS_KEY = "opencom_server_voice_gateway_prefs";
-const LAST_CORE_GATEWAY_KEY = "opencom_last_core_gateway";
-const LAST_SERVER_GATEWAY_KEY = "opencom_last_server_gateway";
-const FALLBACK_CORE_GATEWAY_WS_URL = "wss://ws.opencom.online/gateway";
-const DEBUG_VOICE_STORAGE_KEY = "opencom_debug_voice";
-const CLIENT_EXTENSIONS_ENABLED_KEY = "opencom_client_extensions_enabled";
-const CLIENT_EXTENSIONS_DEV_MODE_KEY = "opencom_client_extensions_dev_mode";
-const CLIENT_EXTENSIONS_DEV_URLS_KEY = "opencom_client_extensions_dev_urls";
-const ACCESS_TOKEN_KEY = "opencom_access_token";
-const REFRESH_TOKEN_KEY = "opencom_refresh_token";
-const PENDING_INVITE_CODE_KEY = "opencom_pending_invite_code";
-const PENDING_INVITE_AUTO_JOIN_KEY = "opencom_pending_invite_auto_join";
-const MESSAGE_PAGE_SIZE = 50;
-const MESSAGE_HISTORY_PREFETCH_REMAINING_COUNT = 10;
-const MESSAGE_HISTORY_PREFETCH_THRESHOLD_PX =
-  MESSAGE_HISTORY_PREFETCH_REMAINING_COUNT * 56;
-
-const BUILTIN_EMOTES = {
-  smile: "😄",
-  grin: "😁",
-  joy: "😂",
-  rofl: "🤣",
-  wink: "😉",
-  heart: "❤️",
-  thumbs_up: "👍",
-  fire: "🔥",
-  tada: "🎉",
-  eyes: "👀",
-  thinking: "🤔",
-  sob: "😭",
-  skull: "💀",
-  star: "⭐",
-};
-
-const GUILD_PERM = {
-  VIEW_CHANNEL: 1n << 0n,
-  SEND_MESSAGES: 1n << 1n,
-  MANAGE_CHANNELS: 1n << 2n,
-  MANAGE_ROLES: 1n << 3n,
-  KICK_MEMBERS: 1n << 4n,
-  BAN_MEMBERS: 1n << 5n,
-  MUTE_MEMBERS: 1n << 6n,
-  DEAFEN_MEMBERS: 1n << 7n,
-  MOVE_MEMBERS: 1n << 8n,
-  CONNECT: 1n << 9n,
-  SPEAK: 1n << 10n,
-  ATTACH_FILES: 1n << 11n,
-  ADMINISTRATOR: 1n << 60n,
-};
-
-function parsePermissionBits(value) {
-  try {
-    if (typeof value === "bigint") return value;
-    if (typeof value === "number") return BigInt(value);
-    if (typeof value === "string" && value.trim()) return BigInt(value.trim());
-    return 0n;
-  } catch {
-    return 0n;
-  }
-}
-
-function toIsoTimestamp(value) {
-  if (value == null || value === "") return "";
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toISOString();
-}
-
-function toTimestampMs(value) {
-  const ms = new Date(value || "").getTime();
-  return Number.isFinite(ms) ? ms : 0;
-}
-
-function mergeMessagesChronologically(
-  existing = [],
-  incoming = [],
-  getTimestamp,
-) {
-  const byId = new Map();
-  for (const message of existing || []) {
-    if (!message?.id) continue;
-    byId.set(message.id, message);
-  }
-  for (const message of incoming || []) {
-    if (!message?.id) continue;
-    byId.set(message.id, { ...(byId.get(message.id) || {}), ...message });
-  }
-  return [...byId.values()].sort((a, b) => {
-    const aTime = toTimestampMs(getTimestamp(a));
-    const bTime = toTimestampMs(getTimestamp(b));
-    if (aTime !== bTime) return aTime - bTime;
-    return String(a.id || "").localeCompare(String(b.id || ""));
-  });
-}
-
-function buildPaginatedPath(
-  basePath,
-  { limit = MESSAGE_PAGE_SIZE, before = "" } = {},
-) {
-  const params = new URLSearchParams();
-  params.set("limit", String(limit));
-  if (before) params.set("before", before);
-  const query = params.toString();
-  return query ? `${basePath}?${query}` : basePath;
-}
-
-function isVoiceDebugEnabled() {
-  const envEnabled =
-    String(import.meta.env.VITE_DEBUG_VOICE || "").trim() === "1";
-  const storageEnabled =
-    typeof window !== "undefined" &&
-    localStorage.getItem(DEBUG_VOICE_STORAGE_KEY) === "1";
-  return envEnabled || storageEnabled;
-}
-
-function decodeJwtPayload(token = "") {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    const normalized = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const json = atob(normalized);
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-
-const MEMBERSHIP_TOKEN_REFRESH_LEEWAY_MS = 90 * 1000;
-const pendingMembershipTokenRefreshByServerId = new Map();
-
-function getMembershipTokenServerId(membershipToken = "") {
-  const claims = decodeJwtPayload(membershipToken);
-  return String(claims?.core_server_id || claims?.server_id || "").trim();
-}
-
-function getMembershipTokenExpiryMs(membershipToken = "") {
-  const claims = decodeJwtPayload(membershipToken);
-  const expSeconds = Number(claims?.exp || 0);
-  if (!Number.isFinite(expSeconds) || expSeconds <= 0) return 0;
-  return expSeconds * 1000;
-}
-
-async function refreshAccessTokenWithRefreshToken() {
-  const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY) || "";
-  if (!refreshToken) return null;
-  const response = await fetch(`${CORE_API}/v1/auth/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refreshToken }),
-  });
-  if (!response.ok) return null;
-  const data = await response.json().catch(() => null);
-  const accessToken = data?.accessToken;
-  if (!accessToken) return null;
-  localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-  if (data?.refreshToken)
-    localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(
-      new CustomEvent("opencom-access-token-refresh", {
-        detail: {
-          accessToken,
-          refreshToken: data?.refreshToken || refreshToken,
-        },
-      }),
-    );
-  }
-  return {
-    accessToken,
-    refreshToken: data?.refreshToken || refreshToken,
-  };
-}
-
-async function refreshMembershipTokenForNode(baseUrl, membershipToken) {
-  if (!membershipToken) return null;
-  const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY) || "";
-  const serverId = getMembershipTokenServerId(membershipToken);
-  if (!serverId) return null;
-
-  const existingRefresh = pendingMembershipTokenRefreshByServerId.get(serverId);
-  if (existingRefresh) return existingRefresh;
-
-  const refreshPromise = (async () => {
-    const data = await api(
-      `/v1/servers/${encodeURIComponent(serverId)}/membership-token`,
-      {
-        method: "POST",
-        headers: accessToken
-          ? { Authorization: `Bearer ${accessToken}` }
-          : undefined,
-      },
-    ).catch(() => null);
-    const nextToken = data?.membershipToken;
-    if (!nextToken) return null;
-
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(
-        new CustomEvent("opencom-membership-token-refresh", {
-          detail: { serverId, membershipToken: nextToken },
-        }),
-      );
-    }
-    return nextToken;
-  })();
-
-  pendingMembershipTokenRefreshByServerId.set(serverId, refreshPromise);
-  try {
-    return await refreshPromise;
-  } finally {
-    if (pendingMembershipTokenRefreshByServerId.get(serverId) === refreshPromise)
-      pendingMembershipTokenRefreshByServerId.delete(serverId);
-  }
-}
-
-async function ensureFreshMembershipToken(
-  baseUrl,
-  membershipToken,
-  { minValidityMs = MEMBERSHIP_TOKEN_REFRESH_LEEWAY_MS } = {},
-) {
-  if (!membershipToken) return null;
-  const expiresAtMs = getMembershipTokenExpiryMs(membershipToken);
-  if (expiresAtMs && expiresAtMs - Date.now() > minValidityMs) {
-    return membershipToken;
-  }
-  return (
-    (await refreshMembershipTokenForNode(baseUrl, membershipToken).catch(
-      () => null,
-    )) || membershipToken
-  );
-}
-
-function getLastSuccessfulGateway(candidates, storageKey) {
-  return prioritizeLastSuccessfulGateway(candidates, storageKey);
-}
-
-function normalizeGatewayWsUrl(value) {
-  if (!value || typeof value !== "string") return "";
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-
-  // In desktop file:// mode, never allow relative/implicit URLs to resolve against file origin.
-  if (typeof window !== "undefined" && window.location.protocol === "file:") {
-    if (trimmed.startsWith("/") || !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
-      return FALLBACK_CORE_GATEWAY_WS_URL;
-    }
-  }
-
-  try {
-    const url = new URL(trimmed, window.location.origin);
-    if (url.protocol !== "ws:" && url.protocol !== "wss:") {
-      url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
-    }
-    if (!shouldAllowLoopbackTargets() && isLoopbackHostname(url.hostname))
-      return "";
-    url.pathname = "/gateway";
-    url.search = "";
-    url.hash = "";
-    return url.toString().replace(/\/$/, "");
-  } catch {
-    const normalized = trimmed.replace(/\/$/, "");
-    const withPath = normalized.endsWith("/gateway")
-      ? normalized
-      : `${normalized}/gateway`;
-    try {
-      const url = new URL(withPath);
-      if (!shouldAllowLoopbackTargets() && isLoopbackHostname(url.hostname))
-        return "";
-    } catch {
-      // keep fallback behavior for unparsable strings
-    }
-    return withPath;
-  }
-}
-
-function getDefaultCoreGatewayWsUrl() {
-  if (typeof window === "undefined") return FALLBACK_CORE_GATEWAY_WS_URL;
-  if (window.location.protocol === "file:") return FALLBACK_CORE_GATEWAY_WS_URL;
-  const hostname = window.location.hostname || "";
-  if (hostname === "opencom.online" || hostname.endsWith(".opencom.online")) {
-    return FALLBACK_CORE_GATEWAY_WS_URL;
-  }
-  return normalizeGatewayWsUrl("/gateway");
-}
-
-function getCoreGatewayWsCandidates() {
-  const explicit =
-    import.meta.env.VITE_CORE_GATEWAY_URL ||
-    import.meta.env.VITE_GATEWAY_WS_URL;
-  const candidates = [];
-
-  const push = (value) => {
-    const normalized = normalizeGatewayWsUrl(value);
-    if (!normalized) return;
-    if (!candidates.includes(normalized)) candidates.push(normalized);
-  };
-
-  // Explicit endpoint first when provided.
-  if (explicit && typeof explicit === "string" && explicit.trim())
-    push(explicit);
-  push(getDefaultCoreGatewayWsUrl());
-
-  return candidates;
-}
-
-function getDesktopBridge() {
-  if (typeof window === "undefined") return null;
-  return window.opencomDesktopBridge || null;
-}
-
-function getVoiceGatewayWsCandidates(
-  serverBaseUrl,
-  includeDirectNodeWsFallback = false,
-) {
-  const explicitVoiceGateway = import.meta.env.VITE_VOICE_GATEWAY_URL;
-  const candidates = [];
-  const push = (value) => {
-    const normalized = normalizeGatewayWsUrl(value);
-    if (!normalized) return;
-    if (!candidates.includes(normalized)) candidates.push(normalized);
-  };
-
-  // Optional explicit voice gateway override for direct-node deployments.
-  if (
-    explicitVoiceGateway &&
-    typeof explicitVoiceGateway === "string" &&
-    explicitVoiceGateway.trim()
-  ) {
-    push(explicitVoiceGateway);
-  }
-
-  // Prefer core gateway routing by default so clients don't guess node addresses.
-  for (const wsUrl of getCoreGatewayWsCandidates()) push(wsUrl);
-
-  const allowDirectNodeWsFallback =
-    includeDirectNodeWsFallback ||
-    String(import.meta.env.VITE_ENABLE_DIRECT_NODE_WS_FALLBACK || "").trim() ===
-      "1";
-  if (allowDirectNodeWsFallback) {
-    // Optional escape hatch: derive WS from the node base URL.
-    push(serverBaseUrl);
-  }
-
-  return candidates;
-}
-
-function prioritizeLastSuccessfulGateway(candidates, storageKey) {
-  const last = localStorage.getItem(storageKey);
-  if (!last) return candidates;
-  const idx = candidates.indexOf(last);
-  if (idx <= 0) return candidates;
-  return [
-    candidates[idx],
-    ...candidates.slice(0, idx),
-    ...candidates.slice(idx + 1),
-  ];
-}
-
-function useThemeCss() {
-  const [css, setCss] = useState(localStorage.getItem(THEME_STORAGE_KEY) || "");
-  const [enabled, setEnabled] = useState(
-    localStorage.getItem(THEME_ENABLED_STORAGE_KEY) !== "0",
-  );
-
-  useEffect(() => {
-    let tag = document.getElementById("opencom-theme-style");
-    if (!tag) {
-      tag = document.createElement("style");
-      tag.id = "opencom-theme-style";
-      document.head.appendChild(tag);
-    }
-
-    tag.textContent = enabled ? css : "";
-    localStorage.setItem(THEME_STORAGE_KEY, css);
-    localStorage.setItem(THEME_ENABLED_STORAGE_KEY, enabled ? "1" : "0");
-  }, [css, enabled]);
-
-  useEffect(() => {
-    const onThemeUpdated = (event) => {
-      const nextCss = String(
-        (event?.detail?.css ?? localStorage.getItem(THEME_STORAGE_KEY)) || "",
-      );
-      const nextEnabled =
-        event?.detail?.enabled !== undefined
-          ? !!event.detail.enabled
-          : localStorage.getItem(THEME_ENABLED_STORAGE_KEY) !== "0";
-      setCss(nextCss);
-      setEnabled(nextEnabled);
-    };
-    const onStorage = (event) => {
-      if (
-        !event ||
-        (event.key !== THEME_STORAGE_KEY &&
-          event.key !== THEME_ENABLED_STORAGE_KEY)
-      )
-        return;
-      onThemeUpdated({});
-    };
-
-    window.addEventListener("opencom-theme-updated", onThemeUpdated);
-    window.addEventListener("storage", onStorage);
-    return () => {
-      window.removeEventListener("opencom-theme-updated", onThemeUpdated);
-      window.removeEventListener("storage", onStorage);
-    };
-  }, []);
-
-  return [css, setCss, enabled, setEnabled];
-}
-
-function groupMessages(
-  messages = [],
-  getAuthor,
-  getTimestamp,
-  getAuthorId = null,
-  getPfpUrl = null,
-) {
-  const groups = [];
-
-  for (const message of messages) {
-    const author = getAuthor(message);
-    const authorId = getAuthorId ? getAuthorId(message) : author;
-    const pfpUrl = getPfpUrl ? getPfpUrl(message) : null;
-    const createdRaw = getTimestamp(message);
-    const createdAt = createdRaw ? new Date(createdRaw) : null;
-    const createdMs =
-      createdAt && !Number.isNaN(createdAt.getTime())
-        ? createdAt.getTime()
-        : null;
-
-    const previousGroup = groups[groups.length - 1];
-    const canGroup =
-      previousGroup &&
-      previousGroup.authorId === authorId &&
-      createdMs !== null &&
-      previousGroup.lastMessageMs !== null &&
-      createdMs - previousGroup.lastMessageMs <= 120000;
-
-    if (canGroup) {
-      previousGroup.messages.push(message);
-      previousGroup.lastMessageMs = createdMs;
-      continue;
-    }
-
-    groups.push({
-      id: message.id,
-      author,
-      authorId,
-      pfpUrl,
-      firstMessageTime: createdRaw,
-      lastMessageMs: createdMs,
-      messages: [message],
-    });
-  }
-
-  return groups;
-}
-
-async function api(path, options = {}) {
-  const retried = options.__retried === true;
-  const nextOptions = { ...options };
-  delete nextOptions.__retried;
-  const hasBody = nextOptions.body !== undefined && nextOptions.body !== null;
-  const response = await fetch(`${CORE_API}${path}`, {
-    headers: {
-      ...(hasBody ? { "Content-Type": "application/json" } : {}),
-      ...(nextOptions.headers || {}),
-    },
-    ...nextOptions,
-  });
-
-  if (!response.ok) {
-    if (response.status === 401 && !retried && path !== "/v1/auth/refresh") {
-      const refreshed = await refreshAccessTokenWithRefreshToken().catch(
-        () => null,
-      );
-      if (refreshed?.accessToken) {
-        const mergedHeaders = {
-          ...(nextOptions.headers || {}),
-          Authorization: `Bearer ${refreshed.accessToken}`,
-        };
-        return api(path, {
-          ...nextOptions,
-          headers: mergedHeaders,
-          __retried: true,
-        });
-      }
-    }
-    const errorData = await response.json().catch(() => ({}));
-    const err = new Error(errorData.error || `HTTP_${response.status}`);
-    err.status = response.status;
-    throw err;
-  }
-
-  return response.json();
-}
-
-async function nodeApi(baseUrl, path, token, options = {}) {
-  const retried = options.__retried === true;
-  const nextOptions = { ...options };
-  delete nextOptions.__retried;
-  const hasBody = nextOptions.body !== undefined && nextOptions.body !== null;
-  const normalizedBaseUrl = normalizeServerBaseUrl(baseUrl);
-  if (!normalizedBaseUrl) throw new Error("NODE_BASE_URL_INVALID");
-  const usableToken = await ensureFreshMembershipToken(
-    normalizedBaseUrl,
-    token,
-  ).catch(() => token);
-  const response = await fetch(`${normalizedBaseUrl}${path}`, {
-    headers: {
-      ...(hasBody ? { "Content-Type": "application/json" } : {}),
-      Authorization: `Bearer ${usableToken || token}`,
-      ...(nextOptions.headers || {}),
-    },
-    ...nextOptions,
-  });
-
-  if (!response.ok) {
-    if (response.status === 401 && !retried) {
-      const nextMembershipToken = await refreshMembershipTokenForNode(
-        normalizedBaseUrl,
-        usableToken || token,
-      ).catch(() => null);
-      if (nextMembershipToken) {
-        return nodeApi(normalizedBaseUrl, path, nextMembershipToken, {
-          ...nextOptions,
-          __retried: true,
-        });
-      }
-    }
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || `HTTP_${response.status}`);
-  }
-
-  return response.json();
-}
-
-function getStoredJson(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function getStoredStringArray(key) {
-  const value = getStoredJson(key, []);
-  return Array.isArray(value)
-    ? value.filter((item) => typeof item === "string" && item.trim())
-    : [];
-}
-
-function clampVoiceNoiseValue(value, min, max, fallback) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return fallback;
-  return Math.max(min, Math.min(max, numeric));
-}
-
-function normalizeNoiseSuppressionPresetForUi(value) {
-  const key = String(value || "")
-    .trim()
-    .toLowerCase();
-  if (key === "custom") return "custom";
-  if (VOICE_NOISE_SUPPRESSION_PRESETS[key]) return key;
-  return VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET;
-}
-
-function getNoiseSuppressionPresetConfigForUi(preset) {
-  const key = normalizeNoiseSuppressionPresetForUi(preset);
-  if (key === "custom")
-    return VOICE_NOISE_SUPPRESSION_PRESETS[
-      VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET
-    ];
-  return (
-    VOICE_NOISE_SUPPRESSION_PRESETS[key] ||
-    VOICE_NOISE_SUPPRESSION_PRESETS[VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET]
-  );
-}
-
-function normalizeNoiseSuppressionConfigForUi(
-  config = {},
-  preset = VOICE_NOISE_SUPPRESSION_DEFAULT_PRESET,
-) {
-  const base = getNoiseSuppressionPresetConfigForUi(preset);
-  const normalized = {
-    gateOpenRms: clampVoiceNoiseValue(
-      config.gateOpenRms,
-      0.004,
-      0.06,
-      base.gateOpenRms,
-    ),
-    gateCloseRms: clampVoiceNoiseValue(
-      config.gateCloseRms,
-      0.002,
-      0.05,
-      base.gateCloseRms,
-    ),
-    gateAttack: clampVoiceNoiseValue(
-      config.gateAttack,
-      0.05,
-      0.95,
-      base.gateAttack,
-    ),
-    gateRelease: clampVoiceNoiseValue(
-      config.gateRelease,
-      0.01,
-      0.8,
-      base.gateRelease,
-    ),
-    highpassHz: clampVoiceNoiseValue(
-      config.highpassHz,
-      40,
-      300,
-      base.highpassHz,
-    ),
-    lowpassHz: clampVoiceNoiseValue(
-      config.lowpassHz,
-      4200,
-      14000,
-      base.lowpassHz,
-    ),
-    compressorThreshold: clampVoiceNoiseValue(
-      config.compressorThreshold,
-      -70,
-      -8,
-      base.compressorThreshold,
-    ),
-    compressorKnee: clampVoiceNoiseValue(
-      config.compressorKnee,
-      0,
-      40,
-      base.compressorKnee,
-    ),
-    compressorRatio: clampVoiceNoiseValue(
-      config.compressorRatio,
-      1,
-      20,
-      base.compressorRatio,
-    ),
-    compressorAttack: clampVoiceNoiseValue(
-      config.compressorAttack,
-      0.001,
-      0.05,
-      base.compressorAttack,
-    ),
-    compressorRelease: clampVoiceNoiseValue(
-      config.compressorRelease,
-      0.04,
-      0.8,
-      base.compressorRelease,
-    ),
-  };
-  if (normalized.gateCloseRms >= normalized.gateOpenRms) {
-    normalized.gateCloseRms = Math.max(0.002, normalized.gateOpenRms * 0.8);
-  }
-  if (normalized.lowpassHz <= normalized.highpassHz + 250) {
-    normalized.lowpassHz = Math.min(14000, normalized.highpassHz + 250);
-  }
-  return normalized;
-}
-
-function getInitials(value = "") {
-  const cleaned = value.trim();
-  if (!cleaned) return "OC";
-  const parts = cleaned.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
-}
-
-function escapeRegex(value = "") {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function getMentionQuery(value = "") {
-  const match = value.match(/(?:^|\s)(@\{?)([^\s{}@]*)$/);
-  if (!match) return null;
-  const marker = match[1] || "@";
-  const query = match[2] || "";
-  const start = value.length - marker.length - query.length;
-  return { query: query.toLowerCase(), start };
-}
-
-function getSlashQuery(value = "") {
-  const trimmed = value.trimStart();
-  if (!trimmed.startsWith("/")) return null;
-  const withoutPrefix = trimmed.slice(1);
-  if (!withoutPrefix.length) return "";
-  if (/\s/.test(withoutPrefix)) return null;
-  return withoutPrefix.toLowerCase();
-}
-
-function getEmoteQuery(value = "") {
-  const match = String(value || "").match(/(?:^|\s):([a-zA-Z0-9_+-]*)$/);
-  if (!match) return null;
-  const query = match[1] || "";
-  const start = value.length - query.length - 1;
-  return { query: query.toLowerCase(), start };
-}
-
-function splitSlashInput(value = "") {
-  const trimmed = String(value || "").trim();
-  const withoutPrefix = trimmed.replace(/^\//, "").trim();
-  if (!withoutPrefix) return { commandToken: "", argText: "" };
-  const parts = withoutPrefix.split(/\s+/);
-  const commandToken = parts.shift() || "";
-  return { commandToken, argText: parts.join(" ") };
-}
-
-function resolveSlashCommand(commandName = "", commands = []) {
-  const normalized = String(commandName || "").trim();
-  if (!normalized) return { command: null, ambiguousMatches: [] };
-
-  let command = commands.find((item) => item?.name === normalized) || null;
-  if (command) return { command, ambiguousMatches: [] };
-
-  if (!normalized.includes(".")) {
-    const suffixMatches = commands.filter(
-      (item) =>
-        String(item?.name || "")
-          .split(".")
-          .pop() === normalized,
-    );
-    if (suffixMatches.length === 1) command = suffixMatches[0];
-    if (suffixMatches.length > 1)
-      return { command: null, ambiguousMatches: suffixMatches };
-  }
-
-  return { command, ambiguousMatches: [] };
-}
-
-function parseCommandArgs(raw = "") {
-  const tokens = [];
-  const regex = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g;
-  let match = regex.exec(raw);
-  while (match) {
-    tokens.push(
-      (match[1] ?? match[2] ?? match[3] ?? "").replace(/\\(["'\\])/g, "$1"),
-    );
-    match = regex.exec(raw);
-  }
-  return tokens;
-}
-
-function coerceCommandArg(value, optionType) {
-  if (optionType === "number") {
-    const num = Number(value);
-    if (Number.isNaN(num)) throw new Error(`Invalid number: ${value}`);
-    return num;
-  }
-  if (optionType === "boolean") {
-    const normalized = String(value).toLowerCase();
-    if (["true", "1", "yes", "on"].includes(normalized)) return true;
-    if (["false", "0", "no", "off"].includes(normalized)) return false;
-    throw new Error(`Invalid boolean: ${value}`);
-  }
-  return value;
-}
-
-function parseCommandArgsByOptions(rawArgText = "", optionDefs = []) {
-  const tokens = parseCommandArgs(rawArgText || "");
-  const knownOptionNames = new Set(
-    (optionDefs || []).map((option) => String(option?.name || "")),
-  );
-  const namedTokens = {};
-  const positionalTokens = [];
-
-  for (const token of tokens) {
-    const match = String(token).match(/^([a-zA-Z0-9_-]+)=(.*)$/);
-    if (match && knownOptionNames.has(match[1])) {
-      namedTokens[match[1]] = match[2];
-      continue;
-    }
-    positionalTokens.push(token);
-  }
-
-  const args = {};
-  let positionalIndex = 0;
-  for (const option of optionDefs || []) {
-    if (!option?.name) continue;
-    const hasNamed = Object.prototype.hasOwnProperty.call(
-      namedTokens,
-      option.name,
-    );
-    const rawValue = hasNamed
-      ? namedTokens[option.name]
-      : positionalTokens[positionalIndex++];
-    if (rawValue == null || rawValue === "") continue;
-    args[option.name] = coerceCommandArg(rawValue, option.type || "string");
-  }
-
-  return args;
-}
-
-function buildSlashCommandTemplate(command = null) {
-  if (!command?.name) return { text: "/", cursor: 1 };
-  const options = Array.isArray(command.options) ? command.options : [];
-  if (!options.length) {
-    const text = `/${command.name} `;
-    return { text, cursor: text.length };
-  }
-
-  const tokens = options
-    .filter((option) => option?.name)
-    .map((option) => `${option.name}=`);
-  const text = `/${command.name} ${tokens.join(" ")}`;
-  const firstEquals = text.indexOf("=");
-  return { text, cursor: firstEquals >= 0 ? firstEquals + 1 : text.length };
-}
-
-function contentMentionsSelf(content = "", selfId, selfNames = []) {
-  if (!content || !selfId) return false;
-  if (/@everyone\b/i.test(content)) return true;
-  if (new RegExp(`@\\{${escapeRegex(selfId)}\\}`, "i").test(content))
-    return true;
-  if (new RegExp(`(^|\\s)@${escapeRegex(selfId)}\\b`, "i").test(content))
-    return true;
-  for (const name of selfNames) {
-    if (!name || typeof name !== "string") continue;
-    const trimmed = name.trim();
-    if (!trimmed) continue;
-    if (new RegExp(`@\\{${escapeRegex(trimmed)}\\}`, "i").test(content))
-      return true;
-    if (new RegExp(`(^|\\s)@${escapeRegex(trimmed)}\\b`, "i").test(content))
-      return true;
-  }
-  return false;
-}
-
-function formatMessageTime(value) {
-  if (!value) return "just now";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "just now";
-  const timeLabel = date.toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-  const day = String(date.getDate()).padStart(2, "0");
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const year = String(date.getFullYear());
-  const dateWithTimeLabel = `${day}/${month}/${year} {${timeLabel}}`;
-  const now = new Date();
-  const todayDayIndex = Math.floor(
-    Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000,
-  );
-  const messageDayIndex = Math.floor(
-    Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000,
-  );
-  const dayDiff = todayDayIndex - messageDayIndex;
-  if (dayDiff >= 1) return dateWithTimeLabel;
-  return timeLabel;
-}
-
-function rpcFormFromActivity(activity = null) {
-  return {
-    name: activity?.name || "",
-    details: activity?.details || "",
-    state: activity?.state || "",
-    largeImageUrl: activity?.largeImageUrl || "",
-    largeImageText: activity?.largeImageText || "",
-    smallImageUrl: activity?.smallImageUrl || "",
-    smallImageText: activity?.smallImageText || "",
-    button1Label: activity?.buttons?.[0]?.label || "",
-    button1Url: activity?.buttons?.[0]?.url || "",
-    button2Label: activity?.buttons?.[1]?.label || "",
-    button2Url: activity?.buttons?.[1]?.url || "",
-  };
-}
-
-function rpcActivityFromForm(form) {
-  const buttons = [];
-  if (form.button1Label.trim() && form.button1Url.trim())
-    buttons.push({
-      label: form.button1Label.trim(),
-      url: form.button1Url.trim(),
-    });
-  if (form.button2Label.trim() && form.button2Url.trim())
-    buttons.push({
-      label: form.button2Label.trim(),
-      url: form.button2Url.trim(),
-    });
-  return {
-    name: form.name.trim() || undefined,
-    details: form.details.trim() || undefined,
-    state: form.state.trim() || undefined,
-    largeImageUrl: form.largeImageUrl.trim() || undefined,
-    largeImageText: form.largeImageText.trim() || undefined,
-    smallImageUrl: form.smallImageUrl.trim() || undefined,
-    smallImageText: form.smallImageText.trim() || undefined,
-    buttons: buttons.length ? buttons : undefined,
-  };
-}
-
-function getMessageDayKey(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
-}
-
-function formatMessageDate(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString(undefined, {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-}
-
-function playNotificationBeep(mute = false) {
-  if (mute) return;
-  try {
-    const audioCtx = new window.AudioContext();
-    const osc1 = audioCtx.createOscillator();
-    const osc2 = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc1.type = "sine";
-    osc1.frequency.value = 523.25;
-    osc2.type = "sine";
-    osc2.frequency.value = 659.25;
-    gain.gain.setValueAtTime(0, audioCtx.currentTime);
-    gain.gain.linearRampToValueAtTime(0.12, audioCtx.currentTime + 0.04);
-    gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.22);
-    osc1.connect(gain);
-    osc2.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc1.start();
-    osc2.start();
-    osc1.stop(audioCtx.currentTime + 0.22);
-    osc2.stop(audioCtx.currentTime + 0.22);
-    osc1.onended = () => {
-      osc2.onended = () => audioCtx.close();
-    };
-  } catch (_) {}
-}
-
-function extensionForMimeType(mimeType = "") {
-  if (!mimeType) return ".bin";
-  if (mimeType === "image/png") return ".png";
-  if (mimeType === "image/jpeg") return ".jpg";
-  if (mimeType === "image/gif") return ".gif";
-  if (mimeType === "image/webp") return ".webp";
-  if (mimeType === "image/svg+xml") return ".svg";
-  if (mimeType === "image/bmp") return ".bmp";
-  if (mimeType === "image/heic") return ".heic";
-  if (mimeType === "video/mp4") return ".mp4";
-  if (mimeType === "video/webm") return ".webm";
-  if (mimeType === "application/pdf") return ".pdf";
-  return ".bin";
-}
-
-function normalizeAttachmentFile(file, prefix = "upload") {
-  if (!file) return null;
-  if (file.name && file.name.trim()) return file;
-  const ext = extensionForMimeType(file.type || "");
-  const fallbackName = `${prefix}-${Date.now()}${ext}`;
-  try {
-    return new File([file], fallbackName, {
-      type: file.type || "application/octet-stream",
-    });
-  } catch {
-    return file;
-  }
-}
-
-function formatByteCount(bytes = 0) {
-  const value = Number(bytes || 0);
-  if (!Number.isFinite(value) || value <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  let amount = value;
-  let unitIndex = 0;
-  while (amount >= 1024 && unitIndex < units.length - 1) {
-    amount /= 1024;
-    unitIndex += 1;
-  }
-  const precision = amount >= 10 || unitIndex === 0 ? 0 : 1;
-  return `${amount.toFixed(precision)} ${units[unitIndex]}`;
-}
-
-function extractFilesFromClipboardData(clipboardData) {
-  if (!clipboardData) return [];
-
-  const filesFromList = Array.from(clipboardData.files || []).filter(
-    (file) => file && file.size > 0,
-  );
-  const filesFromItems = Array.from(clipboardData.items || [])
-    .filter((item) => item && item.kind === "file")
-    .map((item) => item.getAsFile())
-    .filter((file) => file && file.size > 0);
-
-  const out = [];
-  const seen = new Set();
-  for (const file of [...filesFromList, ...filesFromItems]) {
-    const key = `${file.name || ""}:${file.size}:${file.type || ""}:${file.lastModified || 0}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(file);
-  }
-  return out;
-}
-
-function normalizeImageUrlInput(value = "") {
-  const trimmed = String(value || "").trim();
-  if (!trimmed) return "";
-  if (/^https?:\/\//i.test(trimmed) || /^data:image\//i.test(trimmed))
-    return trimmed;
-  if (trimmed.startsWith("/")) return trimmed;
-  if (trimmed.startsWith("users/")) return `/v1/profile-images/${trimmed}`;
-  return trimmed;
-}
-
-function extractHttpUrls(value = "") {
-  const text = String(value || "");
-  if (!text) return [];
-  const regex = /https?:\/\/[^\s<>"'`)\]]+/gi;
-  const out = new Set();
-  let match = regex.exec(text);
-  while (match) {
-    const raw = String(match[0] || "").trim();
-    if (raw) out.add(raw);
-    match = regex.exec(text);
-  }
-  return [...out];
-}
-
-function normalizeFavouriteMediaUrl(value = "") {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  try {
-    const parsed = new URL(raw);
-    parsed.hash = "";
-    return parsed.toString();
-  } catch {
-    return raw;
-  }
-}
-
-function buildFavouriteMediaKey(sourceKind = "", sourceUrl = "") {
-  const normalizedKind = String(sourceKind || "").trim();
-  const normalizedUrl = normalizeFavouriteMediaUrl(sourceUrl);
-  if (!normalizedKind || !normalizedUrl) return "";
-  return `${normalizedKind}:${normalizedUrl}`;
-}
-
-function guessFileNameFromUrl(value = "") {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  try {
-    const parsed = new URL(raw);
-    const lastSegment = (parsed.pathname || "").split("/").filter(Boolean).pop();
-    return lastSegment ? decodeURIComponent(lastSegment) : "";
-  } catch {
-    const lastSegment = raw.split("/").filter(Boolean).pop();
-    return lastSegment ? decodeURIComponent(lastSegment) : "";
-  }
+  if (!normalizedQuery) return true;
+  const normalizedText = String(searchText || "").toLowerCase();
+  return normalizedQuery
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((token) => normalizedText.includes(token));
 }
 
 export function App() {
@@ -1652,6 +231,10 @@ export function App() {
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState("");
   const [showEmotePicker, setShowEmotePicker] = useState(false);
+  const [messageReactionPicker, setMessageReactionPicker] = useState(null);
+  const [messageReactionPickerQuery, setMessageReactionPickerQuery] =
+    useState("");
+  const [globalCustomEmoteCatalog, setGlobalCustomEmoteCatalog] = useState([]);
   const [newServerEmoteName, setNewServerEmoteName] = useState("");
   const [newServerEmoteUrl, setNewServerEmoteUrl] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState([]);
@@ -1682,6 +265,7 @@ export function App() {
 
   const [profile, setProfile] = useState(null);
   const [profileForm, setProfileForm] = useState({
+    username: "",
     displayName: "",
     bio: "",
     pfpUrl: "",
@@ -1842,6 +426,7 @@ export function App() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState("profile");
+  const [themeStudioTab, setThemeStudioTab] = useState("catalog");
   const [boostStatus, setBoostStatus] = useState(null);
   const [boostLoading, setBoostLoading] = useState(false);
   const [boostUpsell, setBoostUpsell] = useState(null);
@@ -2002,8 +587,10 @@ export function App() {
   const privateCallGatewayWsRef = useRef(null);
   const privateCallGatewayReadyRef = useRef(false);
   const privateCallGatewayHeartbeatRef = useRef(null);
+  const activePrivateCallRef = useRef(activePrivateCall);
   const voiceMemberAudioPrefsByGuildRef = useRef(voiceMemberAudioPrefsByGuild);
   voiceMemberAudioPrefsByGuildRef.current = voiceMemberAudioPrefsByGuild;
+  activePrivateCallRef.current = activePrivateCall;
   selfUserIdRef.current = me?.id || "";
   const voiceSfuRef = useRef(null);
   if (!voiceSfuRef.current) {
@@ -2070,6 +657,34 @@ export function App() {
     if (!userId) return null;
     return presenceByUserId[userId]?.richPresence ?? null;
   }
+  function getCustomStatus(userId) {
+    if (!userId) return "";
+    return String(presenceByUserId[userId]?.customStatus || "").trim();
+  }
+  function truncateUiText(value, maxLength = 60) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    if (text.length <= maxLength) return text;
+    return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+  }
+  function getActivitySummary(
+    userId,
+    { fallback = "", maxLength = 60 } = {},
+  ) {
+    const rich = getRichPresence(userId);
+    const richParts = [rich?.details, rich?.state]
+      .map((part) => String(part || "").trim())
+      .filter(Boolean);
+    const richLabel =
+      richParts.join(" - ") ||
+      String(rich?.name || rich?.largeImageText || "").trim();
+    const customStatus = getCustomStatus(userId);
+    const statusText =
+      typeof fallback === "string" && fallback.trim()
+        ? fallback.trim()
+        : presenceLabel(getPresence(userId));
+    return truncateUiText(richLabel || customStatus || statusText, maxLength);
+  }
   const presenceLabels = {
     online: "Online",
     idle: "Idle",
@@ -2127,6 +742,36 @@ export function App() {
         />
       </div>
     );
+  }
+
+  function getSocialPrimaryName(userLike, fallback = "Unknown user") {
+    return (
+      userLike?.displayName ||
+      userLike?.username ||
+      userLike?.name ||
+      fallback
+    );
+  }
+
+  function getSocialSecondaryLabel(
+    userLike,
+    userId,
+    { fallback = "", maxLength = 60 } = {},
+  ) {
+    const activity = getActivitySummary(userId, {
+      fallback,
+      maxLength:
+        userLike?.displayName &&
+        (userLike?.username || userLike?.name) &&
+        userLike.displayName !== (userLike.username || userLike.name)
+          ? Math.max(24, maxLength - 12)
+          : maxLength,
+    });
+    const username = String(userLike?.username || userLike?.name || "").trim();
+    if (userLike?.displayName && username && userLike.displayName !== username) {
+      return truncateUiText(`@${username} · ${activity}`, maxLength);
+    }
+    return activity;
   }
 
   const dmMessagesRef = useRef(null);
@@ -2331,6 +976,24 @@ export function App() {
     loadBoostStatus().catch(() => {});
     loadSentBoostGifts().catch(() => {});
   }, [accessToken, settingsOpen, settingsTab]);
+
+  useEffect(() => {
+    if (!accessToken) {
+      setGlobalCustomEmoteCatalog([]);
+      return;
+    }
+    loadGlobalEmoteCatalog({ quiet: true }).catch(() => {});
+  }, [accessToken, servers.length]);
+
+  useEffect(() => {
+    if (!accessToken || !settingsOpen || settingsTab !== "server") return;
+    const settingsServer =
+      servers.find((server) => server.id === activeServerId) || null;
+    if (!settingsServer || !(settingsServer.roles || []).includes("owner"))
+      return;
+    if (boostStatus != null) return;
+    loadBoostStatus().catch(() => {});
+  }, [accessToken, settingsOpen, settingsTab, servers, activeServerId, boostStatus]);
 
   useEffect(() => {
     if (accessToken) return;
@@ -2589,7 +1252,7 @@ export function App() {
 
   useEffect(() => {
     setEmoteSelectionIndex(0);
-  }, [messageText, guildState?.emotes]);
+  }, [navMode, messageText, dmText, guildState?.emotes, globalCustomEmoteCatalog]);
 
   async function loadClientExtensionSource({
     extensionId,
@@ -2932,9 +1595,73 @@ export function App() {
     () => dms.find((dm) => dm.id === activeDmId) || null,
     [dms, activeDmId],
   );
+  const activeMessageReactionTarget = useMemo(() => {
+    const pickerMessageId = String(messageReactionPicker?.messageId || "").trim();
+    if (!pickerMessageId) return null;
+    const sourceMessages =
+      messageReactionPicker?.kind === "dm" ? activeDm?.messages || [] : messages;
+    return (
+      sourceMessages.find(
+        (message) => String(message?.id || "").trim() === pickerMessageId,
+      ) || null
+    );
+  }, [activeDm?.messages, messageReactionPicker, messages]);
+  const activeDmPrivateCallId = useMemo(() => {
+    const activeParticipantId = activeDm?.participantId || "";
+    if (!activeParticipantId) return null;
+
+    if (
+      activePrivateCall?.callId &&
+      activePrivateCall?.otherUserId === activeParticipantId
+    ) {
+      return activePrivateCall.callId;
+    }
+
+    if (
+      outgoingCall?.callId &&
+      outgoingCall?.calleeId === activeParticipantId
+    ) {
+      return outgoingCall.callId;
+    }
+
+    if (
+      incomingCall?.callId &&
+      incomingCall?.callerId === activeParticipantId
+    ) {
+      return incomingCall.callId;
+    }
+
+    return null;
+  }, [
+    activePrivateCall?.callId,
+    activePrivateCall?.otherUserId,
+    activeDm?.participantId,
+    outgoingCall?.callId,
+    outgoingCall?.calleeId,
+    incomingCall?.callId,
+    incomingCall?.callerId,
+  ]);
+  function startActiveDmCall() {
+    if (!activeDm?.participantId || activeDm?.isNoReply) return;
+    const friend = friends.find((f) => f.id === activeDm.participantId);
+    initiatePrivateCall(
+      activeDm.participantId,
+      activeDm.name,
+      friend?.pfp_url ?? null,
+    );
+  }
+  const activeDmHasLivePrivateCall =
+    !!activePrivateCall?.callId &&
+    !!activeDm?.participantId &&
+    activePrivateCall?.otherUserId === activeDm.participantId;
+  const activeComposerText = navMode === "dms" ? dmText : messageText;
+  const activeComposerInputRef =
+    navMode === "dms" ? dmComposerInputRef : composerInputRef;
   const showServerVoiceStage = navMode === "servers" && activeChannel?.type === "voice";
   const showPrivateCallStage =
-    navMode === "dms" && !!activePrivateCall?.callId && privateCallViewOpen;
+    navMode === "dms" && activeDmHasLivePrivateCall && privateCallViewOpen;
+  const showPrivateCallDock =
+    navMode === "dms" && activeDmHasLivePrivateCall && !privateCallViewOpen;
   activeServerMessagesRef.current = messages;
   activeDmMessagesRef.current = activeDm?.messages || [];
   const installedServerExtensionById = useMemo(
@@ -3083,6 +1810,10 @@ export function App() {
   const profileStudioPreviewProfile = useMemo(
     () => ({
       ...(profile || {}),
+      username:
+        typeof profileForm?.username === "string"
+          ? profileForm.username
+          : (profile?.username ?? me?.username ?? ""),
       displayName:
         typeof profileForm?.displayName === "string"
           ? profileForm.displayName
@@ -3101,7 +1832,7 @@ export function App() {
           : (profile?.bannerUrl ?? ""),
       fullProfile: fullProfileDraft,
     }),
-    [profile, profileForm, fullProfileDraft],
+    [me?.username, profile, profileForm, fullProfileDraft],
   );
   const selectedProfileStudioElement = useMemo(
     () =>
@@ -3136,15 +1867,75 @@ export function App() {
       ),
     [sortedChannels],
   );
+  const currentServerCustomEmotes = useMemo(() => {
+    const seen = new Set();
+    const catalog = [];
+    for (const emote of guildState?.emotes || []) {
+      const name = String(emote?.name || "").trim().toLowerCase();
+      const imageUrl = String(emote?.imageUrl || emote?.image_url || "").trim();
+      if (!name || !imageUrl || seen.has(name)) continue;
+      seen.add(name);
+      catalog.push({
+        id: emote.id || `server:${name}`,
+        name,
+        imageUrl,
+        scopeLabel: "This server",
+      });
+    }
+    return catalog;
+  }, [guildState?.emotes]);
   const serverEmoteByName = useMemo(() => {
     const map = new Map();
-    for (const emote of guildState?.emotes || []) {
+    for (const emote of currentServerCustomEmotes) {
       const name = String(emote?.name || "").toLowerCase();
-      if (!name) continue;
+      if (!name || map.has(name)) continue;
       map.set(name, emote);
     }
     return map;
-  }, [guildState?.emotes]);
+  }, [currentServerCustomEmotes]);
+  const globalUsableCustomEmotes = useMemo(() => {
+    const seen = new Set();
+    const catalog = [];
+    for (const emote of globalCustomEmoteCatalog || []) {
+      const name = String(emote?.name || "").trim().toLowerCase();
+      const imageUrl = String(emote?.imageUrl || emote?.image_url || "").trim();
+      if (!name || !imageUrl || seen.has(name) || !emote?.canUse) continue;
+      seen.add(name);
+      catalog.push({
+        id: emote.id || `global:${name}`,
+        name,
+        imageUrl,
+        serverName: emote.serverName || "",
+        guildName: emote.guildName || "",
+        scopeLabel: emote.serverName
+          ? `Global · ${emote.serverName}`
+          : "Global custom",
+      });
+    }
+    return catalog;
+  }, [globalCustomEmoteCatalog]);
+  const currentServerCustomEmoteByName = useMemo(
+    () => new Map(currentServerCustomEmotes.map((emote) => [emote.name, emote])),
+    [currentServerCustomEmotes],
+  );
+  const globalUsableCustomEmoteByName = useMemo(
+    () => new Map(globalUsableCustomEmotes.map((emote) => [emote.name, emote])),
+    [globalUsableCustomEmotes],
+  );
+  const globalRenderableCustomEmoteByName = useMemo(() => {
+    const map = new Map();
+    for (const emote of globalCustomEmoteCatalog || []) {
+      const name = String(emote?.name || "").trim().toLowerCase();
+      const imageUrl = String(emote?.imageUrl || emote?.image_url || "").trim();
+      if (!name || !imageUrl || map.has(name)) continue;
+      map.set(name, {
+        id: emote.id || `global:${name}`,
+        name,
+        imageUrl,
+      });
+    }
+    return map;
+  }, [globalCustomEmoteCatalog]);
 
   const filteredFriends = useMemo(() => {
     const query = friendQuery.trim().toLowerCase();
@@ -3233,9 +2024,9 @@ export function App() {
   const showingSlash = slashQuery != null;
 
   const emoteQuery = useMemo(() => {
-    if (navMode !== "servers") return null;
-    return getEmoteQuery(messageText);
-  }, [messageText, navMode]);
+    if (navMode !== "servers" && navMode !== "dms") return null;
+    return getEmoteQuery(activeComposerText);
+  }, [activeComposerText, navMode]);
 
   const emoteSuggestions = useMemo(() => {
     if (emoteQuery == null) return [];
@@ -3243,7 +2034,24 @@ export function App() {
     const catalog = [];
     const seenNames = new Set();
 
-    for (const emote of guildState?.emotes || []) {
+    if (navMode === "servers") {
+      for (const emote of currentServerCustomEmotes) {
+        const name = String(emote?.name || "").trim().toLowerCase();
+        if (!name || seenNames.has(name)) continue;
+        seenNames.add(name);
+        catalog.push({
+          id: emote.id || `custom:${name}`,
+          name,
+          type: "custom",
+          imageUrl: emote.imageUrl || "",
+          value: "",
+          searchText: name,
+          scopeLabel: "This server",
+        });
+      }
+    }
+
+    for (const emote of globalUsableCustomEmotes) {
       const name = String(emote?.name || "").trim().toLowerCase();
       if (!name || seenNames.has(name)) continue;
       seenNames.add(name);
@@ -3251,12 +2059,21 @@ export function App() {
         id: emote.id || `custom:${name}`,
         name,
         type: "custom",
-        imageUrl: emote.imageUrl || emote.image_url || "",
+        imageUrl: emote.imageUrl || "",
         value: "",
+        searchText: [
+          name,
+          String(emote.serverName || "").toLowerCase(),
+          String(emote.guildName || "").toLowerCase(),
+        ]
+          .filter(Boolean)
+          .join(" "),
+        scopeLabel: emote.scopeLabel || "Global custom",
       });
     }
 
-    for (const [name, value] of Object.entries(BUILTIN_EMOTES)) {
+    for (const emote of BUILTIN_EMOTE_ENTRIES) {
+      const name = String(emote.name || "").trim().toLowerCase();
       if (seenNames.has(name)) continue;
       seenNames.add(name);
       catalog.push({
@@ -3264,16 +2081,110 @@ export function App() {
         name,
         type: "builtin",
         imageUrl: "",
-        value,
+        value: emote.value,
+        searchText: [name, ...(emote.aliases || [])].join(" "),
       });
     }
 
     if (!emoteQuery.query) return catalog.slice(0, 10);
 
     return catalog
-      .filter((emote) => emote.name.includes(emoteQuery.query))
+      .filter((emote) => String(emote.searchText || emote.name).includes(emoteQuery.query))
       .slice(0, 10);
-  }, [emoteQuery, guildState?.emotes]);
+  }, [emoteQuery, navMode, currentServerCustomEmotes, globalUsableCustomEmotes]);
+
+  const customPickerSections = useMemo(() => {
+    const sections = [];
+    const currentServerNames = new Set(
+      currentServerCustomEmotes.map((emote) => emote.name),
+    );
+
+    if (navMode === "servers" && currentServerCustomEmotes.length > 0) {
+      sections.push({
+        id: "current-server",
+        heading: "This server",
+        items: currentServerCustomEmotes,
+      });
+    }
+
+    const globalItems = globalUsableCustomEmotes.filter(
+      (emote) => !currentServerNames.has(emote.name),
+    );
+    if (globalItems.length > 0) {
+      sections.push({
+        id: "global-custom",
+        heading: "Global custom emotes",
+        items: globalItems,
+      });
+    }
+
+    return sections;
+  }, [navMode, currentServerCustomEmotes, globalUsableCustomEmotes]);
+  const reactionPickerBuiltinSections = useMemo(
+    () =>
+      BUILTIN_EMOTE_CATEGORIES.map((category) => ({
+        id: category.id,
+        heading: category.label,
+        items: category.items.map((emote) => ({
+          id: `builtin:${category.id}:${emote.name}`,
+          type: "builtin",
+          name: emote.name,
+          value: emote.value,
+          aliases: emote.aliases || [],
+          categoryLabel: category.label,
+          searchText: [
+            emote.name,
+            ...(emote.aliases || []),
+            emote.value,
+            category.label,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase(),
+        })),
+      })),
+    [],
+  );
+  const reactionPickerSearchResults = useMemo(() => {
+    const trimmedQuery = String(messageReactionPickerQuery || "").trim();
+    if (!trimmedQuery) return [];
+
+    const results = [];
+
+    for (const section of customPickerSections) {
+      for (const emote of section.items || []) {
+        const searchText = [
+          emote.name,
+          emote.scopeLabel,
+          emote.serverName,
+          emote.guildName,
+          section.heading,
+        ]
+          .filter(Boolean)
+          .join(" ");
+        if (!matchesReactionPickerQuery(searchText, trimmedQuery)) continue;
+        results.push({
+          ...emote,
+          type: "custom",
+          categoryLabel: section.heading,
+        });
+      }
+    }
+
+    for (const section of reactionPickerBuiltinSections) {
+      for (const emote of section.items || []) {
+        if (!matchesReactionPickerQuery(emote.searchText, trimmedQuery))
+          continue;
+        results.push(emote);
+      }
+    }
+
+    return results.slice(0, 160);
+  }, [
+    customPickerSections,
+    messageReactionPickerQuery,
+    reactionPickerBuiltinSections,
+  ]);
 
   const showingEmoteSuggestions = emoteQuery != null;
 
@@ -4100,6 +3011,7 @@ export function App() {
       setMemberContextMenu(null);
       setChannelContextMenu(null);
       setCategoryContextMenu(null);
+      setMessageReactionPicker(null);
       if (!settingsOpen) setMemberProfileCard(null);
     };
     const onEscape = (event) => {
@@ -4110,6 +3022,7 @@ export function App() {
         setChannelContextMenu(null);
         setCategoryContextMenu(null);
         setMemberProfileCard(null);
+        setMessageReactionPicker(null);
         setSettingsOpen(false);
       }
     };
@@ -4121,6 +3034,26 @@ export function App() {
       window.removeEventListener("keydown", onEscape);
     };
   }, [settingsOpen]);
+
+  useEffect(() => {
+    setMessageReactionPicker(null);
+    setMessageReactionPickerQuery("");
+  }, [navMode, activeGuildId, activeChannelId, activeDmId]);
+
+  useEffect(() => {
+    if (messageReactionPicker && !activeMessageReactionTarget) {
+      setMessageReactionPicker(null);
+      setMessageReactionPickerQuery("");
+      return;
+    }
+    if (!messageReactionPicker && messageReactionPickerQuery) {
+      setMessageReactionPickerQuery("");
+    }
+  }, [
+    activeMessageReactionTarget,
+    messageReactionPicker,
+    messageReactionPickerQuery,
+  ]);
 
   useEffect(() => {
     const secret = "invert";
@@ -4535,11 +3468,14 @@ export function App() {
         });
         setMe(meData);
 
-        const [profileData, serverData] = await Promise.all([
+        const [profileData, serverData, emoteCatalogData] = await Promise.all([
           api(`/v1/users/${meData.id}/profile`, {
             headers: { Authorization: `Bearer ${accessToken}` },
           }),
           api("/v1/servers", {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          }),
+          api("/v1/emotes/catalog", {
             headers: { Authorization: `Bearer ${accessToken}` },
           }),
         ]);
@@ -4550,12 +3486,16 @@ export function App() {
           normalizeFullProfile(profileData, profileData.fullProfile),
         );
         setProfileForm({
+          username: profileData.username || meData.username || "",
           displayName: profileData.displayName || "",
           bio: profileData.bio || "",
           pfpUrl: profileData.pfpUrl || "",
           bannerUrl: profileData.bannerUrl || "",
         });
 
+        setGlobalCustomEmoteCatalog(
+          Array.isArray(emoteCatalogData?.emotes) ? emoteCatalogData.emotes : [],
+        );
         setServers(nextServers);
         try {
           await refreshSocialData(accessToken);
@@ -4585,6 +3525,7 @@ export function App() {
           setAccessToken("");
           setRefreshToken("");
           setServers([]);
+          setGlobalCustomEmoteCatalog([]);
           setGuildState(null);
           setMessages([]);
           setStatus("Session expired. Please sign in again.");
@@ -4728,7 +3669,13 @@ export function App() {
                     existing.isOfficial === true || incoming.isOfficial === true,
                   isNoReply:
                     existing.isNoReply === true || incoming.isNoReply === true,
-                  messages: [...(existing.messages || []), incoming],
+                  messages: [
+                    ...(existing.messages || []),
+                    {
+                      ...incoming,
+                      reactions: incoming.reactions || [],
+                    },
+                  ],
                 };
                 return next;
               }
@@ -4746,7 +3693,12 @@ export function App() {
                   badgeDetails: incoming.badgeDetails || [],
                   isOfficial: incoming.isOfficial === true,
                   isNoReply: incoming.isNoReply === true,
-                  messages: [incoming],
+                  messages: [
+                    {
+                      ...incoming,
+                      reactions: incoming.reactions || [],
+                    },
+                  ],
                 },
                 ...next,
               ];
@@ -4775,6 +3727,18 @@ export function App() {
                     }
                   : item,
               ),
+            );
+          }
+          if (
+            msg.op === "DISPATCH" &&
+            msg.t === "SOCIAL_DM_MESSAGE_REACTION_UPDATE" &&
+            msg.d?.threadId &&
+            msg.d?.messageId
+          ) {
+            applyDmMessageReactions(
+              msg.d.threadId,
+              msg.d.messageId,
+              Array.isArray(msg.d.reactions) ? msg.d.reactions : [],
             );
           }
 
@@ -4824,27 +3788,10 @@ export function App() {
             msg.d?.callId
           ) {
             const endedId = msg.d.callId;
-            setPrivateCallViewOpen(false);
-            setIncomingCall((prev) => (prev?.callId === endedId ? null : prev));
-            setOutgoingCall((prev) => (prev?.callId === endedId ? null : prev));
-            setActivePrivateCall((prev) => {
-              if (prev?.callId === endedId) {
-                // Close the dedicated private-call gateway WS
-                if (privateCallGatewayWsRef.current) {
-                  try {
-                    privateCallGatewayWsRef.current.close();
-                  } catch {}
-                  privateCallGatewayWsRef.current = null;
-                }
-                privateCallGatewayReadyRef.current = false;
-                if (privateCallGatewayHeartbeatRef.current) {
-                  clearInterval(privateCallGatewayHeartbeatRef.current);
-                  privateCallGatewayHeartbeatRef.current = null;
-                }
-                return null;
-              }
-              return prev;
-            });
+            void clearPrivateCallLocally(
+              endedId,
+              "Private call ended.",
+            );
           }
           // ── End private call events ─────────────────────────────────────
         } catch (_) {}
@@ -5181,6 +4128,7 @@ export function App() {
                     embeds: created.embeds || [],
                     linkEmbeds: created.linkEmbeds || [],
                     attachments: created.attachments || [],
+                    reactions: created.reactions || [],
                     mentionEveryone: !!created.mentionEveryone,
                     mentions: created.mentions || [],
                     created_at: created.createdAt,
@@ -5193,6 +4141,22 @@ export function App() {
                   ...prev,
                   [server.id]: (prev[server.id] || 0) + 1,
                 }));
+              }
+              return;
+            }
+
+            if (msg.t === "MESSAGE_REACTIONS_UPDATE") {
+              const channelId = msg.d?.channelId || "";
+              const messageId = msg.d?.messageId || "";
+              if (
+                channelId &&
+                messageId &&
+                channelId === activeChannelIdRef.current
+              ) {
+                applyServerMessageReactions(
+                  messageId,
+                  Array.isArray(msg.d?.reactions) ? msg.d.reactions : [],
+                );
               }
               return;
             }
@@ -6811,18 +5775,19 @@ export function App() {
   function applyEmoteSuggestion(emoteName) {
     const normalizedName = String(emoteName || "").trim().toLowerCase();
     if (!normalizedName) return;
-    const emote = getEmoteQuery(messageText);
+    const emote = getEmoteQuery(activeComposerText);
     if (!emote) {
       insertEmoteToken(normalizedName);
       return;
     }
 
-    const prefix = messageText.slice(0, emote.start);
+    const prefix = activeComposerText.slice(0, emote.start);
     const nextText = `${prefix}:${normalizedName}: `;
-    setMessageText(nextText);
+    if (navMode === "dms") setDmText(nextText);
+    else setMessageText(nextText);
     setShowEmotePicker(false);
     window.requestAnimationFrame(() => {
-      const input = composerInputRef.current;
+      const input = activeComposerInputRef.current;
       if (!input) return;
       input.focus();
       input.setSelectionRange(nextText.length, nextText.length);
@@ -6951,15 +5916,18 @@ export function App() {
     const sourceUrl = String(attachment?.url || "").trim();
     if (!sourceUrl) return null;
     const isDmAttachment = /\/v1\/social\/dms\/attachments\//.test(sourceUrl);
+    const serverId = !isDmAttachment && activeServerId ? activeServerId : undefined;
+    const threadId = isDmAttachment && activeDmId ? activeDmId : undefined;
+    const favouriteMessageId = messageId || undefined;
     return {
       sourceKind: isDmAttachment ? "dm_attachment" : "server_attachment",
       sourceUrl,
       title: attachment?.fileName || "Image",
       fileName: attachment?.fileName || "",
       contentType: attachment?.contentType || "",
-      serverId: isDmAttachment ? "" : activeServerId || "",
-      threadId: isDmAttachment ? activeDmId || "" : "",
-      messageId: messageId || "",
+      ...(serverId ? { serverId } : {}),
+      ...(threadId ? { threadId } : {}),
+      ...(favouriteMessageId ? { messageId: favouriteMessageId } : {}),
     };
   }
 
@@ -6977,9 +5945,6 @@ export function App() {
       title: embed?.title || preview?.title || guessFileNameFromUrl(resolvedImageUrl),
       fileName: guessFileNameFromUrl(resolvedImageUrl),
       contentType: "",
-      serverId: "",
-      threadId: "",
-      messageId: "",
     };
   }
 
@@ -7112,50 +6077,116 @@ export function App() {
     if (!accessToken || !key) return;
 
     const existing = favouriteMediaByKey.get(key) || null;
-    const busyKey = existing?.id || key;
-    if (favouriteMediaBusyById[busyKey]) return;
+    const pendingId = `pending:${key}`;
+    const busy =
+      !!favouriteMediaBusyById[key] ||
+      (existing?.id ? !!favouriteMediaBusyById[existing.id] : false);
+    if (busy) return;
 
-    setFavouriteMediaBusyById((current) => ({ ...current, [busyKey]: true }));
-    try {
-      if (existing?.id) {
+    setFavouriteMediaBusyById((current) => ({
+      ...current,
+      [key]: true,
+      [pendingId]: true,
+      ...(existing?.id ? { [existing.id]: true } : {}),
+    }));
+
+    if (existing?.id) {
+      const rollbackItem = existing;
+      setFavouriteMedia((current) =>
+        current.filter(
+          (item) =>
+            item.id !== rollbackItem.id &&
+            buildFavouriteMediaKey(item?.sourceKind, item?.sourceUrl) !== key,
+        ),
+      );
+
+      try {
         await api(`/v1/social/favourites/media/${existing.id}`, {
           method: "DELETE",
           headers: { Authorization: `Bearer ${accessToken}` },
         });
-        setFavouriteMedia((current) =>
-          current.filter((item) => item.id !== existing.id),
-        );
+        loadFavouriteMedia().catch(() => {});
         setStatus("Removed from favourites.");
-      } else {
-        const data = await api("/v1/social/favourites/media", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${accessToken}` },
-          body: JSON.stringify(draft),
+      } catch (error) {
+        setFavouriteMedia((current) => {
+          const alreadyPresent = current.some(
+            (item) =>
+              item.id === rollbackItem.id ||
+              buildFavouriteMediaKey(item?.sourceKind, item?.sourceUrl) === key,
+          );
+          return alreadyPresent ? current : [rollbackItem, ...current];
         });
-        const favourite = data?.favourite;
-        if (favourite?.id) {
-          setFavouriteMedia((current) => {
-            const favouriteKey = buildFavouriteMediaKey(
-              favourite.sourceKind,
-              favourite.sourceUrl,
-            );
-            const filtered = current.filter(
-              (item) =>
-                item.id !== favourite.id &&
-                buildFavouriteMediaKey(item?.sourceKind, item?.sourceUrl) !==
-                  favouriteKey,
-            );
-            return [favourite, ...filtered];
-          });
-        }
-        setStatus("Saved to favourites.");
+        setStatus(`Could not update favourites: ${error.message}`);
+      } finally {
+        setFavouriteMediaBusyById((current) => {
+          const next = { ...current };
+          delete next[key];
+          delete next[pendingId];
+          delete next[rollbackItem.id];
+          return next;
+        });
       }
+      return;
+    }
+
+    const optimisticFavourite = {
+      id: pendingId,
+      sourceKind: draft.sourceKind,
+      sourceUrl: normalizeFavouriteMediaUrl(draft.sourceUrl),
+      pageUrl: draft.pageUrl || "",
+      title: draft.title || "",
+      fileName: draft.fileName || "",
+      contentType: draft.contentType || "",
+      serverId: draft.serverId || "",
+      threadId: draft.threadId || "",
+      messageId: draft.messageId || "",
+      createdAt: toIsoTimestamp(Date.now()),
+      updatedAt: toIsoTimestamp(Date.now()),
+    };
+
+    setFavouriteMedia((current) => {
+      const filtered = current.filter(
+        (item) =>
+          item.id !== pendingId &&
+          buildFavouriteMediaKey(item?.sourceKind, item?.sourceUrl) !== key,
+      );
+      return [optimisticFavourite, ...filtered];
+    });
+
+    try {
+      const data = await api("/v1/social/favourites/media", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify(draft),
+      });
+      const favourite = data?.favourite;
+      if (favourite?.id) {
+        setFavouriteMedia((current) => {
+          const filtered = current.filter(
+            (item) =>
+              item.id !== pendingId &&
+              item.id !== favourite.id &&
+              buildFavouriteMediaKey(item?.sourceKind, item?.sourceUrl) !== key,
+          );
+          return [favourite, ...filtered];
+        });
+      } else {
+        setFavouriteMedia((current) =>
+          current.filter((item) => item.id !== pendingId),
+        );
+      }
+      loadFavouriteMedia().catch(() => {});
+      setStatus("Saved to favourites.");
     } catch (error) {
+      setFavouriteMedia((current) =>
+        current.filter((item) => item.id !== pendingId),
+      );
       setStatus(`Could not update favourites: ${error.message}`);
     } finally {
       setFavouriteMediaBusyById((current) => {
         const next = { ...current };
-        delete next[busyKey];
+        delete next[key];
+        delete next[pendingId];
         return next;
       });
     }
@@ -7415,6 +6446,7 @@ export function App() {
 
     const content = `${dmReplyTarget ? `> replying to ${dmReplyTarget.author}: ${dmReplyTarget.content}\n` : ""}${hasTextContent ? draftContent : ""}`;
     setDmText("");
+    setShowEmotePicker(false);
 
     try {
       await api(`/v1/social/dms/${activeDm.id}/messages`, {
@@ -7564,17 +6596,39 @@ export function App() {
   }
 
   async function loadBoostStatus() {
-    if (!accessToken) return;
+    if (!accessToken) return null;
     setBoostLoading(true);
     try {
       const data = await api("/v1/billing/boost", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       setBoostStatus(data);
+      return data;
     } catch (error) {
       setStatus(`Could not load billing status: ${error.message}`);
+      return null;
     } finally {
       setBoostLoading(false);
+    }
+  }
+
+  async function loadGlobalEmoteCatalog({ quiet = false } = {}) {
+    if (!accessToken) {
+      setGlobalCustomEmoteCatalog([]);
+      return [];
+    }
+    try {
+      const data = await api("/v1/emotes/catalog", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const emotes = Array.isArray(data?.emotes) ? data.emotes : [];
+      setGlobalCustomEmoteCatalog(emotes);
+      return emotes;
+    } catch (error) {
+      if (!quiet) {
+        setStatus(`Could not load global emotes: ${error.message}`);
+      }
+      return [];
     }
   }
 
@@ -8050,10 +7104,16 @@ export function App() {
 
   async function saveProfile() {
     try {
+      const normalizedUsername = String(profileForm.username || "").trim();
+      if (normalizedUsername.length < 2 || normalizedUsername.length > 32) {
+        setStatus("Username must be between 2 and 32 characters.");
+        return;
+      }
       await api("/v1/me/profile", {
         method: "PATCH",
         headers: { Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({
+          username: normalizedUsername,
           displayName: profileForm.displayName || null,
           bio: profileForm.bio || null,
           pfpUrl: normalizeImageUrlInput(profileForm.pfpUrl) || null,
@@ -8065,8 +7125,17 @@ export function App() {
           headers: { Authorization: `Bearer ${accessToken}` },
         });
         setProfile(updated);
+        setMe((current) =>
+          current
+            ? {
+                ...current,
+                username: updated.username ?? current.username,
+              }
+            : current,
+        );
         setFullProfileDraft(normalizeFullProfile(updated, updated.fullProfile));
         setProfileForm({
+          username: updated.username ?? normalizedUsername,
           displayName: updated.displayName ?? "",
           bio: updated.bio ?? "",
           pfpUrl: updated.pfpUrl ?? "",
@@ -8085,6 +7154,10 @@ export function App() {
         setStatus(
           "Invalid image URL. Use uploaded image paths (/v1/profile-images/...), users/... paths, or valid http(s) image URLs.",
         );
+      } else if (msg.includes("USERNAME_TAKEN")) {
+        setStatus("That username is already taken.");
+      } else if (msg.includes("USERNAME_RESERVED")) {
+        setStatus("That username is reserved.");
       } else setStatus(`Profile update failed: ${msg}`);
     }
   }
@@ -8419,6 +7492,54 @@ export function App() {
           "Server profile data is invalid. Check name, logo URL, and banner URL.",
         );
       else setStatus(`Server profile update failed: ${msg}`);
+    }
+  }
+
+  async function toggleActiveServerGlobalEmotes(enabled) {
+    if (!activeServer || !accessToken) return;
+    if (!(activeServer.roles || []).includes("owner")) {
+      setStatus("Only the server owner can change global emote access.");
+      return;
+    }
+
+    if (enabled) {
+      const entitlement = boostStatus || (await loadBoostStatus());
+      if (!entitlement?.active) {
+        showBoostUpsell(
+          "Global custom emotes require OpenCom Boost on the server owner.",
+        );
+        return;
+      }
+    }
+
+    try {
+      await api(`/v1/servers/${activeServer.id}/global-emotes`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ enabled }),
+      });
+      setServers((current) =>
+        current.map((server) =>
+          server.id === activeServer.id
+            ? { ...server, globalEmotesEnabled: !!enabled }
+            : server,
+        ),
+      );
+      await loadGlobalEmoteCatalog({ quiet: true });
+      setStatus(
+        enabled
+          ? "Members can now use this server's custom emotes globally."
+          : "Global custom emotes disabled for this server.",
+      );
+    } catch (error) {
+      const message = String(error?.message || "");
+      if (message.includes("BOOST_REQUIRED")) {
+        showBoostUpsell(
+          "Global custom emotes require OpenCom Boost on the server owner.",
+        );
+        return;
+      }
+      setStatus(`Global emote update failed: ${message}`);
     }
   }
 
@@ -8866,6 +7987,7 @@ export function App() {
         activeServer.membershipToken,
       );
       setGuildState(state);
+      await loadGlobalEmoteCatalog({ quiet: true });
       setStatus("Custom emote created.");
     } catch (error) {
       setStatus(`Create emote failed: ${error.message}`);
@@ -8889,6 +8011,7 @@ export function App() {
         activeServer.membershipToken,
       );
       setGuildState(state);
+      await loadGlobalEmoteCatalog({ quiet: true });
       setStatus("Custom emote removed.");
     } catch (error) {
       setStatus(`Remove emote failed: ${error.message}`);
@@ -9876,6 +8999,12 @@ export function App() {
 
   function openCurrentCallView() {
     if (activePrivateCall?.callId) {
+      const matchingDm = dms.find(
+        (dm) => dm.participantId === activePrivateCall?.otherUserId,
+      );
+      if (matchingDm?.id) {
+        setActiveDmId(matchingDm.id);
+      }
       setNavMode("dms");
       setPrivateCallViewOpen(true);
       return;
@@ -10038,7 +9167,13 @@ export function App() {
         }
         return;
       }
-      // On success the WS will receive PRIVATE_CALL_CREATE which updates outgoingCall.callId
+      if (data?.call_id) {
+        setOutgoingCall((prev) =>
+          prev && prev.calleeId === friendId
+            ? { ...prev, callId: data.call_id }
+            : prev,
+        );
+      }
     } catch (err) {
       setOutgoingCall(null);
       setStatus(`Call failed: ${err.message || "CALL_CREATE_FAILED"}`);
@@ -10091,10 +9226,31 @@ export function App() {
         const ws = new WebSocket(coreGatewayWsUrl);
         privateCallGatewayWsRef.current = ws;
         privateCallGatewayReadyRef.current = false;
+        let settled = false;
+
+        const finishResolve = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          resolve();
+        };
+
+        const finishReject = (error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          reject(
+            error instanceof Error
+              ? error
+              : new Error(String(error || "PRIVATE_CALL_GATEWAY_ERROR")),
+          );
+        };
 
         const timeout = setTimeout(() => {
-          ws.close();
-          reject(new Error("PRIVATE_CALL_GATEWAY_TIMEOUT"));
+          try {
+            ws.close();
+          } catch {}
+          finishReject(new Error("PRIVATE_CALL_GATEWAY_TIMEOUT"));
         }, 15000);
 
         ws.onopen = () => {
@@ -10121,25 +9277,36 @@ export function App() {
             }
 
             if (msg.op === "READY") {
-              clearTimeout(timeout);
               privateCallGatewayReadyRef.current = true;
-              resolve();
+              finishResolve();
               return;
             }
 
             if (msg.op === "ERROR") {
-              clearTimeout(timeout);
-              reject(new Error(msg.d?.error || "PRIVATE_CALL_GATEWAY_ERROR"));
+              finishReject(
+                new Error(msg.d?.error || "PRIVATE_CALL_GATEWAY_ERROR"),
+              );
             }
           } catch {}
         };
 
-        ws.onerror = () => reject(new Error("PRIVATE_CALL_GATEWAY_WS_ERROR"));
-        ws.onclose = () => {
+        ws.onerror = () => finishReject(new Error("PRIVATE_CALL_GATEWAY_WS_ERROR"));
+        ws.onclose = (event) => {
           privateCallGatewayReadyRef.current = false;
           if (privateCallGatewayHeartbeatRef.current) {
             clearInterval(privateCallGatewayHeartbeatRef.current);
             privateCallGatewayHeartbeatRef.current = null;
+          }
+          if (!settled) {
+            const closeReason = String(event?.reason || "").trim();
+            const closeCode = Number(event?.code || 1000);
+            finishReject(
+              new Error(
+                closeReason
+                  ? `PRIVATE_CALL_GATEWAY_CLOSED:${closeReason}`
+                  : `PRIVATE_CALL_GATEWAY_CLOSED_${closeCode}`,
+              ),
+            );
           }
         };
       });
@@ -10164,10 +9331,11 @@ export function App() {
         channelId,
         guildId,
         nodeBaseUrl,
+        otherUserId: incomingCall?.callerId || outgoingCall?.calleeId || "",
         otherName: incomingCall?.callerName || outgoingCall?.calleeName || "",
         otherPfp: incomingCall?.callerPfp || outgoingCall?.calleePfp || null,
       });
-      setPrivateCallViewOpen(true);
+      setPrivateCallViewOpen(false);
       setOutgoingCall(null);
       setCallDuration(0);
       setStatus("Voice call connected.");
@@ -10187,22 +9355,30 @@ export function App() {
   }
 
   /**
-   * End the active private call: marks it ended on the server, cleans up voice
-   * and tears down the private gateway WS.
+   * Tear down the local private-call session and dedicated gateway state.
+   * Optionally scopes the cleanup to a specific call ID.
    */
-  async function endPrivateCall() {
-    const call = activePrivateCall;
+  async function clearPrivateCallLocally(callId = "", statusMessage = "") {
+    const activeCallId = activePrivateCallRef.current?.callId || "";
+    const shouldTearDownActiveSession = !callId || activeCallId === callId;
+
+    if (callId) {
+      setIncomingCall((prev) => (prev?.callId === callId ? null : prev));
+      setOutgoingCall((prev) => (prev?.callId === callId ? null : prev));
+    } else {
+      setIncomingCall(null);
+      setOutgoingCall(null);
+    }
+
+    if (!shouldTearDownActiveSession) return;
+
     setActivePrivateCall(null);
     setPrivateCallViewOpen(false);
-    setOutgoingCall(null);
-    setIncomingCall(null);
     setCallDuration(0);
 
-    // Tear down voice RTC
     await cleanupVoiceRtc().catch(() => {});
     setVoiceSession({ guildId: "", channelId: "" });
 
-    // Close the dedicated gateway
     if (privateCallGatewayWsRef.current) {
       try {
         privateCallGatewayWsRef.current.close();
@@ -10214,6 +9390,15 @@ export function App() {
       clearInterval(privateCallGatewayHeartbeatRef.current);
       privateCallGatewayHeartbeatRef.current = null;
     }
+
+    if (statusMessage) {
+      setStatus(statusMessage);
+    }
+  }
+
+  async function endPrivateCall() {
+    const call = activePrivateCall;
+    await clearPrivateCallLocally(call?.callId || "");
 
     // Notify the server
     if (call?.callId && accessToken) {
@@ -10240,6 +9425,56 @@ export function App() {
     const id = setInterval(() => setCallDuration((d) => d + 1), 1000);
     return () => clearInterval(id);
   }, [activePrivateCall?.callId]);
+
+  useEffect(() => {
+    const trackedCallId = activePrivateCall?.callId;
+    if (!trackedCallId || !accessToken) return;
+
+    let cancelled = false;
+    let intervalId = null;
+    let inactiveMisses = 0;
+
+    const pollStatus = async () => {
+      try {
+        const data = await api("/call/get_status", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            callId: trackedCallId,
+            requireConnected: true,
+          }),
+        });
+        if (cancelled) return;
+        if (data?.success && data?.active && data?.connected) {
+          inactiveMisses = 0;
+          return;
+        }
+        inactiveMisses += 1;
+        if (inactiveMisses < 2) return;
+        await clearPrivateCallLocally(
+          trackedCallId,
+          "Private call ended because no live voice session was found.",
+        );
+      } catch {
+        // Ignore transient status-check failures and try again on the next tick.
+      }
+    };
+
+    const startTimer = setTimeout(() => {
+      void pollStatus();
+      intervalId = setInterval(() => {
+        void pollStatus();
+      }, 10000);
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(startTimer);
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [activePrivateCall?.callId, accessToken]);
 
   // ── End private call functions ──────────────────────────────────────────────
 
@@ -11047,13 +10282,379 @@ export function App() {
 
   function insertEmoteToken(name) {
     const token = `:${name}:`;
-    setMessageText((current) => {
+    const setComposerText = navMode === "dms" ? setDmText : setMessageText;
+    setComposerText((current) => {
       const trimmed = current || "";
       const spacer = trimmed.length > 0 && !/\s$/.test(trimmed) ? " " : "";
       return `${trimmed}${spacer}${token} `;
     });
     setShowEmotePicker(false);
-    composerInputRef.current?.focus();
+    activeComposerInputRef.current?.focus();
+  }
+
+  function renderEmoteSuggestionsPanel() {
+    if (showingEmoteSuggestions && !showingSlash) {
+      return (
+        <div className="slash-command-suggestions">
+          <div className="slash-command-header">
+            EMOTES MATCHING :{(emoteQuery?.query || "").toUpperCase()}
+          </div>
+          {emoteSuggestions.length === 0 ? (
+            <div className="slash-command-empty">
+              No built-in or custom emotes found.
+            </div>
+          ) : (
+            emoteSuggestions.map((emote, index) => (
+              <button
+                key={emote.id}
+                type="button"
+                className={`slash-command-item ${index === emoteSelectionIndex ? "active" : ""}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  applyEmoteSuggestion(emote.name);
+                  setEmoteSelectionIndex(index);
+                }}
+              >
+                <div className="emote-suggestion-row">
+                  {emote.type === "custom" ? (
+                    <img
+                      className="message-custom-emote"
+                      src={emote.imageUrl}
+                      alt={`:${emote.name}:`}
+                    />
+                  ) : (
+                    <span className="emote-suggestion-glyph">
+                      {emote.value}
+                    </span>
+                  )}
+                  <strong>:{emote.name}:</strong>
+                </div>
+                <span>
+                  {emote.type === "custom"
+                    ? emote.scopeLabel || "Custom"
+                    : "Built-in"}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      );
+    }
+    return null;
+  }
+
+  function renderEmotePickerPanel() {
+    if (!showEmotePicker || showingSlash || showingEmoteSuggestions) return null;
+    return (
+      <div className="emote-picker">
+        {customPickerSections.map((section) => (
+          <section key={section.id} className="emote-picker-section">
+            <header className="emote-picker-heading">{section.heading}</header>
+            <div className="emote-picker-grid">
+              {section.items.map((emote) => (
+                <button
+                  key={emote.id || emote.name}
+                  type="button"
+                  className="emote-item"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    insertEmoteToken(emote.name);
+                  }}
+                  title={`:${emote.name}:`}
+                >
+                  <img
+                    className="message-custom-emote"
+                    src={emote.imageUrl}
+                    alt={`:${emote.name}:`}
+                  />
+                  <small>:{emote.name}:</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        ))}
+        {BUILTIN_EMOTE_CATEGORIES.map((category) => (
+          <section
+            key={category.id}
+            className="emote-picker-section"
+          >
+            <header className="emote-picker-heading">
+              {category.label}
+            </header>
+            <div className="emote-picker-grid">
+              {category.items.map((emote) => (
+                <button
+                  key={`${category.id}:${emote.name}`}
+                  type="button"
+                  className="emote-item"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    insertEmoteToken(emote.name);
+                  }}
+                  title={`:${emote.name}:`}
+                >
+                  <span>{emote.value}</span>
+                  <small>:{emote.name}:</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    );
+  }
+
+  function resolveReactionDescriptor(input, kind = "server") {
+    const raw = String(input || "").trim();
+    if (!raw) return null;
+
+    const tokenMatch = raw.match(/^:([a-zA-Z0-9_+-]{2,64}):$/);
+    if (tokenMatch) {
+      const token = String(tokenMatch[1] || "").trim().toLowerCase();
+      if (kind === "server" && currentServerCustomEmoteByName.has(token)) {
+        const custom = currentServerCustomEmoteByName.get(token);
+        return {
+          key: `custom:${custom.name}`,
+          type: "custom",
+          name: custom.name,
+          value: "",
+          imageUrl: custom.imageUrl || "",
+        };
+      }
+      if (globalUsableCustomEmoteByName.has(token)) {
+        const custom = globalUsableCustomEmoteByName.get(token);
+        return {
+          key: `custom:${custom.name}`,
+          type: "custom",
+          name: custom.name,
+          value: "",
+          imageUrl: custom.imageUrl || "",
+        };
+      }
+      const builtin = BUILTIN_REACTION_ENTRY_BY_TOKEN[token];
+      if (builtin) {
+        return {
+          key: `builtin:${builtin.name}`,
+          type: "builtin",
+          name: builtin.name,
+          value: builtin.value,
+          imageUrl: "",
+        };
+      }
+      return null;
+    }
+
+    const builtin = BUILTIN_REACTION_ENTRY_BY_VALUE.get(raw);
+    if (builtin) {
+      return {
+        key: `builtin:${builtin.name}`,
+        type: "builtin",
+        name: builtin.name,
+        value: builtin.value,
+        imageUrl: "",
+      };
+    }
+
+    if (/[a-z0-9]/i.test(raw) || /\s/.test(raw)) return null;
+    const unicodeKey = buildUnicodeReactionKey(raw);
+    if (!unicodeKey) return null;
+    return {
+      key: `unicode:${unicodeKey}`,
+      type: "unicode",
+      name: raw,
+      value: raw,
+      imageUrl: "",
+    };
+  }
+
+  function applyServerMessageReactions(messageId, reactions = []) {
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === messageId ? { ...message, reactions } : message,
+      ),
+    );
+  }
+
+  function applyDmMessageReactions(threadId, messageId, reactions = []) {
+    setDms((current) =>
+      current.map((item) =>
+        item.id === threadId
+          ? {
+              ...item,
+              messages: (item.messages || []).map((message) =>
+                message.id === messageId ? { ...message, reactions } : message,
+              ),
+            }
+          : item,
+      ),
+    );
+  }
+
+  async function setMessageReaction(kind, message, reaction, active) {
+    if (!reaction?.key || !message?.id) return;
+    const reactionPayload = {
+      ...reaction,
+      value:
+        typeof reaction?.value === "string" && reaction.value.trim()
+          ? reaction.value.trim()
+          : null,
+      imageUrl:
+        typeof reaction?.imageUrl === "string" && reaction.imageUrl.trim()
+          ? reaction.imageUrl.trim()
+          : null,
+    };
+    try {
+      if (kind === "server") {
+        if (!activeServer || !activeChannelId) return;
+        const data = await nodeApi(
+          activeServer.baseUrl,
+          `/v1/channels/${activeChannelId}/messages/${message.id}/reactions`,
+          activeServer.membershipToken,
+          {
+            method: active ? "PUT" : "DELETE",
+            body: JSON.stringify(reactionPayload),
+          },
+        );
+        applyServerMessageReactions(message.id, data?.reactions || []);
+      } else {
+        if (!activeDmId) return;
+        const data = await api(
+          `/v1/social/dms/${activeDmId}/messages/${message.id}/reactions`,
+          {
+            method: active ? "PUT" : "DELETE",
+            headers: { Authorization: `Bearer ${accessToken}` },
+            body: JSON.stringify(reactionPayload),
+          },
+        );
+        applyDmMessageReactions(activeDmId, message.id, data?.reactions || []);
+      }
+    } catch (error) {
+      setStatus(`Reaction failed: ${error.message}`);
+    }
+  }
+
+  async function promptAddReactionToMessage(message, kind = "server") {
+    const raw = await promptText(
+      "Add a reaction with an emoji or :name: emote",
+      "👍",
+    );
+    if (raw == null) return;
+    const reaction = resolveReactionDescriptor(raw, kind);
+    if (!reaction) {
+      setStatus("Unknown reaction. Use an emoji or a valid :name: emote.");
+      return;
+    }
+    await setMessageReaction(kind, message, reaction, true);
+  }
+
+  async function addReactionToMessageFromPicker(message, kind, emoteName) {
+    const reaction = resolveReactionDescriptor(`:${emoteName}:`, kind);
+    if (!reaction) {
+      setStatus("Unknown reaction. Use an emoji or a valid :name: emote.");
+      return;
+    }
+    setMessageReactionPicker(null);
+    setMessageReactionPickerQuery("");
+    await setMessageReaction(kind, message, reaction, true);
+  }
+
+  function toggleMessageReactionPicker(message, kind = "server") {
+    const messageId = String(message?.id || "").trim();
+    if (!messageId) return;
+    setShowEmotePicker(false);
+    setMessageReactionPickerQuery("");
+    setMessageReactionPicker((current) => {
+      if (current?.messageId === messageId && current?.kind === kind) {
+        return null;
+      }
+      return { messageId, kind };
+    });
+  }
+
+  function renderReactionChipGlyph(reaction) {
+    if (reaction?.type === "custom" && reaction?.imageUrl) {
+      return (
+        <img
+          className="message-custom-emote"
+          src={reaction.imageUrl}
+          alt={`:${reaction.name || "emote"}:`}
+        />
+      );
+    }
+    if (reaction?.value) {
+      return <span>{reaction.value}</span>;
+    }
+    if (reaction?.name && BUILTIN_EMOTES[reaction.name]) {
+      return <span>{BUILTIN_EMOTES[reaction.name]}</span>;
+    }
+    return <span>{reaction?.name || "?"}</span>;
+  }
+
+  function renderMessageReactions(message, kind = "server") {
+    const messageId = String(message?.id || "").trim();
+    const reactions = Array.isArray(message?.reactions) ? message.reactions : [];
+    const hasReactions = reactions.length > 0;
+    const canAdd = kind === "server" ? !!activeChannelId : !!activeDmId;
+    const pickerOpen =
+      messageReactionPicker?.messageId === messageId &&
+      messageReactionPicker?.kind === kind;
+
+    if (!hasReactions && !canAdd && !pickerOpen) return null;
+
+    const pickerTrigger = canAdd ? (
+      <div
+        className={`message-reaction-picker-anchor ${hasReactions ? "inline" : "floating"} ${pickerOpen ? "open" : ""}`}
+      >
+        <button
+          type="button"
+          className={`message-reaction-launcher ${pickerOpen ? "active" : ""}`}
+          title="Open reaction picker"
+          onClick={(event) => {
+            event.stopPropagation();
+            toggleMessageReactionPicker(message, kind);
+          }}
+        >
+          😀
+        </button>
+      </div>
+    ) : null;
+
+    return (
+      <div
+        className={`message-reaction-shell ${hasReactions ? "has-reactions" : ""} ${pickerOpen ? "picker-open" : ""}`}
+      >
+        {hasReactions && (
+          <div className="message-reactions-row">
+            {reactions.map((reaction) => {
+              const reacted = messageHasReactionFromUser(reaction, me?.id);
+              const count = Math.max(
+                Number.isFinite(Number(reaction?.count))
+                  ? Number(reaction.count)
+                  : 0,
+                getReactionUserIds(reaction).length,
+              );
+              return (
+                <button
+                  key={reaction.key}
+                  type="button"
+                  className={`message-reaction-chip ${reacted ? "active" : ""}`}
+                  title={reaction.name || reaction.key}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void setMessageReaction(kind, message, reaction, !reacted);
+                  }}
+                >
+                  {renderReactionChipGlyph(reaction)}
+                  <strong>{count}</strong>
+                </button>
+              );
+            })}
+            {pickerTrigger}
+          </div>
+        )}
+        {!hasReactions && pickerTrigger}
+      </div>
+    );
   }
 
   function normalizeComposerDraft(value = "") {
@@ -11225,6 +10826,17 @@ export function App() {
             );
           } else if (serverEmoteByName.has(token)) {
             const custom = serverEmoteByName.get(token);
+            out.push(
+              <img
+                key={`${keyPrefix}-custom-emote-${localIndex}`}
+                className="message-custom-emote"
+                src={custom.imageUrl || custom.image_url}
+                alt={`:${token}:`}
+                title={`:${token}:`}
+              />,
+            );
+          } else if (globalRenderableCustomEmoteByName.has(token)) {
+            const custom = globalRenderableCustomEmoteByName.get(token);
             out.push(
               <img
                 key={`${keyPrefix}-custom-emote-${localIndex}`}
@@ -11438,8 +11050,9 @@ export function App() {
     const key = buildFavouriteMediaKey(draft?.sourceKind, draft?.sourceUrl);
     if (!key) return null;
     const favourite = favouriteMediaByKey.get(key) || null;
-    const busyKey = favourite?.id || key;
-    const busy = !!favouriteMediaBusyById[busyKey];
+    const busy =
+      !!favouriteMediaBusyById[key] ||
+      (favourite?.id ? !!favouriteMediaBusyById[favourite.id] : false);
 
     return (
       <button
@@ -11451,9 +11064,10 @@ export function App() {
           toggleFavouriteMedia(draft);
         }}
         disabled={busy}
+        aria-pressed={!!favourite}
         title={favourite ? "Remove from favourites" : "Save to favourites"}
       >
-        ★
+        {favourite ? "★" : "☆"}
       </button>
     );
   }
@@ -11720,6 +11334,12 @@ export function App() {
     window.open(href, "_blank", "noopener,noreferrer");
   }
 
+  function openThemeStudio(tab = "catalog", { closeSettings = false } = {}) {
+    setThemeStudioTab(tab === "creator" ? "creator" : "catalog");
+    setNavMode("themes");
+    if (closeSettings) setSettingsOpen(false);
+  }
+
   if (routePath === APP_ROUTE_PANEL) {
     return <AdminApp />;
   }
@@ -11799,6 +11419,35 @@ export function App() {
     );
   }
 
+  const socialSidebarTitle =
+    navMode === "profile"
+      ? "Profile Studio"
+      : navMode === "themes"
+        ? "Theme Studio"
+      : navMode === "dms"
+        ? "Messages"
+        : "Friends";
+  const socialSidebarSubtitle =
+    navMode === "profile"
+      ? "Build your profile and creator identity."
+      : navMode === "themes"
+        ? "Catalogue, creator, and live interface styling."
+      : "Your social hub, DMs, and creator tools.";
+  const ownDisplayName =
+    profile?.displayName || profile?.username || me?.username || "You";
+  const ownSecondaryLabel = getSocialSecondaryLabel(
+    {
+      displayName: profile?.displayName || "",
+      username: me?.username || profile?.username || "",
+      name: me?.username || profile?.username || "",
+    },
+    me?.id,
+    {
+      fallback: profile?.platformTitle || "OpenCom Member",
+      maxLength: 52,
+    },
+  );
+
   return (
     <div className="opencom-shell">
       <ServerRailNav
@@ -11839,12 +11488,12 @@ export function App() {
           <h2>
             {navMode === "servers"
               ? activeServer?.name || "No server"
-              : navMode.toUpperCase()}
+              : socialSidebarTitle}
           </h2>
           <small>
             {navMode === "servers"
               ? activeGuild?.name || "Choose a channel"
-              : "Unified communication hub"}
+              : socialSidebarSubtitle}
           </small>
         </header>
 
@@ -12093,94 +11742,168 @@ export function App() {
           </>
         )}
 
-        {navMode === "dms" && (
-          <section className="sidebar-block channels-container">
-            {dms.map((dm) => (
+        {navMode !== "servers" && (
+          <section className="sidebar-block channels-container social-sidebar-shell">
+            <div className="social-hub-menu" role="navigation" aria-label="OpenCom home">
               <button
-                key={dm.id}
-                className={`channel-row dm-sidebar-row ${dm.id === activeDmId ? "active" : ""}`}
-                onClick={() => setActiveDmId(dm.id)}
-                title={`DM ${dm.name}`}
-                style={{ display: "flex", alignItems: "center", gap: "8px" }}
+                type="button"
+                className={`social-hub-link ${navMode === "friends" ? "active" : ""}`}
+                onClick={() => setNavMode("friends")}
               >
-                {renderPresenceAvatar({
-                  userId: dm.participantId || dm.id,
-                  username: dm.name,
-                  pfpUrl: dm.pfp_url,
-                  size: 28,
-                })}
-                <span className="channel-hash">@</span>
-                <div className="dm-sidebar-meta">
-                  <div className="dm-sidebar-name-row">
-                    <span className="dm-sidebar-name">{dm.name}</span>
-                    {renderOfficialBadge(
-                      dm.badgeDetails,
-                      "official-badge--compact",
-                    )}
+                <span className="social-hub-link-icon" aria-hidden="true">
+                  👥
+                </span>
+                <span className="social-hub-link-copy">
+                  <strong>Friends</strong>
+                  <small>Presence, activity, and who is around.</small>
+                </span>
+              </button>
+              <button
+                type="button"
+                className={`social-hub-link ${navMode === "dms" ? "active" : ""}`}
+                onClick={() => {
+                  if (!activeDmId && dms[0]?.id) setActiveDmId(dms[0].id);
+                  setNavMode("dms");
+                }}
+              >
+                <span className="social-hub-link-icon" aria-hidden="true">
+                  💬
+                </span>
+                <span className="social-hub-link-copy">
+                  <strong>Messages</strong>
+                  <small>Jump into direct conversations fast.</small>
+                </span>
+              </button>
+              <button
+                type="button"
+                className={`social-hub-link ${navMode === "profile" ? "active" : ""}`}
+                onClick={() => setNavMode("profile")}
+              >
+                <span className="social-hub-link-icon" aria-hidden="true">
+                  🪪
+                </span>
+                <span className="social-hub-link-copy">
+                  <strong>Profile Creator</strong>
+                  <small>Design your profile card and layout.</small>
+                </span>
+              </button>
+              <button
+                type="button"
+                className={`social-hub-link ${navMode === "themes" ? "active" : ""}`}
+                onClick={() => openThemeStudio("catalog")}
+              >
+                <span className="social-hub-link-icon" aria-hidden="true">
+                  🎨
+                </span>
+                <span className="social-hub-link-copy">
+                  <strong>Themes</strong>
+                  <small>Browse the catalogue or build one inline.</small>
+                </span>
+              </button>
+            </div>
+
+            {profile && (
+              <button
+                type="button"
+                className={`profile-preview social-profile-preview ${navMode === "profile" ? "active" : ""}`}
+                onClick={() => setNavMode("profile")}
+                style={{
+                  backgroundImage: profile?.bannerUrl
+                    ? `linear-gradient(rgba(10,16,30,0.45), rgba(10,16,30,0.88)), url(${profileImageUrl(profile.bannerUrl)})`
+                    : undefined,
+                }}
+              >
+                <div className="social-profile-top">
+                  <SafeAvatar
+                    src={profileImageUrl(profile.pfpUrl)}
+                    alt={ownDisplayName}
+                    name={ownDisplayName}
+                    seed={me?.id || ownDisplayName}
+                    className="avatar social-profile-avatar"
+                    imgClassName="avatar-image"
+                  />
+                  <div className="social-profile-copy">
+                    <strong>{ownDisplayName}</strong>
+                    <span>@{me?.username || profile.username}</span>
+                    <small title={ownSecondaryLabel}>{ownSecondaryLabel}</small>
                   </div>
-                  {dm.isNoReply && (
-                    <small className="dm-sidebar-note">No replies</small>
-                  )}
                 </div>
               </button>
-            ))}
+            )}
+
+            <div className="social-sidebar-section-head">
+              <span>Direct messages</span>
+              <button
+                type="button"
+                className="ghost social-sidebar-head-action"
+                onClick={() => {
+                  if (!activeDmId && dms[0]?.id) setActiveDmId(dms[0].id);
+                  setNavMode("dms");
+                }}
+              >
+                Open
+              </button>
+            </div>
+
+            <div className="social-dm-list">
+              {dms.map((dm) => {
+                const dmUserId = dm.participantId || dm.id;
+                const dmPrimaryLabel = getSocialPrimaryName(dm, dm.name || "Message");
+                const dmSecondaryLabel = dm.isNoReply
+                  ? "Official updates only"
+                  : getSocialSecondaryLabel(
+                      {
+                        displayName: dm.displayName || "",
+                        username: dm.username || dm.name || "",
+                        name: dm.name || dm.username || "",
+                      },
+                      dmUserId,
+                      {
+                        fallback: "Available for chat",
+                        maxLength: 52,
+                      },
+                    );
+                return (
+                  <button
+                    key={dm.id}
+                    className={`channel-row dm-sidebar-row ${navMode === "dms" && dm.id === activeDmId ? "active" : ""}`}
+                    onClick={() => {
+                      setActiveDmId(dm.id);
+                      setNavMode("dms");
+                    }}
+                    title={`DM ${dmPrimaryLabel}`}
+                    style={{ display: "flex", alignItems: "center", gap: "8px" }}
+                  >
+                    {renderPresenceAvatar({
+                      userId: dmUserId,
+                      username: dmPrimaryLabel,
+                      pfpUrl: dm.pfp_url,
+                      size: 30,
+                    })}
+                    <div className="dm-sidebar-meta">
+                      <div className="dm-sidebar-name-row">
+                        <span className="dm-sidebar-name">{dmPrimaryLabel}</span>
+                        {renderOfficialBadge(
+                          dm.badgeDetails,
+                          "official-badge--compact",
+                        )}
+                      </div>
+                      <small
+                        className="dm-sidebar-note"
+                        title={dmSecondaryLabel}
+                      >
+                        {dmSecondaryLabel}
+                      </small>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
             {!dms.length && (
               <p className="hint">
                 Add friends to open direct message threads.
               </p>
             )}
-          </section>
-        )}
-
-        {navMode === "friends" && (
-          <section className="sidebar-block channels-container friend-sidebar-list">
-            {friends.map((friend) => (
-              <button
-                className="friend-row friend-sidebar-row"
-                key={friend.id}
-                onClick={() => openDmFromFriend(friend)}
-                title={`Open ${friend.username}`}
-                style={{ display: "flex", alignItems: "center", gap: "8px" }}
-              >
-                {renderPresenceAvatar({
-                  userId: friend.id,
-                  username: friend.username,
-                  pfpUrl: friend.pfp_url,
-                  size: 28,
-                })}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <strong>{friend.username}</strong>
-                  <span className="hint">
-                    {presenceLabel(getPresence(friend.id))}
-                  </span>
-                </div>
-              </button>
-            ))}
-            {!friends.length && (
-              <p className="hint">
-                No friends yet. Use the Add Friend tab in the main panel.
-              </p>
-            )}
-          </section>
-        )}
-
-        {navMode === "profile" && profile && (
-          <section className="sidebar-block channels-container">
-            <div
-              className="profile-preview"
-              style={{
-                backgroundImage: profile?.bannerUrl
-                  ? `url(${profileImageUrl(profile.bannerUrl)})`
-                  : undefined,
-              }}
-            >
-              <div className="avatar">
-                {getInitials(profile.displayName || profile.username || "User")}
-              </div>
-              <strong>{profile.displayName || profile.username}</strong>
-              <span>@{profile.username}</span>
-              <small>{profile.platformTitle || "OpenCom Member"}</small>
-            </div>
           </section>
         )}
 
@@ -12272,13 +11995,13 @@ export function App() {
           <div className="user-row">
             {renderPresenceAvatar({
               userId: me?.id,
-              username: me?.username || "OpenCom User",
+              username: ownDisplayName,
               pfpUrl: profile?.pfpUrl,
               size: 36,
             })}
             <div className="user-meta">
-              <strong>{me?.username}</strong>
-              <span>{canManageServer ? "Owner" : "Member"}</span>
+              <strong>{ownDisplayName}</strong>
+              <span title={ownSecondaryLabel}>{ownSecondaryLabel}</span>
             </div>
             <select
               className="status-select"
@@ -12630,6 +12353,7 @@ export function App() {
                               return (
                                 <div
                                   key={message.id}
+                                  className="message-entry"
                                   onContextMenu={(event) =>
                                     openMessageContextMenu(event, {
                                       id: message.id,
@@ -12712,10 +12436,11 @@ export function App() {
                                             renderMessageAttachmentCard(
                                               attachment,
                                               `${message.id}-att-${index}`,
-                                            ),
+                                          ),
                                         )}
                                       </div>
                                     )}
+                                  {renderMessageReactions(message, "server")}
                                 </div>
                               );
                             })}
@@ -12954,51 +12679,7 @@ export function App() {
                       )}
                     </div>
                   )}
-                  {showingEmoteSuggestions && !showingSlash && (
-                    <div className="slash-command-suggestions">
-                      <div className="slash-command-header">
-                        EMOTES MATCHING :{(emoteQuery?.query || "").toUpperCase()}
-                      </div>
-                      {emoteSuggestions.length === 0 ? (
-                        <div className="slash-command-empty">
-                          No emotes found for this server.
-                        </div>
-                      ) : (
-                        emoteSuggestions.map((emote, index) => (
-                          <button
-                            key={emote.id}
-                            type="button"
-                            className={`slash-command-item ${index === emoteSelectionIndex ? "active" : ""}`}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              applyEmoteSuggestion(emote.name);
-                              setEmoteSelectionIndex(index);
-                            }}
-                          >
-                            <div className="emote-suggestion-row">
-                              {emote.type === "custom" ? (
-                                <img
-                                  className="message-custom-emote"
-                                  src={emote.imageUrl}
-                                  alt={`:${emote.name}:`}
-                                />
-                              ) : (
-                                <span className="emote-suggestion-glyph">
-                                  {emote.value}
-                                </span>
-                              )}
-                              <strong>:{emote.name}:</strong>
-                            </div>
-                            <span>
-                              {emote.type === "custom"
-                                ? "Custom"
-                                : "Built-in"}
-                            </span>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  )}
+                  {renderEmoteSuggestionsPanel()}
                   {mentionSuggestions.length > 0 &&
                     !showingSlash &&
                     !showingEmoteSuggestions && (
@@ -13022,48 +12703,7 @@ export function App() {
                       ))}
                     </div>
                   )}
-                  {showEmotePicker &&
-                    !showingSlash &&
-                    !showingEmoteSuggestions && (
-                    <div className="emote-picker">
-                      {Object.entries(BUILTIN_EMOTES).map(([name, value]) => (
-                        <button
-                          key={name}
-                          type="button"
-                          className="emote-item"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            insertEmoteToken(name);
-                          }}
-                          title={`:${name}:`}
-                        >
-                          <span>{value}</span>
-                          <small>:{name}:</small>
-                        </button>
-                      ))}
-                      {(guildState?.emotes || []).map((emote) => (
-                        <button
-                          key={emote.id || emote.name}
-                          type="button"
-                          className="emote-item"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            insertEmoteToken(
-                              String(emote.name || "").toLowerCase(),
-                            );
-                          }}
-                          title={`:${emote.name}:`}
-                        >
-                          <img
-                            className="message-custom-emote"
-                            src={emote.imageUrl || emote.image_url}
-                            alt={`:${emote.name}:`}
-                          />
-                          <small>:{emote.name}:</small>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  {renderEmotePickerPanel()}
                 </div>
                 <button
                   className="ghost composer-icon"
@@ -13221,7 +12861,9 @@ export function App() {
 
         {navMode === "dms" && (
           <section
-            className={`chat-main ${showPrivateCallStage ? "chat-main-voice-stage" : ""}`}
+            className={`chat-main ${showPrivateCallStage ? "chat-main-voice-stage" : ""} ${
+              showPrivateCallDock ? "chat-main-with-private-call-dock" : ""
+            }`}
           >
             <header className="chat-header dm-header-actions">
               <div className="dm-header-meta">
@@ -13234,40 +12876,75 @@ export function App() {
                         Official announcements only
                       </span>
                     )}
+                    {activeDmHasLivePrivateCall ? (
+                      <span className="dm-live-call-pill">
+                        Live call
+                        {callDuration > 0
+                          ? ` • ${formatCallDurationLabel(callDuration)}`
+                          : ""}
+                      </span>
+                    ) : null}
                   </div>
                 )}
               </div>
               <div className="chat-actions">
-                {activeDm?.participantId &&
-                  !activePrivateCall &&
-                  !activeDm?.isNoReply && (
+                {showPrivateCallStage ? (
+                  <input
+                    className="search-input"
+                    placeholder={`Search ${activeDm?.name || "messages"}`}
+                  />
+                ) : null}
+                {activeDm?.participantId && !activeDm?.isNoReply && (
                   <button
-                    className="icon-btn ghost"
-                    title={`Call ${activeDm.name}`}
+                    type="button"
+                    className={`dm-header-action-pill ${activeDmPrivateCallId ? "active" : ""}`}
+                    title={
+                      activeDmHasLivePrivateCall
+                        ? showPrivateCallStage
+                          ? "Back to chat"
+                          : "Open call view"
+                        : activeDmPrivateCallId
+                          ? "Join call"
+                          : `Call ${activeDm.name}`
+                    }
                     onClick={() => {
-                      const friend = friends.find(
-                        (f) => f.id === activeDm.participantId,
-                      );
-                      initiatePrivateCall(
-                        activeDm.participantId,
-                        activeDm.name,
-                        friend?.pfp_url ?? null,
-                      );
+                      if (activeDmHasLivePrivateCall) {
+                        setPrivateCallViewOpen((value) => !value);
+                        return;
+                      }
+                      if (activeDmPrivateCallId) {
+                        void joinPrivateVoiceCall(activeDmPrivateCallId);
+                        return;
+                      }
+                      startActiveDmCall();
                     }}
                   >
-                    📞
+                    <span>
+                      {activeDmHasLivePrivateCall
+                        ? showPrivateCallStage
+                          ? "💬"
+                          : "🖥️"
+                        : "📞"}
+                    </span>
+                    <strong>
+                      {activeDmHasLivePrivateCall
+                        ? showPrivateCallStage
+                          ? "Chat"
+                          : "Open call"
+                        : activeDmPrivateCallId
+                          ? "Join call"
+                          : "Call"}
+                    </strong>
                   </button>
                 )}
-                {activePrivateCall && (
-                  <button
-                    className="icon-btn ghost"
-                    title={showPrivateCallStage ? "Back to chat" : "View call"}
-                    onClick={() => setPrivateCallViewOpen((value) => !value)}
-                  >
-                    {showPrivateCallStage ? "💬" : "🖥️"}
-                  </button>
-                )}
-                {activePrivateCall && (
+                <button
+                  className={`icon-btn ghost ${showPinned ? "active" : ""}`}
+                  onClick={() => setShowPinned((value) => !value)}
+                  title="Pinned DMs"
+                >
+                  📌
+                </button>
+                {activeDmHasLivePrivateCall && (
                   <button
                     className="icon-btn ghost"
                     style={{ color: "var(--danger, #ef5f76)" }}
@@ -13277,19 +12954,17 @@ export function App() {
                     📵
                   </button>
                 )}
-                <button
-                  className="icon-btn ghost"
-                  onClick={() => setShowPinned((value) => !value)}
-                  title="Pinned DMs"
-                >
-                  📌
-                </button>
               </div>
             </header>
             {showPrivateCallStage ? (
               <VoiceCallStage
+                variant="dm"
                 title={activePrivateCall?.otherName || activeDm?.name || "Private call"}
-                subtitle="Private voice call with camera and screen sharing"
+                subtitle={
+                  activePrivateCall?.otherName || activeDm?.name
+                    ? `Talking with ${activePrivateCall?.otherName || activeDm?.name}`
+                    : "Private voice call"
+                }
                 participants={privateCallParticipants}
                 remoteScreenShares={enrichedRemoteScreenShares}
                 selectedRemoteScreenShare={selectedRemoteScreenShare}
@@ -13314,6 +12989,40 @@ export function App() {
               />
             ) : (
               <>
+            {showPrivateCallDock && (
+              <div className="private-call-stage-dock-slot">
+                <VoiceCallStage
+                  variant="dm"
+                  presentation="dock"
+                  title={activePrivateCall?.otherName || activeDm?.name || "Private call"}
+                  subtitle={
+                    activePrivateCall?.otherName || activeDm?.name
+                      ? `Talking with ${activePrivateCall?.otherName || activeDm?.name}`
+                      : "Private voice call"
+                  }
+                  participants={privateCallParticipants}
+                  remoteScreenShares={enrichedRemoteScreenShares}
+                  selectedRemoteScreenShare={selectedRemoteScreenShare}
+                  onSelectScreenShare={selectScreenShare}
+                  isConnected
+                  isMuted={isMuted}
+                  isDeafened={isDeafened}
+                  isCameraEnabled={isCameraEnabled}
+                  isScreenSharing={isScreenSharing}
+                  liveCameraCount={liveCameraCount}
+                  duration={callDuration}
+                  onToggleMute={() => setIsMuted((value) => !value)}
+                  onToggleDeafen={() => setIsDeafened((value) => !value)}
+                  onToggleCamera={toggleCamera}
+                  onToggleScreenShare={toggleScreenShare}
+                  onExpand={() => setPrivateCallViewOpen(true)}
+                  onLeave={endPrivateCall}
+                  leaveLabel="End call"
+                  emptyTitle="Focus the conversation"
+                  emptyDescription="Camera tiles, screen shares, and fullscreen viewing all live here while the private call is active."
+                />
+              </div>
+            )}
             {showPinned && activePinnedDmMessages.length > 0 && (
               <div className="pinned-strip">
                 {activePinnedDmMessages.slice(0, 3).map((item) => (
@@ -13392,6 +13101,7 @@ export function App() {
                             return (
                               <div
                                 key={message.id}
+                                className="message-entry"
                                 onContextMenu={(event) =>
                                   openMessageContextMenu(event, {
                                     id: message.id,
@@ -13406,9 +13116,7 @@ export function App() {
                                   <CallMessageCard
                                     message={message}
                                     me={me}
-                                    activeCallId={
-                                      activePrivateCall?.callId ?? null
-                                    }
+                                    activeCallId={activeDmPrivateCallId}
                                     onJoin={joinPrivateVoiceCall}
                                     callerName={group.author}
                                   />
@@ -13446,6 +13154,8 @@ export function App() {
                                       )}
                                     </div>
                                   )}
+                                {message.content !== "__CALL_REQUEST__" &&
+                                  renderMessageReactions(message, "dm")}
                               </div>
                             );
                           })}
@@ -13550,6 +13260,48 @@ export function App() {
                     uploadAttachments(files, "clipboard", "dm").catch(() => {});
                   }}
                   onKeyDown={(event) => {
+                    if (
+                      showingEmoteSuggestions &&
+                      event.key === "ArrowDown" &&
+                      emoteSuggestions.length > 0
+                    ) {
+                      event.preventDefault();
+                      setEmoteSelectionIndex(
+                        (current) => (current + 1) % emoteSuggestions.length,
+                      );
+                      return;
+                    }
+                    if (
+                      showingEmoteSuggestions &&
+                      event.key === "ArrowUp" &&
+                      emoteSuggestions.length > 0
+                    ) {
+                      event.preventDefault();
+                      setEmoteSelectionIndex(
+                        (current) =>
+                          (current - 1 + emoteSuggestions.length) %
+                          emoteSuggestions.length,
+                      );
+                      return;
+                    }
+                    if (
+                      showingEmoteSuggestions &&
+                      (event.key === "Tab" ||
+                        (event.key === "Enter" && !event.shiftKey)) &&
+                      emoteSuggestions.length > 0
+                    ) {
+                      event.preventDefault();
+                      const selected =
+                        emoteSuggestions[
+                          Math.min(
+                            emoteSelectionIndex,
+                            emoteSuggestions.length - 1,
+                          )
+                        ] || emoteSuggestions[0];
+                      if (!selected) return;
+                      applyEmoteSuggestion(selected.name);
+                      return;
+                    }
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
                       sendDm();
@@ -13557,6 +13309,8 @@ export function App() {
                   }}
                   disabled={!activeDm || activeDm?.isNoReply}
                 />
+                {renderEmoteSuggestionsPanel()}
+                {renderEmotePickerPanel()}
               </div>
               <button
                 className="ghost composer-icon"
@@ -13568,6 +13322,17 @@ export function App() {
                 disabled={!activeDm || activeDm?.isNoReply}
               >
                 ★
+              </button>
+              <button
+                className="ghost composer-icon"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setShowEmotePicker((current) => !current);
+                }}
+                title="Open emotes"
+                disabled={!activeDm || activeDm?.isNoReply}
+              >
+                😀
               </button>
               <button
                 className="send-btn"
@@ -13600,6 +13365,7 @@ export function App() {
             filteredFriends={filteredFriends}
             getPresence={getPresence}
             presenceLabel={presenceLabel}
+            getActivitySummary={getActivitySummary}
             renderPresenceAvatar={renderPresenceAvatar}
             openDmFromFriend={openDmFromFriend}
             openMemberProfile={openMemberProfile}
@@ -13643,10 +13409,21 @@ export function App() {
             onAudioFieldUpload={onAudioFieldUpload}
           />
         )}
+
+        {navMode === "themes" && (
+          <ThemeStudioApp
+            activeTab={themeStudioTab}
+            onTabChange={setThemeStudioTab}
+            themeCss={themeCss}
+            setThemeCss={setThemeCss}
+            setThemeEnabled={setThemeEnabled}
+          />
+        )}
       </main>
 
       <AppContextMenus
         messageContextMenu={messageContextMenu}
+        addMessageReaction={promptAddReactionToMessage}
         setReplyTarget={setReplyTarget}
         setDmReplyTarget={setDmReplyTarget}
         setMessageContextMenu={setMessageContextMenu}
@@ -13778,6 +13555,27 @@ export function App() {
         dialogInputRef={dialogInputRef}
       />
 
+      <MessageReactionPickerModal
+        open={!!messageReactionPicker && !!activeMessageReactionTarget}
+        onClose={() => {
+          setMessageReactionPicker(null);
+          setMessageReactionPickerQuery("");
+        }}
+        query={messageReactionPickerQuery}
+        setQuery={setMessageReactionPickerQuery}
+        customSections={customPickerSections}
+        builtinSections={reactionPickerBuiltinSections}
+        searchResults={reactionPickerSearchResults}
+        onSelect={(emoteName) => {
+          if (!activeMessageReactionTarget || !messageReactionPicker?.kind) return;
+          void addReactionToMessageFromPicker(
+            activeMessageReactionTarget,
+            messageReactionPicker.kind,
+            emoteName,
+          );
+        }}
+      />
+
       <FavouriteMediaModal
         open={favouriteMediaModalOpen}
         onClose={() => setFavouriteMediaModalOpen(false)}
@@ -13858,6 +13656,7 @@ export function App() {
               activeServer,
               servers,
               canManageServer,
+              boostStatus,
               activeServerVoiceGatewayPref,
               categoryChannels,
               sortedChannels,
@@ -13897,6 +13696,7 @@ export function App() {
               setNewServerEmoteUrl,
               createServerEmote,
               removeServerEmote,
+              toggleActiveServerGlobalEmotes,
               setChannelPermsChannelId,
               channelOverwriteAllowsSend,
               setChannelRoleSend,
@@ -13997,7 +13797,12 @@ export function App() {
             onUploadTheme={onUploadTheme}
             themeCss={themeCss}
             setThemeCss={setThemeCss}
-            openStaticPage={openStaticPage}
+            onOpenThemeCatalogue={() =>
+              openThemeStudio("catalog", { closeSettings: true })
+            }
+            onOpenThemeCreator={() =>
+              openThemeStudio("creator", { closeSettings: true })
+            }
           />
         )}
 

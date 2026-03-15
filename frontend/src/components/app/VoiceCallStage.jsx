@@ -115,6 +115,86 @@ function ParticipantCard({ participant, compact = false }) {
   );
 }
 
+function DmStageParticipantOrb({ participant, size = "large" }) {
+  if (!participant) return null;
+
+  const statusLabel = participant.deafened
+    ? "Deafened"
+    : participant.muted
+      ? "Muted"
+      : participant.speaking
+        ? "Speaking"
+        : participant.isSelf
+          ? "You"
+          : "Listening";
+
+  return (
+    <div
+      className={`voice-call-stage-dm-orb ${size} ${
+        participant.speaking ? "speaking" : ""
+      } ${participant.videoStream ? "has-video" : ""}`}
+    >
+      <div className="voice-call-stage-dm-orb-media">
+        {participant.videoStream ? (
+          <StreamVideo
+            stream={participant.videoStream}
+            className="voice-call-stage-dm-orb-video"
+          />
+        ) : (
+          <SafeAvatar
+            src={participant.pfpUrl}
+            alt={participant.username}
+            name={participant.username}
+            seed={participant.userId || participant.username}
+            className="voice-call-stage-dm-orb-avatar"
+          />
+        )}
+        {participant.isSelf ? (
+          <span className="voice-call-stage-dm-orb-pill">You</span>
+        ) : null}
+      </div>
+      <div className="voice-call-stage-dm-orb-meta">
+        <strong>{participant.username || participant.userId || "Guest"}</strong>
+        <span>{statusLabel}</span>
+      </div>
+    </div>
+  );
+}
+
+function DmStageParticipantChip({ participant }) {
+  if (!participant) return null;
+
+  return (
+    <div
+      className={`voice-call-stage-dm-chip ${
+        participant.speaking ? "speaking" : ""
+      }`}
+    >
+      <SafeAvatar
+        src={participant.pfpUrl}
+        alt={participant.username}
+        name={participant.username}
+        seed={participant.userId || participant.username}
+        className="voice-call-stage-dm-chip-avatar"
+      />
+      <div className="voice-call-stage-dm-chip-copy">
+        <strong>{participant.username || participant.userId || "Guest"}</strong>
+        <span>
+          {participant.deafened
+            ? "Deafened"
+            : participant.muted
+              ? "Muted"
+              : participant.speaking
+                ? "Speaking"
+                : participant.isSelf
+                  ? "You"
+                  : "In call"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function ScreenShareTile({
   share,
   selected,
@@ -160,6 +240,8 @@ function ScreenShareTile({
 export function VoiceCallStage({
   title,
   subtitle,
+  variant = "default",
+  presentation = "full",
   participants = [],
   remoteScreenShares = [],
   selectedRemoteScreenShare = null,
@@ -178,6 +260,7 @@ export function VoiceCallStage({
   onJoin,
   onLeave,
   onClose,
+  onExpand,
   showClose = false,
   joinLabel = "Join voice",
   leaveLabel = "Leave call",
@@ -200,6 +283,8 @@ export function VoiceCallStage({
   const participantCountLabel = `${participants.length} ${
     participants.length === 1 ? "person" : "people"
   }`;
+  const isDmVariant = variant === "dm";
+  const isEmbeddedPresentation = presentation === "dock";
   const cameraParticipants = useMemo(
     () => participants.filter((participant) => !!participant.videoStream),
     [participants],
@@ -223,6 +308,24 @@ export function VoiceCallStage({
     () => participants.find((participant) => !participant.isSelf) || participants[0] || null,
     [participants],
   );
+  const selfParticipant = useMemo(
+    () => participants.find((participant) => participant.isSelf) || null,
+    [participants],
+  );
+  const remoteParticipants = useMemo(
+    () => participants.filter((participant) => !participant.isSelf),
+    [participants],
+  );
+  const dmHeroParticipants = useMemo(() => {
+    const preferred = remoteParticipants.length ? remoteParticipants : participants;
+    return preferred.slice(0, 2);
+  }, [participants, remoteParticipants]);
+  const dmParticipantStrip = useMemo(() => {
+    const ordered = remoteParticipants.length
+      ? [...remoteParticipants, ...(selfParticipant ? [selfParticipant] : [])]
+      : participants;
+    return ordered.slice(0, 6);
+  }, [participants, remoteParticipants, selfParticipant]);
 
   const selectedShareOwner = useMemo(
     () =>
@@ -360,6 +463,237 @@ export function VoiceCallStage({
         },
         { width: rect.width, height: rect.height },
       ),
+    );
+  }
+
+  if (isDmVariant) {
+    const dmSubtitle =
+      subtitle ||
+      (isConnected
+        ? `Private call with ${primaryParticipant?.username || title || "your friend"}`
+        : "Connecting to the private call");
+
+    return (
+      <section
+        className={`voice-call-stage voice-call-stage-dm ${
+          isEmbeddedPresentation ? "voice-call-stage-dm-embedded" : ""
+        }`}
+        ref={stageRef}
+      >
+        <div className="voice-call-stage-backdrop" aria-hidden="true" />
+
+        <div className="voice-call-stage-dm-shell">
+          <div className="voice-call-stage-dm-statusbar">
+            <span className="voice-call-stage-kicker">
+              <span className="voice-call-stage-live-dot" />
+              {isConnected
+                ? `In call${duration > 0 ? ` • ${formatDuration(duration)}` : ""}`
+                : "Connecting"}
+            </span>
+
+            <div className="voice-call-stage-dm-badges">
+              <span>{participantCountLabel}</span>
+              <span>{cameraCountLabel}</span>
+              <span>{shareCountLabel}</span>
+            </div>
+          </div>
+
+          <div className="voice-call-stage-dm-body">
+            {selectedRemoteScreenShare ? (
+              <div
+                className="voice-call-stage-dm-share-focus"
+                onDoubleClick={() => void toggleFullscreen()}
+              >
+                <video ref={heroVideoRef} autoPlay playsInline />
+                <div className="voice-call-stage-hero-label voice-call-stage-dm-share-label">
+                  <strong>
+                    {selectedShareOwner?.username ||
+                      selectedRemoteScreenShare.userName ||
+                      "Screen Share"}
+                  </strong>
+                  <span>
+                    {selectedShareOwner?.isSelf
+                      ? "You are sharing your screen"
+                      : "Sharing live in this private call"}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="voice-call-stage-dm-focus">
+                <div
+                  className={`voice-call-stage-dm-orb-row ${
+                    dmHeroParticipants.length > 1 ? "split" : "solo"
+                  }`}
+                >
+                  {dmHeroParticipants.length ? (
+                    dmHeroParticipants.map((participant) => (
+                      <DmStageParticipantOrb
+                        key={`dm-orb-${participant.userId || participant.username}`}
+                        participant={participant}
+                      />
+                    ))
+                  ) : selfParticipant ? (
+                    <DmStageParticipantOrb participant={selfParticipant} />
+                  ) : (
+                    <div className="voice-call-stage-dm-placeholder">
+                      <span>{getInitials(title || "Call")}</span>
+                    </div>
+                  )}
+                </div>
+
+                {selfParticipant &&
+                dmHeroParticipants.every(
+                  (participant) => participant.userId !== selfParticipant.userId,
+                ) ? (
+                  <div className="voice-call-stage-dm-self-corner">
+                    <DmStageParticipantOrb
+                      participant={selfParticipant}
+                      size="small"
+                    />
+                  </div>
+                ) : null}
+
+                <div className="voice-call-stage-dm-copy">
+                  <h2>{title || "Private Call"}</h2>
+                  <p>{dmSubtitle}</p>
+                </div>
+              </div>
+            )}
+
+            {(dmParticipantStrip.length > 0 || remoteScreenShares.length > 0) && (
+              <div className="voice-call-stage-dm-rail">
+                {dmParticipantStrip.length > 0 ? (
+                  <div className="voice-call-stage-dm-chip-row">
+                    {dmParticipantStrip.map((participant) => (
+                      <DmStageParticipantChip
+                        key={`dm-chip-${participant.userId || participant.username}`}
+                        participant={participant}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+
+                {remoteScreenShares.length > 0 ? (
+                  <div className="voice-call-stage-dm-share-row">
+                    {remoteScreenShares.map((share) => (
+                      <ScreenShareTile
+                        key={`dm-share-${share.producerId}`}
+                        share={share}
+                        mini
+                        selected={
+                          selectedRemoteScreenShare?.producerId ===
+                          share.producerId
+                        }
+                        onSelect={onSelectScreenShare}
+                        ownerName={share.userName}
+                        ownerPfp={share.userPfp}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="voice-call-stage-dm-toolbar">
+          {isConnected ? (
+            <>
+              <button
+                type="button"
+                className={`voice-call-stage-dm-action ${isMuted ? "danger" : ""}`}
+                onClick={() => onToggleMute?.()}
+              >
+                <span>{isMuted ? "🔇" : "🎤"}</span>
+                <small>{isMuted ? "Unmute" : "Mute"}</small>
+              </button>
+              <button
+                type="button"
+                className={`voice-call-stage-dm-action ${
+                  isDeafened ? "danger" : ""
+                }`}
+                onClick={() => onToggleDeafen?.()}
+              >
+                <span>{isDeafened ? "🔊" : "🎧"}</span>
+                <small>{isDeafened ? "Undeafen" : "Deafen"}</small>
+              </button>
+              <button
+                type="button"
+                className={`voice-call-stage-dm-action ${
+                  isCameraEnabled ? "active" : ""
+                }`}
+                onClick={() => onToggleCamera?.()}
+              >
+                <span>{isCameraEnabled ? "📷" : "📸"}</span>
+                <small>{isCameraEnabled ? "Camera off" : "Camera"}</small>
+              </button>
+              <button
+                type="button"
+                className={`voice-call-stage-dm-action ${
+                  isScreenSharing ? "active" : ""
+                }`}
+                onClick={() => onToggleScreenShare?.()}
+              >
+                <span>{isScreenSharing ? "🛑" : "🖥️"}</span>
+                <small>{isScreenSharing ? "Stop share" : "Share"}</small>
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="voice-call-stage-dm-action active"
+              onClick={() => onJoin?.()}
+            >
+              <span>📞</span>
+              <small>{joinLabel}</small>
+            </button>
+          )}
+
+          {isEmbeddedPresentation ? (
+            onExpand ? (
+              <button
+                type="button"
+                className="voice-call-stage-dm-action"
+                onClick={() => onExpand?.()}
+              >
+                <span>🖥️</span>
+                <small>Full view</small>
+              </button>
+            ) : null
+          ) : (
+            <button
+              type="button"
+              className="voice-call-stage-dm-action"
+              onClick={toggleFullscreen}
+            >
+              <span>{isFullscreen ? "🗗" : "⛶"}</span>
+              <small>{isFullscreen ? "Window" : "Fullscreen"}</small>
+            </button>
+          )}
+
+          {!isEmbeddedPresentation && showClose && onClose ? (
+            <button
+              type="button"
+              className="voice-call-stage-dm-action"
+              onClick={() => onClose?.()}
+            >
+              <span>💬</span>
+              <small>Chat</small>
+            </button>
+          ) : null}
+
+          {isConnected && onLeave ? (
+            <button
+              type="button"
+              className="voice-call-stage-dm-action danger end"
+              onClick={() => onLeave?.()}
+            >
+              <span>📵</span>
+              <small>{leaveLabel}</small>
+            </button>
+          ) : null}
+        </div>
+      </section>
     );
   }
 

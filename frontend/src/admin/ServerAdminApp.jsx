@@ -1,149 +1,24 @@
 import { useEffect, useState } from "react";
 import { SafeAvatar } from "../components/ui/SafeAvatar";
+import {
+  CORE_API,
+  normalizeImageUrlInput,
+  normalizeServerList,
+  profileImageUrl,
+} from "../lib/appCore.js";
 
-const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://api.opencom.online";
+const SERVER_TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "channels", label: "Channels" },
+  { id: "members", label: "Members" },
+  { id: "roles", label: "Roles" },
+  { id: "assets", label: "Assets" },
+  { id: "invites", label: "Invites" },
+  { id: "extensions", label: "Extensions" },
+  { id: "moderation", label: "Moderation" },
+];
 
-function isLoopbackHostname(hostname = "") {
-  const normalized = String(hostname || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
-  if (!normalized) return false;
-  return normalized === "localhost"
-    || normalized === "::1"
-    || normalized === "0:0:0:0:0:0:0:1"
-    || normalized === "0.0.0.0"
-    || normalized.startsWith("127.");
-}
-
-function shouldAllowLoopbackTargets() {
-  if (typeof window === "undefined") return true;
-  if (window.location.protocol === "file:") return true;
-  const currentHost = String(window.location.hostname || "").trim().toLowerCase();
-  return isLoopbackHostname(currentHost) || currentHost.endsWith(".localhost");
-}
-
-function normalizeHttpBaseUrl(value = "") {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  try {
-    const parsed = new URL(raw);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    parsed.search = "";
-    parsed.hash = "";
-    return parsed.toString().replace(/\/$/, "");
-  } catch {
-    return "";
-  }
-}
-
-function gatewayUrlToHttpBaseUrl(value = "") {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  try {
-    const parsed = new URL(raw);
-    if (parsed.protocol === "ws:") parsed.protocol = "http:";
-    else if (parsed.protocol === "wss:") parsed.protocol = "https:";
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    parsed.search = "";
-    parsed.hash = "";
-    parsed.pathname = parsed.pathname.replace(/\/gateway\/?$/i, "");
-    return parsed.toString().replace(/\/$/, "");
-  } catch {
-    return "";
-  }
-}
-
-function resolvePublicNodeBaseUrl() {
-  const explicit = normalizeHttpBaseUrl(import.meta.env.VITE_OFFICIAL_NODE_BASE_URL || import.meta.env.OFFICIAL_NODE_BASE_URL || "");
-  if (explicit) return explicit;
-  const wsCandidates = [
-    import.meta.env.VITE_NODE_GATEWAY_WS_URL,
-    import.meta.env.VITE_VOICE_GATEWAY_URL
-  ];
-  for (const candidate of wsCandidates) {
-    const derived = gatewayUrlToHttpBaseUrl(candidate);
-    if (derived) return derived;
-  }
-  return "";
-}
-
-const PUBLIC_NODE_BASE_URL = resolvePublicNodeBaseUrl();
-
-function normalizeServerBaseUrl(baseUrl = "") {
-  const normalized = normalizeHttpBaseUrl(baseUrl);
-  if (!normalized) return "";
-  try {
-    const parsed = new URL(normalized);
-    if (isLoopbackHostname(parsed.hostname)) {
-      if (PUBLIC_NODE_BASE_URL) return PUBLIC_NODE_BASE_URL;
-      if (!shouldAllowLoopbackTargets()) return "";
-    }
-  } catch {
-    return normalized;
-  }
-  return normalized;
-}
-
-function normalizeServerRecord(server) {
-  if (!server || typeof server !== "object") return server;
-  const currentBaseUrl = String(server.baseUrl ?? server.base_url ?? "").trim();
-  if (!currentBaseUrl) return server;
-  const normalizedBaseUrl = normalizeServerBaseUrl(currentBaseUrl);
-  if (normalizedBaseUrl === currentBaseUrl) return server;
-  if (!normalizedBaseUrl) {
-    const next = { ...server, baseUrl: "" };
-    if (Object.prototype.hasOwnProperty.call(server, "base_url")) {
-      next.base_url = "";
-    }
-    return next;
-  }
-  const next = { ...server, baseUrl: normalizedBaseUrl };
-  if (Object.prototype.hasOwnProperty.call(server, "base_url")) {
-    next.base_url = normalizedBaseUrl;
-  }
-  return next;
-}
-
-function normalizeServerList(list) {
-  if (!Array.isArray(list)) return [];
-  return list.map((server) => normalizeServerRecord(server)).filter(Boolean);
-}
-
-async function api(path, token, options = {}) {
-  const response = await fetch(`${CORE_API}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...(options.headers || {})
-    },
-    ...options
-  });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || `HTTP_${response.status}`);
-  }
-
-  return response.json();
-}
-
-async function nodeApi(baseUrl, path, token, options = {}) {
-  const normalizedBaseUrl = normalizeServerBaseUrl(baseUrl);
-  if (!normalizedBaseUrl) throw new Error("NODE_BASE_URL_INVALID");
-  const response = await fetch(`${normalizedBaseUrl}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...(options.headers || {})
-    },
-    ...options
-  });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || `HTTP_${response.status}`);
-  }
-
-  return response.json();
-}
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 const PERMISSION_FLAGS = {
   VIEW_CHANNEL: { bit: 1n << 0n, name: "View Channels" },
@@ -155,286 +30,1132 @@ const PERMISSION_FLAGS = {
   MUTE_MEMBERS: { bit: 1n << 6n, name: "Mute Members" },
   DEAFEN_MEMBERS: { bit: 1n << 7n, name: "Deafen Members" },
   MOVE_MEMBERS: { bit: 1n << 8n, name: "Move Members" },
-  CONNECT: { bit: 1n << 9n, name: "Connect (Voice)" },
-  SPEAK: { bit: 1n << 10n, name: "Speak (Voice)" },
+  CONNECT: { bit: 1n << 9n, name: "Connect" },
+  SPEAK: { bit: 1n << 10n, name: "Speak" },
   ATTACH_FILES: { bit: 1n << 11n, name: "Attach Files" },
-  ADMINISTRATOR: { bit: 1n << 60n, name: "Administrator" }
+  ADMINISTRATOR: { bit: 1n << 60n, name: "Administrator" },
 };
 
+function MetricCard({ label, value, hint }) {
+  return (
+    <article className="server-admin-stat server-admin-stat-card">
+      <p>{label}</p>
+      <strong>{value}</strong>
+      {hint ? <span>{hint}</span> : null}
+    </article>
+  );
+}
+
+function EmptyState({ children }) {
+  return <p className="server-admin-empty-inline">{children}</p>;
+}
+
+function formatDateTime(value = "") {
+  if (!value) return "Not set";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function toDateTimeLocalValue(value = "") {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function fromDateTimeLocalValue(value = "") {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return undefined;
+  const date = new Date(trimmed);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toISOString();
+}
+
 function hasPermission(permBits, flag) {
-  const bits = BigInt(permBits || "0");
-  return (bits & PERMISSION_FLAGS[flag].bit) === PERMISSION_FLAGS[flag].bit;
+  try {
+    const bits = BigInt(permBits || "0");
+    return (bits & PERMISSION_FLAGS[flag].bit) === PERMISSION_FLAGS[flag].bit;
+  } catch {
+    return false;
+  }
+}
+
+function permissionCount(permBits) {
+  return Object.keys(PERMISSION_FLAGS).filter((flag) => hasPermission(permBits, flag)).length;
+}
+
+function roleColorHex(role) {
+  if (role?.color == null || role.color === "") return "";
+  if (typeof role.color === "number") {
+    return `#${Number(role.color).toString(16).padStart(6, "0")}`;
+  }
+  const trimmed = String(role.color || "").trim();
+  if (!trimmed) return "";
+  return trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+}
+
+function roleColorSwatch(role) {
+  return roleColorHex(role) || "#7d94d8";
+}
+
+function parseRoleColor(value = "") {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return undefined;
+  return Number.parseInt(normalized, 16);
+}
+
+function compareByPositionAscending(left, right) {
+  return (left?.position ?? 0) - (right?.position ?? 0)
+    || String(left?.created_at || left?.createdAt || "").localeCompare(String(right?.created_at || right?.createdAt || ""))
+    || String(left?.name || "").localeCompare(String(right?.name || ""));
+}
+
+function compareRolesDescending(left, right) {
+  return (right?.position ?? 0) - (left?.position ?? 0)
+    || String(left?.name || "").localeCompare(String(right?.name || ""));
+}
+
+function groupChannels(channels = []) {
+  const categories = channels
+    .filter((channel) => channel.type === "category")
+    .sort(compareByPositionAscending);
+  const childrenByParentId = new Map();
+  const uncategorized = [];
+
+  for (const channel of [...channels].sort(compareByPositionAscending)) {
+    if (channel.type === "category") continue;
+    const parentId = channel.parent_id || "";
+    if (!parentId) {
+      uncategorized.push(channel);
+      continue;
+    }
+    if (!childrenByParentId.has(parentId)) childrenByParentId.set(parentId, []);
+    childrenByParentId.get(parentId).push(channel);
+  }
+
+  return {
+    categories,
+    uncategorized,
+    childrenByParentId,
+  };
+}
+
+function roleNamesForMember(member, roles) {
+  const roleIds = new Set(member?.roleIds || []);
+  return roles.filter((role) => roleIds.has(role.id));
+}
+
+function findOverwrite(overwrites, channelId, targetType, targetId) {
+  return (overwrites || []).find(
+    (overwrite) =>
+      overwrite.channel_id === channelId
+      && overwrite.target_type === targetType
+      && overwrite.target_id === targetId,
+  );
+}
+
+async function api(path, token, options = {}) {
+  const hasBody = options.body !== undefined && options.body !== null;
+  const response = await fetch(`${CORE_API}${path}`, {
+    headers: {
+      ...(hasBody ? { "Content-Type": "application/json" } : {}),
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP_${response.status}`);
+  }
+
+  return response.json();
+}
+
+async function nodeApi(baseUrl, path, token, options = {}) {
+  const hasBody = options.body !== undefined && options.body !== null;
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: {
+      ...(hasBody ? { "Content-Type": "application/json" } : {}),
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP_${response.status}`);
+  }
+
+  return response.json();
 }
 
 export function ServerAdminApp() {
   const [token, setToken] = useState(localStorage.getItem("opencom_access_token") || "");
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState({ message: "", type: "info" });
   const [servers, setServers] = useState([]);
   const [selectedServerId, setSelectedServerId] = useState("");
   const [guilds, setGuilds] = useState([]);
   const [selectedGuildId, setSelectedGuildId] = useState("");
-  const [activeTab, setActiveTab] = useState("members");
+  const [activeTab, setActiveTab] = useState("overview");
   const [guildState, setGuildState] = useState(null);
-  
-  // Member management
-  const [members, setMembers] = useState([]);
-  const [selectedMemberId, setSelectedMemberId] = useState("");
-  const [memberRoles, setMemberRoles] = useState([]);
-  const [memberQuery, setMemberQuery] = useState("");
-  
-  // Role management
-  const [roles, setRoles] = useState([]);
-  const [newRoleName, setNewRoleName] = useState("");
-  const [editingRoleId, setEditingRoleId] = useState("");
-  const [editRoleName, setEditRoleName] = useState("");
-  const [editRolePermissions, setEditRolePermissions] = useState({});
-  const [roleQuery, setRoleQuery] = useState("");
-  
-  // Admin promotion
-  const [searchUsername, setSearchUsername] = useState("");
-  const [searchResults, setSearchResults] = useState([]);
-
-  // Extensions
+  const [guildStateLoading, setGuildStateLoading] = useState(false);
+  const [bans, setBans] = useState([]);
+  const [bansLoading, setBansLoading] = useState(false);
+  const [invites, setInvites] = useState([]);
+  const [invitesLoading, setInvitesLoading] = useState(false);
   const [extensionCatalog, setExtensionCatalog] = useState({ clientExtensions: [], serverExtensions: [] });
   const [installedExtensions, setInstalledExtensions] = useState([]);
   const [extensionsLoading, setExtensionsLoading] = useState(false);
+  const [selectedExtensionId, setSelectedExtensionId] = useState("");
+  const [extensionConfigDrafts, setExtensionConfigDrafts] = useState({});
+  const [extensionConfigLoadingId, setExtensionConfigLoadingId] = useState("");
+  const [memberQuery, setMemberQuery] = useState("");
+  const [roleQuery, setRoleQuery] = useState("");
+  const [channelQuery, setChannelQuery] = useState("");
+  const [selectedMemberId, setSelectedMemberId] = useState("");
+  const [memberRoleDraftId, setMemberRoleDraftId] = useState("");
+  const [memberModerationNotes, setMemberModerationNotes] = useState({});
+  const [newRoleName, setNewRoleName] = useState("");
+  const [editingRoleId, setEditingRoleId] = useState("");
+  const [editRoleName, setEditRoleName] = useState("");
+  const [editRoleColor, setEditRoleColor] = useState("");
+  const [editRolePermissions, setEditRolePermissions] = useState({});
+  const [editingChannelId, setEditingChannelId] = useState("");
+  const [channelDraft, setChannelDraft] = useState({ name: "", parentId: "" });
+  const [channelPermissionChannelId, setChannelPermissionChannelId] = useState("");
+  const [serverProfileForm, setServerProfileForm] = useState({ name: "", logoUrl: "", bannerUrl: "" });
+  const [newWorkspaceName, setNewWorkspaceName] = useState("");
+  const [workspaceRenameName, setWorkspaceRenameName] = useState("");
+  const [newChannelName, setNewChannelName] = useState("");
+  const [newChannelType, setNewChannelType] = useState("text");
+  const [newChannelParentId, setNewChannelParentId] = useState("");
+  const [newEmoteName, setNewEmoteName] = useState("");
+  const [newEmoteUrl, setNewEmoteUrl] = useState("");
+  const [inviteCustomCode, setInviteCustomCode] = useState("");
+  const [invitePermanent, setInvitePermanent] = useState(false);
+  const [inviteMaxUses, setInviteMaxUses] = useState("25");
+  const [inviteExpiresAt, setInviteExpiresAt] = useState("");
+
+  function showStatus(message, type = "info") {
+    setStatus({ message, type });
+  }
+
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    document.body.classList.add("server-admin-mode");
+    return () => {
+      document.body.classList.remove("server-admin-mode");
+    };
+  }, []);
+
+  useEffect(() => {
+    function syncTokenFromStorage() {
+      setToken(localStorage.getItem("opencom_access_token") || "");
+    }
+    window.addEventListener("storage", syncTokenFromStorage);
+    return () => window.removeEventListener("storage", syncTokenFromStorage);
+  }, []);
 
   useEffect(() => {
     if (!token) {
-      setStatus("Not authenticated. Please log in first.");
+      showStatus("Not authenticated. Please log in through the main app first.", "error");
       return;
     }
     loadServers();
+    loadExtensionCatalog();
   }, [token]);
 
   useEffect(() => {
-    loadGuilds();
+    const selectedServer = servers.find((server) => server.id === selectedServerId);
+    setServerProfileForm({
+      name: selectedServer?.name || "",
+      logoUrl: selectedServer?.logoUrl || "",
+      bannerUrl: selectedServer?.bannerUrl || "",
+    });
+    setSelectedExtensionId("");
+    setExtensionConfigDrafts({});
   }, [selectedServerId, servers]);
 
   useEffect(() => {
-    loadGuildState();
-  }, [selectedGuildId, selectedServerId, servers]);
+    if (!selectedServerId || !token) {
+      setGuilds([]);
+      setSelectedGuildId("");
+      setGuildState(null);
+      return;
+    }
+    loadGuilds();
+    loadInstalledExtensions(selectedServerId);
+  }, [selectedServerId, token, servers]);
 
   useEffect(() => {
-    if (!selectedServerId || !token) return;
-    loadExtensionCatalog();
-    loadInstalledExtensions(selectedServerId);
-  }, [selectedServerId, token]);
+    const selectedGuild = guilds.find((guild) => guild.id === selectedGuildId);
+    setWorkspaceRenameName(selectedGuild?.name || "");
+    setEditingChannelId("");
+    setChannelPermissionChannelId("");
+    setEditingRoleId("");
+    setSelectedMemberId("");
+    if (!selectedGuildId || !selectedServerId) {
+      setGuildState(null);
+      return;
+    }
+    refreshGuildState();
+  }, [selectedGuildId, selectedServerId]);
+
+  useEffect(() => {
+    if (activeTab === "invites" && selectedServerId && token) {
+      loadInvites();
+    }
+  }, [activeTab, selectedServerId, token]);
+
+  useEffect(() => {
+    if (activeTab === "moderation" && selectedGuildId && selectedServerId && token) {
+      loadBans();
+    }
+  }, [activeTab, selectedGuildId, selectedServerId, token]);
+
+  const selectedServer = servers.find((server) => server.id === selectedServerId) || null;
+  const selectedGuild = guilds.find((guild) => guild.id === selectedGuildId) || null;
+  const members = guildState?.members || [];
+  const roles = guildState?.roles || [];
+  const channels = guildState?.channels || [];
+  const overwrites = guildState?.overwrites || [];
+  const emotes = guildState?.emotes || [];
+  const voiceStates = guildState?.voiceStates || [];
+  const categoryChannels = channels.filter((channel) => channel.type === "category").sort(compareByPositionAscending);
+  const voiceChannelMap = new Map(channels.filter((channel) => channel.type === "voice").map((channel) => [channel.id, channel]));
+  const visibleMembers = members.filter((member) => {
+    if (!memberQuery.trim()) return true;
+    const query = memberQuery.trim().toLowerCase();
+    return String(member.username || "").toLowerCase().includes(query)
+      || String(member.displayName || "").toLowerCase().includes(query)
+      || String(member.id || "").toLowerCase().includes(query);
+  });
+  const visibleRoles = roles.filter((role) => {
+    if (!roleQuery.trim()) return true;
+    return String(role.name || "").toLowerCase().includes(roleQuery.trim().toLowerCase());
+  }).sort(compareRolesDescending);
+  const visibleChannels = channels.filter((channel) => {
+    if (!channelQuery.trim()) return true;
+    return String(channel.name || "").toLowerCase().includes(channelQuery.trim().toLowerCase());
+  }).sort(compareByPositionAscending);
+  const enabledExtensions = installedExtensions.filter((extension) => extension.enabled);
+  const groupedChannels = groupChannels(visibleChannels);
+  const selectedPermissionChannel = channels.find((channel) => channel.id === channelPermissionChannelId) || null;
 
   async function loadServers() {
     try {
       const data = await api("/v1/servers", token);
       const ownedServers = normalizeServerList(data.servers || []).filter((server) => {
-        const roles = Array.isArray(server?.roles) ? server.roles.map((role) => String(role).toLowerCase()) : [];
-        return roles.includes("owner");
+        const membershipRoles = Array.isArray(server?.roles) ? server.roles.map((role) => String(role).toLowerCase()) : [];
+        return membershipRoles.includes("owner");
       });
       setServers(ownedServers);
-      if (ownedServers.length > 0) {
-        setSelectedServerId(ownedServers[0].id);
+      setSelectedServerId((current) => {
+        if (current && ownedServers.some((server) => server.id === current)) return current;
+        return ownedServers[0]?.id || "";
+      });
+      if (!ownedServers.length) {
+        showStatus("No owned servers found yet.", "info");
+      } else {
+        showStatus("Server admin panel ready.", "success");
       }
-      setStatus("Servers loaded.");
-    } catch (e) {
-      setStatus(`Failed to load servers: ${e.message}`);
+    } catch (error) {
+      showStatus(`Failed to load servers: ${error.message}`, "error");
     }
   }
 
   async function loadGuilds() {
-    if (!selectedServerId) return;
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken) return;
     try {
-      const server = servers.find(s => s.id === selectedServerId);
-      if (!server) return;
-      const guildsData = await nodeApi(server.baseUrl, "/v1/guilds", server.membershipToken);
-      setGuilds(guildsData || []);
-      if (guildsData && guildsData.length > 0) {
-        setSelectedGuildId(guildsData[0].id);
-      }
-      setStatus("Guilds loaded.");
-    } catch (e) {
-      setStatus(`Failed to load guilds: ${e.message}`);
+      const data = await nodeApi(server.baseUrl, "/v1/guilds", server.membershipToken);
+      const nextGuilds = Array.isArray(data) ? data : [];
+      setGuilds(nextGuilds);
+      setSelectedGuildId((current) => {
+        if (current && nextGuilds.some((guild) => guild.id === current)) return current;
+        if (server.defaultGuildId && nextGuilds.some((guild) => guild.id === server.defaultGuildId)) return server.defaultGuildId;
+        return nextGuilds[0]?.id || "";
+      });
+      if (!nextGuilds.length) setGuildState(null);
+    } catch (error) {
+      showStatus(`Failed to load workspaces: ${error.message}`, "error");
+      setGuilds([]);
+      setSelectedGuildId("");
+      setGuildState(null);
     }
   }
 
-  async function loadGuildState() {
-    if (!selectedServerId || !selectedGuildId) return;
+  async function refreshGuildState() {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !selectedGuildId) return;
+    setGuildStateLoading(true);
     try {
-      const server = servers.find(s => s.id === selectedServerId);
-      if (!server) return;
       const state = await nodeApi(server.baseUrl, `/v1/guilds/${selectedGuildId}/state`, server.membershipToken);
       setGuildState(state);
-      setMembers(state.members || []);
-      setRoles(state.roles || []);
-      setStatus("Guild state loaded.");
-    } catch (e) {
-      setStatus(`Failed to load guild: ${e.message}`);
+    } catch (error) {
+      setGuildState(null);
+      showStatus(`Failed to load workspace state: ${error.message}`, "error");
+    } finally {
+      setGuildStateLoading(false);
     }
   }
 
-  async function createRole() {
-    if (!selectedServerId || !selectedGuildId || !newRoleName.trim()) return;
+  async function loadBans() {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !selectedGuildId) return;
+    setBansLoading(true);
     try {
-      const server = servers.find(s => s.id === selectedServerId);
-      if (!server) return;
-      await nodeApi(server.baseUrl, `/v1/guilds/${selectedGuildId}/roles`, server.membershipToken, {
-        method: "POST",
-        body: JSON.stringify({ name: newRoleName.trim(), permissions: "0" })
-      });
-      setNewRoleName("");
-      await loadGuildState();
-      setStatus("Role created successfully.");
-    } catch (e) {
-      setStatus(`Failed to create role: ${e.message}`);
+      const data = await nodeApi(server.baseUrl, `/v1/guilds/${selectedGuildId}/bans`, server.membershipToken);
+      setBans(Array.isArray(data?.bans) ? data.bans : []);
+    } catch (error) {
+      setBans([]);
+      showStatus(`Could not load bans: ${error.message}`, "error");
+    } finally {
+      setBansLoading(false);
     }
   }
 
-  async function updateRolePermissions() {
-    if (!selectedServerId || !editingRoleId) return;
+  async function loadInvites() {
+    if (!selectedServerId) return;
+    setInvitesLoading(true);
     try {
-      const server = servers.find(s => s.id === selectedServerId);
-      if (!server) return;
-      
-      let permBits = 0n;
-      for (const [flag, enabled] of Object.entries(editRolePermissions)) {
-        if (enabled) {
-          permBits = permBits | PERMISSION_FLAGS[flag].bit;
-        }
-      }
-      
-      await nodeApi(server.baseUrl, `/v1/roles/${editingRoleId}`, server.membershipToken, {
-        method: "PATCH",
-        body: JSON.stringify({ name: editRoleName, permissions: permBits.toString() })
-      });
-      setEditingRoleId("");
-      await loadGuildState();
-      setStatus("Role permissions updated.");
-    } catch (e) {
-      setStatus(`Failed to update role: ${e.message}`);
+      const data = await api(`/v1/invites?serverId=${encodeURIComponent(selectedServerId)}`, token);
+      setInvites(Array.isArray(data?.invites) ? data.invites : []);
+    } catch (error) {
+      setInvites([]);
+      showStatus(`Failed to load invites: ${error.message}`, "error");
+    } finally {
+      setInvitesLoading(false);
     }
   }
-
-  function openRoleEditor(role) {
-    setEditingRoleId(role.id);
-    setEditRoleName(role.name);
-    const perms = {};
-    for (const [flag] of Object.entries(PERMISSION_FLAGS)) {
-      perms[flag] = hasPermission(role.permissions, flag);
-    }
-    setEditRolePermissions(perms);
-  }
-
-  async function assignRoleToMember() {
-    if (!selectedServerId || !selectedGuildId || !selectedMemberId || !memberRoles.length) return;
-    try {
-      const server = servers.find(s => s.id === selectedServerId);
-      if (!server) return;
-      
-      // Use the first selected role
-      const roleId = memberRoles[0];
-      await nodeApi(server.baseUrl, `/v1/guilds/${selectedGuildId}/members/${selectedMemberId}/roles/${roleId}`, server.membershipToken, {
-        method: "PUT",
-        body: "{}"
-      });
-      setMemberRoles([]);
-      setSelectedMemberId("");
-      await loadGuildState();
-      setStatus("Role assigned to member.");
-    } catch (e) {
-      setStatus(`Failed to assign role: ${e.message}`);
-    }
-  }
-
-  async function removeRoleFromMember(memberId, roleId) {
-    if (!selectedServerId || !selectedGuildId) return;
-    try {
-      const server = servers.find(s => s.id === selectedServerId);
-      if (!server) return;
-      await nodeApi(server.baseUrl, `/v1/guilds/${selectedGuildId}/members/${memberId}/roles/${roleId}`, server.membershipToken, {
-        method: "DELETE"
-      });
-      await loadGuildState();
-      setStatus("Role removed from member.");
-    } catch (e) {
-      setStatus(`Failed to remove role: ${e.message}`);
-    }
-  }
-
-  async function searchUsers() {
-    if (!searchUsername.trim() || !selectedServerId) return;
-    try {
-      const server = servers.find(s => s.id === selectedServerId);
-      if (!server) return;
-      const data = await api(`/v1/users/search?query=${encodeURIComponent(searchUsername.trim())}`, token, {
-        method: "GET"
-      });
-      setSearchResults(data.users || []);
-    } catch (e) {
-      setStatus(`Search failed: ${e.message}`);
-    }
-  }
-
 
   async function loadExtensionCatalog() {
     try {
       const data = await api("/v1/extensions/catalog", token);
       setExtensionCatalog({
         clientExtensions: data.clientExtensions || [],
-        serverExtensions: data.serverExtensions || []
+        serverExtensions: data.serverExtensions || [],
       });
-    } catch (e) {
-      setStatus(`Failed to load extension catalog: ${e.message}`);
+    } catch (error) {
+      showStatus(`Failed to load extension catalog: ${error.message}`, "error");
     }
   }
 
   async function loadInstalledExtensions(serverId) {
+    if (!serverId) return;
     setExtensionsLoading(true);
     try {
       const data = await api(`/v1/servers/${serverId}/extensions`, token);
-      setInstalledExtensions(data.extensions || []);
-    } catch (e) {
-      setStatus(`Failed to load installed extensions: ${e.message}`);
+      setInstalledExtensions(Array.isArray(data?.extensions) ? data.extensions : []);
+    } catch (error) {
       setInstalledExtensions([]);
+      showStatus(`Failed to load extensions: ${error.message}`, "error");
     } finally {
       setExtensionsLoading(false);
     }
   }
 
-  async function toggleExtension(extensionId, enabled) {
+  async function loadExtensionConfig(extensionId) {
+    if (!selectedServerId || !extensionId) return;
+    setExtensionConfigLoadingId(extensionId);
+    try {
+      const data = await api(`/v1/servers/${selectedServerId}/extensions/${encodeURIComponent(extensionId)}/config`, token);
+      const config = data?.config || {};
+      setExtensionConfigDrafts((current) => ({
+        ...current,
+        [extensionId]: JSON.stringify(config, null, 2),
+      }));
+      setSelectedExtensionId(extensionId);
+    } catch (error) {
+      showStatus(`Failed to load extension config: ${error.message}`, "error");
+    } finally {
+      setExtensionConfigLoadingId("");
+    }
+  }
+
+  async function uploadImage(file) {
+    const formData = new FormData();
+    formData.append("image", file);
+    const response = await fetch(`${CORE_API}/v1/images/upload`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP_${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async function onImageFieldUpload(event, label, onUploaded) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!String(file.type || "").startsWith("image/")) {
+      showStatus(`Please choose an image file for ${label}.`, "error");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      showStatus(`Image too large for ${label}. Max ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB.`, "error");
+      return;
+    }
+    try {
+      showStatus(`Uploading ${label}...`, "info");
+      const data = await uploadImage(file);
+      if (!data?.imageUrl) throw new Error("UPLOAD_FAILED");
+      onUploaded(data.imageUrl);
+      showStatus(`${label} uploaded.`, "success");
+    } catch (error) {
+      showStatus(`Upload failed: ${error.message}`, "error");
+    }
+  }
+
+  async function saveServerProfile() {
     if (!selectedServerId) return;
+    try {
+      await api(`/v1/servers/${selectedServerId}/profile`, token, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: serverProfileForm.name.trim() || undefined,
+          logoUrl: normalizeImageUrlInput(serverProfileForm.logoUrl || "") || null,
+          bannerUrl: normalizeImageUrlInput(serverProfileForm.bannerUrl || "") || null,
+        }),
+      });
+      await loadServers();
+      showStatus("Server profile updated.", "success");
+    } catch (error) {
+      showStatus(`Server profile update failed: ${error.message}`, "error");
+    }
+  }
+
+  async function toggleGlobalEmotes(enabled) {
+    if (!selectedServerId) return;
+    try {
+      await api(`/v1/servers/${selectedServerId}/global-emotes`, token, {
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
+      });
+      setServers((current) => current.map((server) => (
+        server.id === selectedServerId
+          ? { ...server, globalEmotesEnabled: !!enabled }
+          : server
+      )));
+      showStatus(
+        enabled
+          ? "Global emotes enabled for this server."
+          : "Global emotes disabled for this server.",
+        "success",
+      );
+    } catch (error) {
+      showStatus(`Global emote update failed: ${error.message}`, "error");
+    }
+  }
+
+  async function createWorkspace() {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !newWorkspaceName.trim()) return;
+    try {
+      const data = await nodeApi(server.baseUrl, "/v1/guilds", server.membershipToken, {
+        method: "POST",
+        body: JSON.stringify({ name: newWorkspaceName.trim(), createDefaultVoice: true }),
+      });
+      setNewWorkspaceName("");
+      await loadGuilds();
+      if (data?.guildId) setSelectedGuildId(data.guildId);
+      showStatus("Workspace created.", "success");
+    } catch (error) {
+      showStatus(`Workspace creation failed: ${error.message}`, "error");
+    }
+  }
+
+  async function renameWorkspace() {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !selectedGuildId || !workspaceRenameName.trim()) return;
+    try {
+      await nodeApi(server.baseUrl, `/v1/guilds/${selectedGuildId}`, server.membershipToken, {
+        method: "PATCH",
+        body: JSON.stringify({ name: workspaceRenameName.trim() }),
+      });
+      await loadGuilds();
+      await refreshGuildState();
+      showStatus("Workspace renamed.", "success");
+    } catch (error) {
+      showStatus(`Workspace rename failed: ${error.message}`, "error");
+    }
+  }
+
+  async function deleteWorkspace(guildId) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    const targetGuild = guilds.find((guild) => guild.id === guildId);
+    if (!server?.baseUrl || !server?.membershipToken || !guildId || !targetGuild) return;
+    if (selectedServer?.defaultGuildId && selectedServer.defaultGuildId === guildId) {
+      showStatus("The default workspace cannot be deleted from this panel.", "error");
+      return;
+    }
+    const confirmed = window.confirm(`Delete workspace "${targetGuild.name}"? This removes its channels, roles, and messages.`);
+    if (!confirmed) return;
+    try {
+      await nodeApi(server.baseUrl, `/v1/guilds/${guildId}`, server.membershipToken, {
+        method: "DELETE",
+      });
+      await loadGuilds();
+      setGuildState(null);
+      showStatus("Workspace deleted.", "success");
+    } catch (error) {
+      showStatus(`Workspace deletion failed: ${error.message}`, "error");
+    }
+  }
+
+  async function createChannel() {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !selectedGuildId || !newChannelName.trim()) return;
+    try {
+      await nodeApi(server.baseUrl, `/v1/guilds/${selectedGuildId}/channels`, server.membershipToken, {
+        method: "POST",
+        body: JSON.stringify({
+          name: newChannelName.trim(),
+          type: newChannelType,
+          parentId: newChannelType === "category" ? null : (newChannelParentId || null),
+        }),
+      });
+      setNewChannelName("");
+      setNewChannelType("text");
+      setNewChannelParentId("");
+      await refreshGuildState();
+      showStatus("Channel created.", "success");
+    } catch (error) {
+      showStatus(`Channel creation failed: ${error.message}`, "error");
+    }
+  }
+
+  function openChannelEditor(channel) {
+    setEditingChannelId(channel.id);
+    setChannelDraft({
+      name: channel.name || "",
+      parentId: channel.parent_id || "",
+    });
+  }
+
+  async function saveChannel(channelId) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !channelId || !channelDraft.name.trim()) return;
+    try {
+      await nodeApi(server.baseUrl, `/v1/channels/${channelId}`, server.membershipToken, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: channelDraft.name.trim(),
+          parentId: channelDraft.parentId || null,
+        }),
+      });
+      setEditingChannelId("");
+      setChannelDraft({ name: "", parentId: "" });
+      await refreshGuildState();
+      showStatus("Channel updated.", "success");
+    } catch (error) {
+      showStatus(`Channel update failed: ${error.message}`, "error");
+    }
+  }
+
+  async function deleteChannel(channel) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !channel?.id) return;
+    const confirmed = window.confirm(`Delete ${channel.type} channel "${channel.name}"?`);
+    if (!confirmed) return;
+    try {
+      await nodeApi(server.baseUrl, `/v1/channels/${channel.id}`, server.membershipToken, {
+        method: "DELETE",
+      });
+      if (channelPermissionChannelId === channel.id) setChannelPermissionChannelId("");
+      await refreshGuildState();
+      showStatus("Channel deleted.", "success");
+    } catch (error) {
+      showStatus(`Channel deletion failed: ${error.message}`, "error");
+    }
+  }
+
+  async function moveChannel(channel, direction) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !selectedGuildId || !channel?.id) return;
+    const orderedChannels = [...channels].sort(compareByPositionAscending);
+    const currentIndex = orderedChannels.findIndex((entry) => entry.id === channel.id);
+    const targetIndex = currentIndex + direction;
+    if (currentIndex === -1 || targetIndex < 0 || targetIndex >= orderedChannels.length) return;
+    const next = [...orderedChannels];
+    const [removed] = next.splice(currentIndex, 1);
+    next.splice(targetIndex, 0, removed);
+    try {
+      await nodeApi(server.baseUrl, `/v1/guilds/${selectedGuildId}/channels/reorder`, server.membershipToken, {
+        method: "POST",
+        body: JSON.stringify({
+          items: next.map((entry, index) => ({
+            id: entry.id,
+            position: index,
+            parentId: entry.parent_id || null,
+          })),
+        }),
+      });
+      await refreshGuildState();
+      showStatus(`Moved ${channel.name}.`, "success");
+    } catch (error) {
+      showStatus(`Channel reorder failed: ${error.message}`, "error");
+    }
+  }
+
+  async function syncChannelPermissions(channelId) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !channelId) return;
+    try {
+      await nodeApi(server.baseUrl, `/v1/channels/${channelId}/sync-permissions`, server.membershipToken, {
+        method: "POST",
+        body: "{}",
+      });
+      await refreshGuildState();
+      showStatus("Channel permissions synced from category.", "success");
+    } catch (error) {
+      showStatus(`Permission sync failed: ${error.message}`, "error");
+    }
+  }
+
+  async function patchChannelOverwrite(channelId, targetType, targetId, mutate) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !channelId || !targetId) return;
+    const current = findOverwrite(overwrites, channelId, targetType, targetId);
+    const next = mutate({
+      allow: BigInt(current?.allow || "0"),
+      deny: BigInt(current?.deny || "0"),
+    });
+
+    try {
+      if (!next || (next.allow === 0n && next.deny === 0n)) {
+        await nodeApi(server.baseUrl, `/v1/channels/${channelId}/overwrites`, server.membershipToken, {
+          method: "DELETE",
+          body: JSON.stringify({ targetType, targetId }),
+        });
+      } else {
+        await nodeApi(server.baseUrl, `/v1/channels/${channelId}/overwrites`, server.membershipToken, {
+          method: "PUT",
+          body: JSON.stringify({
+            targetType,
+            targetId,
+            allow: next.allow.toString(),
+            deny: next.deny.toString(),
+          }),
+        });
+      }
+      await refreshGuildState();
+    } catch (error) {
+      showStatus(`Channel permissions failed to update: ${error.message}`, "error");
+    }
+  }
+
+  async function setEveryoneVisibility(channelId, visible) {
+    const everyoneRole = roles.find((role) => role.is_everyone);
+    if (!everyoneRole) {
+      showStatus("Could not find the @everyone role for this workspace.", "error");
+      return;
+    }
+    await patchChannelOverwrite(channelId, "role", everyoneRole.id, (current) => {
+      let allow = current.allow;
+      let deny = current.deny;
+      if (visible) {
+        allow &= ~PERMISSION_FLAGS.VIEW_CHANNEL.bit;
+        deny &= ~PERMISSION_FLAGS.VIEW_CHANNEL.bit;
+      } else {
+        allow &= ~PERMISSION_FLAGS.VIEW_CHANNEL.bit;
+        deny |= PERMISSION_FLAGS.VIEW_CHANNEL.bit;
+      }
+      return { allow, deny };
+    });
+  }
+
+  async function setRoleChannelPermission(channelId, roleId, flag, enabled) {
+    await patchChannelOverwrite(channelId, "role", roleId, (current) => {
+      let allow = current.allow;
+      let deny = current.deny;
+      if (enabled) {
+        allow |= PERMISSION_FLAGS[flag].bit;
+        deny &= ~PERMISSION_FLAGS[flag].bit;
+      } else {
+        allow &= ~PERMISSION_FLAGS[flag].bit;
+        deny &= ~PERMISSION_FLAGS[flag].bit;
+      }
+      return { allow, deny };
+    });
+  }
+
+  async function createRole() {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !selectedGuildId || !newRoleName.trim()) return;
+    try {
+      await nodeApi(server.baseUrl, `/v1/guilds/${selectedGuildId}/roles`, server.membershipToken, {
+        method: "POST",
+        body: JSON.stringify({ name: newRoleName.trim(), permissions: "0" }),
+      });
+      setNewRoleName("");
+      await refreshGuildState();
+      showStatus("Role created.", "success");
+    } catch (error) {
+      showStatus(`Role creation failed: ${error.message}`, "error");
+    }
+  }
+
+  function openRoleEditor(role) {
+    setEditingRoleId(role.id);
+    setEditRoleName(role.name || "");
+    setEditRoleColor(roleColorHex(role));
+    const nextPermissions = {};
+    for (const flag of Object.keys(PERMISSION_FLAGS)) {
+      nextPermissions[flag] = hasPermission(role.permissions, flag);
+    }
+    setEditRolePermissions(nextPermissions);
+  }
+
+  async function saveRole() {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !editingRoleId || !editRoleName.trim()) return;
+    let permBits = 0n;
+    for (const [flag, enabled] of Object.entries(editRolePermissions)) {
+      if (enabled) permBits |= PERMISSION_FLAGS[flag].bit;
+    }
+
+    const parsedColor = parseRoleColor(editRoleColor);
+    if (parsedColor === undefined) {
+      showStatus("Role color must be a hex value like #5865f2, or left blank.", "error");
+      return;
+    }
+
+    try {
+      await nodeApi(server.baseUrl, `/v1/roles/${editingRoleId}`, server.membershipToken, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: editRoleName.trim(),
+          permissions: permBits.toString(),
+          color: parsedColor,
+        }),
+      });
+      setEditingRoleId("");
+      await refreshGuildState();
+      showStatus("Role updated.", "success");
+    } catch (error) {
+      showStatus(`Role update failed: ${error.message}`, "error");
+    }
+  }
+
+  async function deleteRole(role) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !role?.id) return;
+    const confirmed = window.confirm(`Delete role "${role.name}"?`);
+    if (!confirmed) return;
+    try {
+      await nodeApi(server.baseUrl, `/v1/roles/${role.id}`, server.membershipToken, {
+        method: "DELETE",
+      });
+      await refreshGuildState();
+      showStatus("Role deleted.", "success");
+    } catch (error) {
+      showStatus(`Role deletion failed: ${error.message}`, "error");
+    }
+  }
+
+  async function moveRole(role, direction) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !role?.id) return;
+    const orderedRoles = roles.filter((entry) => !entry.is_everyone).sort(compareRolesDescending);
+    const currentIndex = orderedRoles.findIndex((entry) => entry.id === role.id);
+    const targetIndex = currentIndex + direction;
+    if (currentIndex === -1 || targetIndex < 0 || targetIndex >= orderedRoles.length) return;
+    const currentRole = orderedRoles[currentIndex];
+    const targetRole = orderedRoles[targetIndex];
+    try {
+      await nodeApi(server.baseUrl, `/v1/roles/${currentRole.id}`, server.membershipToken, {
+        method: "PATCH",
+        body: JSON.stringify({ position: targetRole.position }),
+      });
+      await nodeApi(server.baseUrl, `/v1/roles/${targetRole.id}`, server.membershipToken, {
+        method: "PATCH",
+        body: JSON.stringify({ position: currentRole.position }),
+      });
+      await refreshGuildState();
+      showStatus(`Moved role ${role.name}.`, "success");
+    } catch (error) {
+      showStatus(`Role reorder failed: ${error.message}`, "error");
+    }
+  }
+
+  async function assignRoleToMember(memberId) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !selectedGuildId || !memberId || !memberRoleDraftId) return;
+    try {
+      await nodeApi(
+        server.baseUrl,
+        `/v1/guilds/${selectedGuildId}/members/${memberId}/roles/${memberRoleDraftId}`,
+        server.membershipToken,
+        { method: "PUT", body: "{}" },
+      );
+      setMemberRoleDraftId("");
+      await refreshGuildState();
+      showStatus("Role assigned to member.", "success");
+    } catch (error) {
+      showStatus(`Role assignment failed: ${error.message}`, "error");
+    }
+  }
+
+  async function removeRoleFromMember(memberId, roleId) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !selectedGuildId || !memberId || !roleId) return;
+    try {
+      await nodeApi(
+        server.baseUrl,
+        `/v1/guilds/${selectedGuildId}/members/${memberId}/roles/${roleId}`,
+        server.membershipToken,
+        { method: "DELETE" },
+      );
+      await refreshGuildState();
+      showStatus("Role removed from member.", "success");
+    } catch (error) {
+      showStatus(`Role removal failed: ${error.message}`, "error");
+    }
+  }
+
+  async function kickMember(member) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !selectedGuildId || !member?.id) return;
+    const confirmed = window.confirm(`Kick ${member.username || member.id}? They can rejoin later.`);
+    if (!confirmed) return;
+    try {
+      await nodeApi(
+        server.baseUrl,
+        `/v1/guilds/${selectedGuildId}/members/${member.id}/kick`,
+        server.membershipToken,
+        { method: "POST", body: "{}" },
+      );
+      await refreshGuildState();
+      showStatus(`Kicked ${member.username || member.id}.`, "success");
+    } catch (error) {
+      showStatus(`Kick failed: ${error.message}`, "error");
+    }
+  }
+
+  async function banMember(member) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !selectedGuildId || !member?.id) return;
+    const note = String(memberModerationNotes[member.id] || "").trim();
+    const confirmed = window.confirm(`Ban ${member.username || member.id}?`);
+    if (!confirmed) return;
+    try {
+      await nodeApi(
+        server.baseUrl,
+        `/v1/guilds/${selectedGuildId}/members/${member.id}/ban`,
+        server.membershipToken,
+        {
+          method: "POST",
+          body: JSON.stringify({ reason: note || undefined }),
+        },
+      );
+      await refreshGuildState();
+      if (activeTab === "moderation") await loadBans();
+      showStatus(`Banned ${member.username || member.id}.`, "success");
+    } catch (error) {
+      showStatus(`Ban failed: ${error.message}`, "error");
+    }
+  }
+
+  async function unbanMember(userId) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !selectedGuildId || !userId) return;
+    try {
+      await nodeApi(
+        server.baseUrl,
+        `/v1/guilds/${selectedGuildId}/bans/${userId}`,
+        server.membershipToken,
+        { method: "DELETE" },
+      );
+      await loadBans();
+      showStatus("Ban removed.", "success");
+    } catch (error) {
+      showStatus(`Unban failed: ${error.message}`, "error");
+    }
+  }
+
+  async function updateVoiceMember(channelId, memberId, patch) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !channelId || !memberId) return;
+    try {
+      await nodeApi(
+        server.baseUrl,
+        `/v1/channels/${channelId}/voice/members/${memberId}/state`,
+        server.membershipToken,
+        { method: "PATCH", body: JSON.stringify(patch) },
+      );
+      await refreshGuildState();
+      showStatus("Voice moderation updated.", "success");
+    } catch (error) {
+      showStatus(`Voice moderation failed: ${error.message}`, "error");
+    }
+  }
+
+  async function disconnectVoiceMember(channelId, memberId) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !channelId || !memberId) return;
+    try {
+      await nodeApi(
+        server.baseUrl,
+        `/v1/channels/${channelId}/voice/members/${memberId}/disconnect`,
+        server.membershipToken,
+        { method: "POST", body: "{}" },
+      );
+      await refreshGuildState();
+      showStatus("Member disconnected from voice.", "success");
+    } catch (error) {
+      showStatus(`Voice disconnect failed: ${error.message}`, "error");
+    }
+  }
+
+  async function createEmote() {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !selectedGuildId || !newEmoteName.trim() || !newEmoteUrl.trim()) return;
+    try {
+      await nodeApi(server.baseUrl, `/v1/guilds/${selectedGuildId}/emotes`, server.membershipToken, {
+        method: "POST",
+        body: JSON.stringify({
+          name: newEmoteName.trim().toLowerCase(),
+          imageUrl: normalizeImageUrlInput(newEmoteUrl),
+        }),
+      });
+      setNewEmoteName("");
+      setNewEmoteUrl("");
+      await refreshGuildState();
+      showStatus("Custom emote created.", "success");
+    } catch (error) {
+      showStatus(`Emote creation failed: ${error.message}`, "error");
+    }
+  }
+
+  async function removeEmote(emote) {
+    const server = servers.find((entry) => entry.id === selectedServerId);
+    if (!server?.baseUrl || !server?.membershipToken || !selectedGuildId || !emote?.id) return;
+    try {
+      await nodeApi(server.baseUrl, `/v1/guilds/${selectedGuildId}/emotes/${emote.id}`, server.membershipToken, {
+        method: "DELETE",
+      });
+      await refreshGuildState();
+      showStatus("Custom emote removed.", "success");
+    } catch (error) {
+      showStatus(`Emote removal failed: ${error.message}`, "error");
+    }
+  }
+
+  async function createInvite() {
+    if (!selectedServerId) return;
+    const payload = {
+      serverId: selectedServerId,
+      code: inviteCustomCode.trim() || undefined,
+      permanent: invitePermanent,
+      maxUses: invitePermanent ? undefined : (inviteMaxUses.trim() ? Number(inviteMaxUses) : undefined),
+      expiresAt: invitePermanent ? undefined : fromDateTimeLocalValue(inviteExpiresAt),
+    };
+
+    if (!invitePermanent && payload.maxUses !== undefined && (!Number.isFinite(payload.maxUses) || payload.maxUses <= 0)) {
+      showStatus("Invite max uses must be a positive number.", "error");
+      return;
+    }
+
+    try {
+      await api("/v1/invites", token, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      setInviteCustomCode("");
+      setInvitePermanent(false);
+      setInviteMaxUses("25");
+      setInviteExpiresAt("");
+      await loadInvites();
+      showStatus("Invite created.", "success");
+    } catch (error) {
+      showStatus(`Invite creation failed: ${error.message}`, "error");
+    }
+  }
+
+  async function deleteInvite(code) {
+    if (!code) return;
+    const confirmed = window.confirm(`Delete invite "${code}"?`);
+    if (!confirmed) return;
+    try {
+      await api(`/v1/invites/${encodeURIComponent(code)}`, token, {
+        method: "DELETE",
+      });
+      await loadInvites();
+      showStatus("Invite deleted.", "success");
+    } catch (error) {
+      showStatus(`Invite deletion failed: ${error.message}`, "error");
+    }
+  }
+
+  async function copyInvite(url) {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      showStatus("Invite link copied.", "success");
+    } catch {
+      showStatus("Could not copy invite link on this browser.", "error");
+    }
+  }
+
+  async function toggleExtension(extensionId, enabled) {
+    if (!selectedServerId || !extensionId) return;
     try {
       await api(`/v1/servers/${selectedServerId}/extensions/${encodeURIComponent(extensionId)}`, token, {
         method: "POST",
-        body: JSON.stringify({ enabled })
+        body: JSON.stringify({ enabled }),
       });
       await loadInstalledExtensions(selectedServerId);
-      setStatus(`${enabled ? "Enabled" : "Disabled"} extension ${extensionId}.`);
-    } catch (e) {
-      setStatus(`Extension update failed: ${e.message}`);
+      showStatus(`${enabled ? "Enabled" : "Disabled"} ${extensionId}.`, "success");
+    } catch (error) {
+      showStatus(`Extension update failed: ${error.message}`, "error");
+    }
+  }
+
+  async function saveExtensionConfig(extensionId) {
+    if (!selectedServerId || !extensionId) return;
+    let parsedConfig = {};
+    try {
+      parsedConfig = JSON.parse(extensionConfigDrafts[extensionId] || "{}");
+    } catch {
+      showStatus("Extension config must be valid JSON.", "error");
+      return;
+    }
+
+    try {
+      await api(`/v1/servers/${selectedServerId}/extensions/${encodeURIComponent(extensionId)}/config`, token, {
+        method: "PUT",
+        body: JSON.stringify({ config: parsedConfig, mode: "replace" }),
+      });
+      showStatus("Extension config saved.", "success");
+    } catch (error) {
+      showStatus(`Extension config save failed: ${error.message}`, "error");
     }
   }
 
   function isExtensionEnabled(extensionId) {
-    return installedExtensions.some((ext) => ext.extensionId === extensionId && ext.enabled);
+    return installedExtensions.some((extension) => extension.extensionId === extensionId && extension.enabled);
   }
-
-  const selectedServer = servers.find(s => s.id === selectedServerId);
-  const selectedGuild = guilds.find((guild) => guild.id === selectedGuildId);
-  const visibleMembers = members.filter((member) => {
-    if (!memberQuery.trim()) return true;
-    const query = memberQuery.trim().toLowerCase();
-    return member.username?.toLowerCase().includes(query) || member.id?.toLowerCase().includes(query);
-  });
-  const visibleRoles = roles.filter((role) => {
-    if (role.is_everyone) return true;
-    if (!roleQuery.trim()) return true;
-    return role.name?.toLowerCase().includes(roleQuery.trim().toLowerCase());
-  });
 
   if (!token) {
     return (
       <div className="auth-shell">
         <div className="auth-card">
           <h1>Server Admin Panel</h1>
-          <p>You need to log in to access the server admin dashboard.</p>
-          <p className="hint">Please log in through the main OpenCom app first.</p>
+          <p>You need to log in through the main OpenCom app before this panel can manage your servers.</p>
         </div>
       </div>
     );
@@ -444,8 +1165,8 @@ export function ServerAdminApp() {
     <div className="server-admin-layout">
       <aside className="server-admin-sidebar">
         <div className="server-admin-brand">
-          <h2>Server Admin</h2>
-          <p>Manage your communities with clearer controls.</p>
+          <h2>Server Ops</h2>
+          <p>One place to tune up workspaces, channels, moderation, assets, and extensions.</p>
         </div>
 
         <div className="server-admin-sidebar-body">
@@ -453,8 +1174,9 @@ export function ServerAdminApp() {
             <p>Your Servers</p>
             <span>{servers.length}</span>
           </div>
+
           {servers.length === 0 ? (
-            <p className="server-admin-empty-inline">No servers owned yet.</p>
+            <EmptyState>No owned servers yet.</EmptyState>
           ) : (
             servers.map((server) => (
               <button
@@ -462,10 +1184,10 @@ export function ServerAdminApp() {
                 className={`server-admin-server-btn ${selectedServerId === server.id ? "active" : ""}`}
                 onClick={() => {
                   setSelectedServerId(server.id);
-                  setSelectedGuildId("");
-                  setActiveTab("members");
+                  setActiveTab("overview");
                   setMemberQuery("");
                   setRoleQuery("");
+                  setChannelQuery("");
                 }}
               >
                 <strong>{server.name}</strong>
@@ -475,27 +1197,39 @@ export function ServerAdminApp() {
           )}
         </div>
 
-        <div className="server-admin-sidebar-status">{status || "Ready."}</div>
+        <div className={`server-admin-sidebar-status ${status.type}`}>
+          {status.message || "Ready."}
+        </div>
       </aside>
 
       <main className="server-admin-main">
         {!selectedServer ? (
-          <div className="server-admin-empty">Select a server to manage.</div>
+          <div className="server-admin-empty">Select a server to start managing it.</div>
         ) : (
           <>
             <header className="server-admin-top">
               <div className="server-admin-top-meta">
                 <h1>{selectedServer.name}</h1>
-                <p>Member and role administration for your selected guild.</p>
+                <p>{selectedServer.baseUrl}</p>
+                <div className="server-admin-chip-row">
+                  <span className="server-admin-chip">Owner panel</span>
+                  <span className="server-admin-chip">{guilds.length} workspaces</span>
+                  <span className="server-admin-chip">{enabledExtensions.length} enabled extensions</span>
+                  <span className={`server-admin-chip ${selectedServer.globalEmotesEnabled ? "success" : ""}`}>
+                    Global emotes {selectedServer.globalEmotesEnabled ? "on" : "off"}
+                  </span>
+                </div>
               </div>
+
               <div className="server-admin-guild-pick">
-                <label htmlFor="server-admin-guild-select">Guild</label>
+                <label htmlFor="server-admin-guild-select">Active Workspace</label>
                 <select
                   id="server-admin-guild-select"
                   value={selectedGuildId}
-                  onChange={(e) => setSelectedGuildId(e.target.value)}
+                  onChange={(event) => setSelectedGuildId(event.target.value)}
                   disabled={guilds.length === 0}
                 >
+                  {guilds.length === 0 ? <option value="">No workspaces</option> : null}
                   {guilds.map((guild) => (
                     <option key={guild.id} value={guild.id}>
                       {guild.name}
@@ -505,70 +1239,518 @@ export function ServerAdminApp() {
               </div>
             </header>
 
-            {!selectedGuildId ? (
-              <div className="server-admin-empty">Select a guild to start managing this server.</div>
-            ) : !guildState ? (
-              <div className="server-admin-empty">Loading guild data...</div>
-            ) : (
-              <>
-                <div className="server-admin-stats">
-                  <article className="server-admin-stat">
-                    <p>Guild</p>
-                    <strong>{selectedGuild?.name || "Unknown"}</strong>
-                  </article>
-                  <article className="server-admin-stat">
-                    <p>Members</p>
-                    <strong>{members.length}</strong>
-                  </article>
-                  <article className="server-admin-stat">
-                    <p>Roles</p>
-                    <strong>{roles.filter((role) => !role.is_everyone).length}</strong>
-                  </article>
-                  <article className="server-admin-stat">
-                    <p>Server Extensions</p>
-                    <strong>{extensionCatalog.serverExtensions.length}</strong>
-                  </article>
-                </div>
+            <div className="server-admin-stats">
+              <MetricCard label="Server" value={selectedServer.name} hint={selectedServer.roles?.includes("boost") ? "Boost active" : "Standard access"} />
+              <MetricCard label="Workspaces" value={guilds.length} hint={selectedServer.defaultGuildId ? "Default workspace linked" : "No default workspace"} />
+              <MetricCard label="Members" value={members.length} hint={selectedGuild ? selectedGuild.name : "Pick a workspace"} />
+              <MetricCard label="Roles" value={roles.filter((role) => !role.is_everyone).length} hint={selectedGuild ? "Assignable roles" : "Pick a workspace"} />
+              <MetricCard label="Channels" value={channels.length} hint={guildStateLoading ? "Refreshing" : "Visible to you"} />
+              <MetricCard label="Custom Emotes" value={emotes.length} hint={selectedServer.globalEmotesEnabled ? "Global sharing on" : "Workspace only"} />
+            </div>
 
-                <div className="server-admin-tabs">
-                  <button className={activeTab === "members" ? "active" : ""} onClick={() => setActiveTab("members")}>
-                    Members
-                  </button>
-                  <button className={activeTab === "roles" ? "active" : ""} onClick={() => setActiveTab("roles")}>
-                    Roles
-                  </button>
-                  <button className={activeTab === "admins" ? "active" : ""} onClick={() => setActiveTab("admins")}>
-                    Admins
-                  </button>
-                  <button className={activeTab === "extensions" ? "active" : ""} onClick={() => setActiveTab("extensions")}>
-                    Extensions
-                  </button>
-                </div>
+            <div className="server-admin-tabs">
+              {SERVER_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  className={activeTab === tab.id ? "active" : ""}
+                  onClick={() => setActiveTab(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
 
-                <section className="server-admin-content">
-                  {activeTab === "members" && (
-                    <div className="server-admin-section">
+            <section className="server-admin-content">
+              {activeTab === "overview" && (
+                <div className="server-admin-section">
+                  <div className="server-admin-panel-grid">
+                    <article className="server-admin-card server-admin-hero-card">
+                      <div
+                        className="server-admin-hero-cover"
+                        style={{
+                          backgroundImage: selectedServer.bannerUrl
+                            ? `linear-gradient(135deg, rgba(5, 11, 24, 0.5), rgba(9, 16, 32, 0.82)), url(${profileImageUrl(selectedServer.bannerUrl)})`
+                            : undefined,
+                        }}
+                      />
+                      <div className="server-admin-hero-body">
+                        <div className="server-admin-hero-logo">
+                          <SafeAvatar
+                            src={profileImageUrl(selectedServer.logoUrl)}
+                            alt={selectedServer.name}
+                            name={selectedServer.name}
+                            seed={selectedServer.id}
+                            className="server-admin-member-fallback"
+                            imgStyle={{
+                              width: "100%",
+                              height: "100%",
+                              objectFit: "cover",
+                              display: "block",
+                            }}
+                          />
+                        </div>
+                        <div className="server-admin-hero-copy">
+                          <h2>{selectedServer.name}</h2>
+                          <p>Server ID: {selectedServer.id}</p>
+                          <span>{selectedServer.baseUrl}</span>
+                        </div>
+                      </div>
+                    </article>
+
+                    <article className="server-admin-card">
+                      <div className="server-admin-card-head">
+                        <h2>Server Branding</h2>
+                        <p>Update the public identity and art for this server.</p>
+                      </div>
+                      <div className="server-admin-form-grid">
+                        <label>
+                          <span>Name</span>
+                          <input
+                            value={serverProfileForm.name}
+                            onChange={(event) => setServerProfileForm((current) => ({ ...current, name: event.target.value }))}
+                            placeholder="Server name"
+                          />
+                        </label>
+                        <label>
+                          <span>Logo URL</span>
+                          <input
+                            value={serverProfileForm.logoUrl}
+                            onChange={(event) => setServerProfileForm((current) => ({ ...current, logoUrl: event.target.value }))}
+                            placeholder="https://..."
+                          />
+                        </label>
+                        <label className="server-admin-upload-field">
+                          <span>Upload logo</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(event) =>
+                              onImageFieldUpload(event, "server logo", (imageUrl) =>
+                                setServerProfileForm((current) => ({ ...current, logoUrl: imageUrl })),
+                              )
+                            }
+                          />
+                        </label>
+                        <label>
+                          <span>Banner URL</span>
+                          <input
+                            value={serverProfileForm.bannerUrl}
+                            onChange={(event) => setServerProfileForm((current) => ({ ...current, bannerUrl: event.target.value }))}
+                            placeholder="https://..."
+                          />
+                        </label>
+                        <label className="server-admin-upload-field">
+                          <span>Upload banner</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(event) =>
+                              onImageFieldUpload(event, "server banner", (imageUrl) =>
+                                setServerProfileForm((current) => ({ ...current, bannerUrl: imageUrl })),
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="server-admin-row-actions">
+                        <button className="server-admin-confirm-btn" onClick={saveServerProfile}>
+                          Save server profile
+                        </button>
+                        <button
+                          className={`server-admin-action-btn ${selectedServer.globalEmotesEnabled ? "danger" : "success"}`}
+                          onClick={() => toggleGlobalEmotes(!selectedServer.globalEmotesEnabled)}
+                        >
+                          {selectedServer.globalEmotesEnabled ? "Disable global emotes" : "Enable global emotes"}
+                        </button>
+                      </div>
+                    </article>
+
+                    <article className="server-admin-card">
+                      <div className="server-admin-card-head">
+                        <h2>Workspaces</h2>
+                        <p>Create, rename, select, and retire workspaces on this server node.</p>
+                      </div>
+                      <div className="server-admin-inline-form">
+                        <input
+                          value={newWorkspaceName}
+                          onChange={(event) => setNewWorkspaceName(event.target.value)}
+                          placeholder="New workspace name"
+                        />
+                        <button className="server-admin-confirm-btn" onClick={createWorkspace}>
+                          Create workspace
+                        </button>
+                      </div>
+
+                      {selectedGuild ? (
+                        <div className="server-admin-inline-form">
+                          <input
+                            value={workspaceRenameName}
+                            onChange={(event) => setWorkspaceRenameName(event.target.value)}
+                            placeholder="Rename selected workspace"
+                          />
+                          <button className="server-admin-action-btn" onClick={renameWorkspace}>
+                            Rename
+                          </button>
+                        </div>
+                      ) : null}
+
+                      <div className="server-admin-workspace-list">
+                        {guilds.length === 0 ? (
+                          <EmptyState>No workspaces on this server yet.</EmptyState>
+                        ) : (
+                          guilds.map((guild) => (
+                            <div
+                              key={guild.id}
+                              className={`server-admin-workspace-item ${selectedGuildId === guild.id ? "active" : ""}`}
+                            >
+                              <div>
+                                <strong>{guild.name}</strong>
+                                <p>{guild.id}</p>
+                              </div>
+                              <div className="server-admin-row-actions">
+                                <button className="server-admin-action-btn" onClick={() => setSelectedGuildId(guild.id)}>
+                                  Select
+                                </button>
+                                <button
+                                  className="server-admin-action-btn danger"
+                                  onClick={() => deleteWorkspace(guild.id)}
+                                  disabled={selectedServer.defaultGuildId === guild.id}
+                                  title={selectedServer.defaultGuildId === guild.id ? "Default workspace cannot be deleted here." : "Delete workspace"}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </article>
+
+                    <article className="server-admin-card">
+                      <div className="server-admin-card-head">
+                        <h2>Server Signals</h2>
+                        <p>Quick health checks for the management surface you are editing.</p>
+                      </div>
+                      <div className="server-admin-detail-list">
+                        <div>
+                          <span>Selected workspace</span>
+                          <strong>{selectedGuild?.name || "None selected"}</strong>
+                        </div>
+                        <div>
+                          <span>Default workspace</span>
+                          <strong>{guilds.find((guild) => guild.id === selectedServer.defaultGuildId)?.name || selectedServer.defaultGuildId || "Not set"}</strong>
+                        </div>
+                        <div>
+                          <span>Enabled extensions</span>
+                          <strong>{enabledExtensions.length}</strong>
+                        </div>
+                        <div>
+                          <span>Last refresh</span>
+                          <strong>{guildStateLoading ? "Refreshing now" : "Live data loaded"}</strong>
+                        </div>
+                      </div>
+                    </article>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === "channels" && (
+                <div className="server-admin-section">
+                  {!selectedGuildId ? (
+                    <div className="server-admin-empty">Choose a workspace to manage channels.</div>
+                  ) : (
+                    <>
+                      <div className="server-admin-panel-grid">
+                        <article className="server-admin-card">
+                          <div className="server-admin-card-head">
+                            <h2>Create Channel</h2>
+                            <p>Add text, voice, or category channels to the active workspace.</p>
+                          </div>
+                          <div className="server-admin-form-grid">
+                            <label>
+                              <span>Name</span>
+                              <input
+                                value={newChannelName}
+                                onChange={(event) => setNewChannelName(event.target.value)}
+                                placeholder="new-channel"
+                              />
+                            </label>
+                            <label>
+                              <span>Type</span>
+                              <select value={newChannelType} onChange={(event) => setNewChannelType(event.target.value)}>
+                                <option value="text">Text</option>
+                                <option value="voice">Voice</option>
+                                <option value="category">Category</option>
+                              </select>
+                            </label>
+                            {newChannelType !== "category" ? (
+                              <label>
+                                <span>Parent category</span>
+                                <select value={newChannelParentId} onChange={(event) => setNewChannelParentId(event.target.value)}>
+                                  <option value="">No category</option>
+                                  {categoryChannels.map((category) => (
+                                    <option key={category.id} value={category.id}>
+                                      {category.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            ) : null}
+                          </div>
+                          <button className="server-admin-confirm-btn" onClick={createChannel}>
+                            Create channel
+                          </button>
+                        </article>
+
+                        <article className="server-admin-card">
+                          <div className="server-admin-section-head">
+                            <div className="server-admin-card-head">
+                              <h2>Channel Layout</h2>
+                              <p>Edit, reorder, and lock down what each role can see or say.</p>
+                            </div>
+                            <input
+                              type="search"
+                              placeholder="Filter channels"
+                              value={channelQuery}
+                              onChange={(event) => setChannelQuery(event.target.value)}
+                            />
+                          </div>
+
+                          <div className="server-admin-channel-stack">
+                            {groupedChannels.categories.map((category) => (
+                              <div key={category.id} className="server-admin-channel-group">
+                                <div className="server-admin-channel-row category">
+                                  <div className="server-admin-channel-main">
+                                    <span className="server-admin-channel-type">Category</span>
+                                    <strong>{category.name}</strong>
+                                  </div>
+                                  <div className="server-admin-row-actions">
+                                    <button className="server-admin-action-btn" onClick={() => moveChannel(category, -1)}>Up</button>
+                                    <button className="server-admin-action-btn" onClick={() => moveChannel(category, 1)}>Down</button>
+                                    <button className="server-admin-action-btn" onClick={() => openChannelEditor(category)}>Edit</button>
+                                    <button className="server-admin-action-btn" onClick={() => setChannelPermissionChannelId(category.id)}>Permissions</button>
+                                    <button className="server-admin-action-btn danger" onClick={() => deleteChannel(category)}>Delete</button>
+                                  </div>
+                                </div>
+
+                                {editingChannelId === category.id ? (
+                                  <div className="server-admin-inline-form">
+                                    <input
+                                      value={channelDraft.name}
+                                      onChange={(event) => setChannelDraft((current) => ({ ...current, name: event.target.value }))}
+                                      placeholder="Channel name"
+                                    />
+                                    <button className="server-admin-confirm-btn" onClick={() => saveChannel(category.id)}>
+                                      Save
+                                    </button>
+                                    <button className="server-admin-action-btn" onClick={() => setEditingChannelId("")}>
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : null}
+
+                                {(groupedChannels.childrenByParentId.get(category.id) || []).map((channel) => (
+                                  <div key={channel.id} className="server-admin-channel-row nested">
+                                    <div className="server-admin-channel-main">
+                                      <span className="server-admin-channel-type">{channel.type}</span>
+                                      <strong>{channel.name}</strong>
+                                    </div>
+                                    <div className="server-admin-row-actions">
+                                      <button className="server-admin-action-btn" onClick={() => moveChannel(channel, -1)}>Up</button>
+                                      <button className="server-admin-action-btn" onClick={() => moveChannel(channel, 1)}>Down</button>
+                                      <button className="server-admin-action-btn" onClick={() => openChannelEditor(channel)}>Edit</button>
+                                      <button className="server-admin-action-btn" onClick={() => setChannelPermissionChannelId(channel.id)}>Permissions</button>
+                                      <button className="server-admin-action-btn" onClick={() => syncChannelPermissions(channel.id)}>
+                                        Sync
+                                      </button>
+                                      <button className="server-admin-action-btn danger" onClick={() => deleteChannel(channel)}>Delete</button>
+                                    </div>
+                                    {editingChannelId === channel.id ? (
+                                      <div className="server-admin-inline-form server-admin-channel-editor">
+                                        <input
+                                          value={channelDraft.name}
+                                          onChange={(event) => setChannelDraft((current) => ({ ...current, name: event.target.value }))}
+                                          placeholder="Channel name"
+                                        />
+                                        <select
+                                          value={channelDraft.parentId}
+                                          onChange={(event) => setChannelDraft((current) => ({ ...current, parentId: event.target.value }))}
+                                        >
+                                          <option value="">No category</option>
+                                          {categoryChannels.map((entry) => (
+                                            <option key={entry.id} value={entry.id}>
+                                              {entry.name}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <button className="server-admin-confirm-btn" onClick={() => saveChannel(channel.id)}>
+                                          Save
+                                        </button>
+                                        <button className="server-admin-action-btn" onClick={() => setEditingChannelId("")}>
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+
+                            {groupedChannels.uncategorized.map((channel) => (
+                              <div key={channel.id} className="server-admin-channel-row">
+                                <div className="server-admin-channel-main">
+                                  <span className="server-admin-channel-type">{channel.type}</span>
+                                  <strong>{channel.name}</strong>
+                                </div>
+                                <div className="server-admin-row-actions">
+                                  <button className="server-admin-action-btn" onClick={() => moveChannel(channel, -1)}>Up</button>
+                                  <button className="server-admin-action-btn" onClick={() => moveChannel(channel, 1)}>Down</button>
+                                  <button className="server-admin-action-btn" onClick={() => openChannelEditor(channel)}>Edit</button>
+                                  <button className="server-admin-action-btn" onClick={() => setChannelPermissionChannelId(channel.id)}>Permissions</button>
+                                  <button className="server-admin-action-btn danger" onClick={() => deleteChannel(channel)}>Delete</button>
+                                </div>
+                                {editingChannelId === channel.id ? (
+                                  <div className="server-admin-inline-form server-admin-channel-editor">
+                                    <input
+                                      value={channelDraft.name}
+                                      onChange={(event) => setChannelDraft((current) => ({ ...current, name: event.target.value }))}
+                                      placeholder="Channel name"
+                                    />
+                                    <select
+                                      value={channelDraft.parentId}
+                                      onChange={(event) => setChannelDraft((current) => ({ ...current, parentId: event.target.value }))}
+                                    >
+                                      <option value="">No category</option>
+                                      {categoryChannels.map((entry) => (
+                                        <option key={entry.id} value={entry.id}>
+                                          {entry.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <button className="server-admin-confirm-btn" onClick={() => saveChannel(channel.id)}>
+                                      Save
+                                    </button>
+                                    <button className="server-admin-action-btn" onClick={() => setEditingChannelId("")}>
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))}
+
+                            {visibleChannels.length === 0 ? <EmptyState>No matching channels.</EmptyState> : null}
+                          </div>
+                        </article>
+                      </div>
+
+                      {selectedPermissionChannel ? (
+                        <article className="server-admin-card">
+                          <div className="server-admin-card-head">
+                            <h2>Channel Access</h2>
+                            <p>
+                              Fine-tune explicit visibility and send overrides for <strong>{selectedPermissionChannel.name}</strong>.
+                            </p>
+                          </div>
+
+                          <div className="server-admin-toggle-list">
+                            <div className="server-admin-toggle-row">
+                              <div>
+                                <strong>@everyone visibility</strong>
+                                <p>Disable this to make the channel private by default.</p>
+                              </div>
+                              <label className="server-admin-switch">
+                                <input
+                                  type="checkbox"
+                                  checked={!Boolean(
+                                    BigInt(findOverwrite(overwrites, selectedPermissionChannel.id, "role", roles.find((role) => role.is_everyone)?.id || "")?.deny || "0")
+                                    & PERMISSION_FLAGS.VIEW_CHANNEL.bit,
+                                  )}
+                                  onChange={(event) => setEveryoneVisibility(selectedPermissionChannel.id, event.target.checked)}
+                                />
+                                <span>{`${
+                                  !Boolean(
+                                    BigInt(findOverwrite(overwrites, selectedPermissionChannel.id, "role", roles.find((role) => role.is_everyone)?.id || "")?.deny || "0")
+                                    & PERMISSION_FLAGS.VIEW_CHANNEL.bit,
+                                  ) ? "Visible" : "Hidden"
+                                }`}</span>
+                              </label>
+                            </div>
+
+                            {roles.filter((role) => !role.is_everyone).sort(compareRolesDescending).map((role) => {
+                              const overwrite = findOverwrite(overwrites, selectedPermissionChannel.id, "role", role.id);
+                              const allowBits = BigInt(overwrite?.allow || "0");
+                              return (
+                                <div key={role.id} className="server-admin-toggle-row">
+                                  <div>
+                                    <strong>{role.name}</strong>
+                                    <p>{selectedPermissionChannel.type === "voice" ? "Voice access overrides" : "Text access overrides"}</p>
+                                  </div>
+                                  <div className="server-admin-toggle-actions">
+                                    <label className="server-admin-switch">
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(allowBits & PERMISSION_FLAGS.VIEW_CHANNEL.bit)}
+                                        onChange={(event) =>
+                                          setRoleChannelPermission(selectedPermissionChannel.id, role.id, "VIEW_CHANNEL", event.target.checked)
+                                        }
+                                      />
+                                      <span>Allow view</span>
+                                    </label>
+                                    {selectedPermissionChannel.type === "text" ? (
+                                      <label className="server-admin-switch">
+                                        <input
+                                          type="checkbox"
+                                          checked={Boolean(allowBits & PERMISSION_FLAGS.SEND_MESSAGES.bit)}
+                                          onChange={(event) =>
+                                            setRoleChannelPermission(selectedPermissionChannel.id, role.id, "SEND_MESSAGES", event.target.checked)
+                                          }
+                                        />
+                                        <span>Allow send</span>
+                                      </label>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </article>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {activeTab === "members" && (
+                <div className="server-admin-section">
+                  {!selectedGuildId ? (
+                    <div className="server-admin-empty">Choose a workspace to manage members.</div>
+                  ) : (
+                    <>
                       <div className="server-admin-section-head">
-                        <h2>Members</h2>
+                        <div className="server-admin-card-head">
+                          <h2>Members</h2>
+                          <p>Assign roles, remove roles, and handle moderation without leaving the panel.</p>
+                        </div>
                         <input
                           type="search"
-                          placeholder="Search by username or user id"
+                          placeholder="Search by username, display name, or id"
                           value={memberQuery}
-                          onChange={(e) => setMemberQuery(e.target.value)}
+                          onChange={(event) => setMemberQuery(event.target.value)}
                         />
                       </div>
-                      {visibleMembers.length === 0 ? (
-                        <p className="server-admin-empty-inline">No matching members found.</p>
-                      ) : (
-                        <div className="server-admin-member-grid">
-                          {visibleMembers.map((member) => {
-                            const memberData = guildState?.members?.find((entry) => entry.id === member.id);
-                            const assignedRoles = roles.filter((role) => memberData?.roleIds?.includes(role.id));
+
+                      <div className="server-admin-member-grid">
+                        {visibleMembers.length === 0 ? (
+                          <EmptyState>No matching members found.</EmptyState>
+                        ) : (
+                          visibleMembers.map((member) => {
+                            const memberRoles = roleNamesForMember(member, roles);
+                            const voiceState = voiceStates.find((entry) => entry.userId === member.id) || null;
                             return (
                               <article key={member.id} className="server-admin-member-card">
                                 <div className="server-admin-member-head">
                                   <SafeAvatar
-                                    src={member.pfp_url}
+                                    src={profileImageUrl(member.pfp_url)}
                                     alt={member.username}
                                     name={member.username}
                                     seed={member.id}
@@ -581,16 +1763,22 @@ export function ServerAdminApp() {
                                     }}
                                   />
                                   <div>
-                                    <strong>{member.username}</strong>
-                                    <p>{member.id}</p>
+                                    <strong>{member.displayName || member.username}</strong>
+                                    <p>{member.username} · {member.id}</p>
                                   </div>
                                 </div>
 
+                                {voiceState ? (
+                                  <div className="server-admin-voice-pill">
+                                    In voice: {voiceChannelMap.get(voiceState.channelId)?.name || voiceState.channelId}
+                                  </div>
+                                ) : null}
+
                                 <div className="server-admin-role-pills">
-                                  {assignedRoles.length === 0 ? (
-                                    <span className="server-admin-pill-muted">No roles</span>
+                                  {memberRoles.length === 0 ? (
+                                    <span className="server-admin-pill-muted">No assigned roles</span>
                                   ) : (
-                                    assignedRoles.map((role) => (
+                                    memberRoles.map((role) => (
                                       <button
                                         key={role.id}
                                         className="server-admin-role-pill"
@@ -605,45 +1793,72 @@ export function ServerAdminApp() {
 
                                 <button
                                   className={`server-admin-action-btn ${selectedMemberId === member.id ? "active" : ""}`}
-                                  onClick={() => setSelectedMemberId(selectedMemberId === member.id ? "" : member.id)}
+                                  onClick={() => {
+                                    setSelectedMemberId((current) => (current === member.id ? "" : member.id));
+                                    setMemberRoleDraftId("");
+                                  }}
                                 >
-                                  {selectedMemberId === member.id ? "Close role picker" : "Assign role"}
+                                  {selectedMemberId === member.id ? "Close actions" : "Manage member"}
                                 </button>
 
-                                {selectedMemberId === member.id && (
+                                {selectedMemberId === member.id ? (
                                   <div className="server-admin-member-edit">
-                                    <select value={memberRoles[0] || ""} onChange={(e) => setMemberRoles([e.target.value])}>
-                                      <option value="">Choose a role...</option>
-                                      {roles.filter((role) => !role.is_everyone).map((role) => (
-                                        <option key={role.id} value={role.id}>
-                                          {role.name}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <button className="server-admin-confirm-btn" onClick={assignRoleToMember}>
-                                      Assign
-                                    </button>
+                                    <div className="server-admin-inline-form">
+                                      <select value={memberRoleDraftId} onChange={(event) => setMemberRoleDraftId(event.target.value)}>
+                                        <option value="">Choose a role...</option>
+                                        {roles.filter((role) => !role.is_everyone).sort(compareRolesDescending).map((role) => (
+                                          <option key={role.id} value={role.id}>
+                                            {role.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <button className="server-admin-confirm-btn" onClick={() => assignRoleToMember(member.id)}>
+                                        Assign role
+                                      </button>
+                                    </div>
+
+                                    <input
+                                      value={memberModerationNotes[member.id] || ""}
+                                      onChange={(event) =>
+                                        setMemberModerationNotes((current) => ({ ...current, [member.id]: event.target.value }))
+                                      }
+                                      placeholder="Ban reason or moderation note (optional)"
+                                    />
+
+                                    <div className="server-admin-row-actions">
+                                      <button className="server-admin-action-btn danger" onClick={() => kickMember(member)}>
+                                        Kick
+                                      </button>
+                                      <button className="server-admin-action-btn danger" onClick={() => banMember(member)}>
+                                        Ban
+                                      </button>
+                                    </div>
                                   </div>
-                                )}
+                                ) : null}
                               </article>
                             );
-                          })}
-                        </div>
-                      )}
-                    </div>
+                          })
+                        )}
+                      </div>
+                    </>
                   )}
+                </div>
+              )}
 
-                  {activeTab === "roles" && (
-                    <div className="server-admin-section">
+              {activeTab === "roles" && (
+                <div className="server-admin-section">
+                  {!selectedGuildId ? (
+                    <div className="server-admin-empty">Choose a workspace to manage roles.</div>
+                  ) : (
+                    <>
                       <div className="server-admin-role-toolbar">
                         <div className="server-admin-create-role">
                           <h3>Create Role</h3>
                           <div>
                             <input
-                              type="text"
-                              placeholder="Role name"
                               value={newRoleName}
-                              onChange={(e) => setNewRoleName(e.target.value)}
+                              onChange={(event) => setNewRoleName(event.target.value)}
+                              placeholder="Role name"
                             />
                             <button onClick={createRole}>Create</button>
                           </div>
@@ -652,7 +1867,7 @@ export function ServerAdminApp() {
                           type="search"
                           placeholder="Filter roles"
                           value={roleQuery}
-                          onChange={(e) => setRoleQuery(e.target.value)}
+                          onChange={(event) => setRoleQuery(event.target.value)}
                         />
                       </div>
 
@@ -662,27 +1877,35 @@ export function ServerAdminApp() {
                             {editingRoleId === role.id ? (
                               <>
                                 <input
-                                  type="text"
                                   value={editRoleName}
-                                  onChange={(e) => setEditRoleName(e.target.value)}
+                                  onChange={(event) => setEditRoleName(event.target.value)}
+                                  placeholder="Role name"
+                                  disabled={role.is_everyone}
+                                />
+                                <input
+                                  value={editRoleColor}
+                                  onChange={(event) => setEditRoleColor(event.target.value)}
+                                  placeholder="#5865f2 (optional)"
                                   disabled={role.is_everyone}
                                 />
                                 <div className="server-admin-perm-grid">
-                                  {Object.entries(PERMISSION_FLAGS).map(([flag, { name }]) => (
+                                  {Object.entries(PERMISSION_FLAGS).map(([flag, meta]) => (
                                     <label key={flag}>
                                       <input
                                         type="checkbox"
-                                        checked={editRolePermissions[flag] || false}
-                                        onChange={(e) => setEditRolePermissions({ ...editRolePermissions, [flag]: e.target.checked })}
+                                        checked={Boolean(editRolePermissions[flag])}
+                                        onChange={(event) =>
+                                          setEditRolePermissions((current) => ({ ...current, [flag]: event.target.checked }))
+                                        }
                                         disabled={role.is_everyone}
                                       />
-                                      <span>{name}</span>
+                                      <span>{meta.name}</span>
                                     </label>
                                   ))}
                                 </div>
                                 <div className="server-admin-row-actions">
-                                  <button className="server-admin-confirm-btn" onClick={updateRolePermissions}>
-                                    Save
+                                  <button className="server-admin-confirm-btn" onClick={saveRole}>
+                                    Save role
                                   </button>
                                   <button className="server-admin-action-btn" onClick={() => setEditingRoleId("")}>
                                     Cancel
@@ -692,88 +1915,409 @@ export function ServerAdminApp() {
                             ) : (
                               <>
                                 <div className="server-admin-role-header">
-                                  <h3>{role.name}</h3>
-                                  {role.is_everyone && <span>@everyone</span>}
+                                  <div className="server-admin-role-heading">
+                                    <span className="server-admin-role-swatch" style={{ background: roleColorSwatch(role) }} />
+                                    <div>
+                                      <h3>{role.name}</h3>
+                                      <span>{role.is_everyone ? "@everyone" : `Position ${role.position}`}</span>
+                                    </div>
+                                  </div>
+                                  <span className="server-admin-role-count">{permissionCount(role.permissions)} perms</span>
                                 </div>
-                                <p>Position {role.position}</p>
-                                <p>{Object.keys(PERMISSION_FLAGS).filter((flag) => hasPermission(role.permissions, flag)).length} permissions</p>
-                                <button
-                                  className="server-admin-action-btn"
-                                  onClick={() => openRoleEditor(role)}
-                                  disabled={role.is_everyone}
-                                >
-                                  Edit permissions
-                                </button>
+                                <div className="server-admin-role-summary">
+                                  {Object.entries(PERMISSION_FLAGS)
+                                    .filter(([flag]) => hasPermission(role.permissions, flag))
+                                    .slice(0, 4)
+                                    .map(([, meta]) => (
+                                      <span key={meta.name} className="server-admin-pill-muted">
+                                        {meta.name}
+                                      </span>
+                                    ))}
+                                  {permissionCount(role.permissions) > 4 ? (
+                                    <span className="server-admin-pill-muted">+{permissionCount(role.permissions) - 4} more</span>
+                                  ) : null}
+                                </div>
+                                <div className="server-admin-row-actions">
+                                  <button className="server-admin-action-btn" onClick={() => moveRole(role, -1)} disabled={role.is_everyone}>
+                                    Up
+                                  </button>
+                                  <button className="server-admin-action-btn" onClick={() => moveRole(role, 1)} disabled={role.is_everyone}>
+                                    Down
+                                  </button>
+                                  <button className="server-admin-action-btn" onClick={() => openRoleEditor(role)} disabled={role.is_everyone}>
+                                    Edit
+                                  </button>
+                                  <button className="server-admin-action-btn danger" onClick={() => deleteRole(role)} disabled={role.is_everyone}>
+                                    Delete
+                                  </button>
+                                </div>
                               </>
                             )}
                           </article>
                         ))}
                       </div>
-                    </div>
+                    </>
                   )}
+                </div>
+              )}
 
-                  {activeTab === "admins" && (
-                    <div className="server-admin-section">
-                      <h2>Admin Roles</h2>
-                      <p className="server-admin-help">Roles with the Administrator permission are shown below.</p>
-                      <div className="server-admin-admin-list">
-                        {roles.filter((role) => hasPermission(role.permissions, "ADMINISTRATOR")).length === 0 ? (
-                          <p className="server-admin-empty-inline">No administrator roles configured.</p>
-                        ) : (
-                          roles
-                            .filter((role) => hasPermission(role.permissions, "ADMINISTRATOR"))
-                            .map((role) => (
-                              <article key={role.id} className="server-admin-admin-card">
-                                <strong>{role.name}</strong>
-                                <span>Position {role.position}</span>
-                                <button className="server-admin-action-btn" onClick={() => openRoleEditor(role)}>
-                                  Review permissions
+              {activeTab === "assets" && (
+                <div className="server-admin-section">
+                  {!selectedGuildId ? (
+                    <div className="server-admin-empty">Choose a workspace to manage assets.</div>
+                  ) : (
+                    <div className="server-admin-panel-grid">
+                      <article className="server-admin-card">
+                        <div className="server-admin-card-head">
+                          <h2>Global Emotes</h2>
+                          <p>Let this server's custom emotes work outside its own workspace.</p>
+                        </div>
+                        <div className="server-admin-toggle-row">
+                          <div>
+                            <strong>Global emote sharing</strong>
+                            <p>Requires Boost on the server owner account.</p>
+                          </div>
+                          <button
+                            className={`server-admin-action-btn ${selectedServer.globalEmotesEnabled ? "danger" : "success"}`}
+                            onClick={() => toggleGlobalEmotes(!selectedServer.globalEmotesEnabled)}
+                          >
+                            {selectedServer.globalEmotesEnabled ? "Disable" : "Enable"}
+                          </button>
+                        </div>
+                      </article>
+
+                      <article className="server-admin-card">
+                        <div className="server-admin-card-head">
+                          <h2>Create Emote</h2>
+                          <p>Upload or paste an image URL for workspace custom emotes.</p>
+                        </div>
+                        <div className="server-admin-form-grid">
+                          <label>
+                            <span>Name</span>
+                            <input
+                              value={newEmoteName}
+                              onChange={(event) => setNewEmoteName(event.target.value)}
+                              placeholder="wave"
+                            />
+                          </label>
+                          <label>
+                            <span>Image URL</span>
+                            <input
+                              value={newEmoteUrl}
+                              onChange={(event) => setNewEmoteUrl(event.target.value)}
+                              placeholder="https://..."
+                            />
+                          </label>
+                          <label className="server-admin-upload-field">
+                            <span>Upload image</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(event) =>
+                                onImageFieldUpload(event, "emote image", (imageUrl) => setNewEmoteUrl(imageUrl))
+                              }
+                            />
+                          </label>
+                        </div>
+                        <button className="server-admin-confirm-btn" onClick={createEmote}>
+                          Create emote
+                        </button>
+                      </article>
+
+                      <article className="server-admin-card server-admin-card-span-2">
+                        <div className="server-admin-card-head">
+                          <h2>Workspace Emotes</h2>
+                          <p>Review, remove, and verify custom emotes available on this workspace.</p>
+                        </div>
+
+                        <div className="server-admin-emote-grid">
+                          {emotes.length === 0 ? (
+                            <EmptyState>No custom emotes yet.</EmptyState>
+                          ) : (
+                            emotes.map((emote) => (
+                              <article key={emote.id} className="server-admin-emote-card">
+                                <div className="server-admin-emote-preview">
+                                  <img src={profileImageUrl(emote.imageUrl)} alt={emote.name} />
+                                </div>
+                                <strong>{emote.name}</strong>
+                                <span>Added {formatDateTime(emote.createdAt)}</span>
+                                <button className="server-admin-action-btn danger" onClick={() => removeEmote(emote)}>
+                                  Remove
                                 </button>
                               </article>
                             ))
-                        )}
-                      </div>
+                          )}
+                        </div>
+                      </article>
                     </div>
                   )}
+                </div>
+              )}
 
-                  {activeTab === "extensions" && (
-                    <div className="server-admin-section">
-                      <h2>Extensions</h2>
-                      <p className="server-admin-help">
-                        Enable reviewed extensions for this server node. Changes apply in realtime.
-                      </p>
+              {activeTab === "invites" && (
+                <div className="server-admin-section">
+                  <div className="server-admin-panel-grid">
+                    <article className="server-admin-card">
+                      <div className="server-admin-card-head">
+                        <h2>Create Invite</h2>
+                        <p>Create quick join links, permanent invites, or custom codes for this server.</p>
+                      </div>
+                      <div className="server-admin-form-grid">
+                        <label>
+                          <span>Custom code</span>
+                          <input
+                            value={inviteCustomCode}
+                            onChange={(event) => setInviteCustomCode(event.target.value)}
+                            placeholder="Optional"
+                          />
+                        </label>
+                        <label>
+                          <span>Max uses</span>
+                          <input
+                            value={inviteMaxUses}
+                            onChange={(event) => setInviteMaxUses(event.target.value)}
+                            placeholder="25"
+                            disabled={invitePermanent}
+                          />
+                        </label>
+                        <label>
+                          <span>Expires at</span>
+                          <input
+                            type="datetime-local"
+                            value={inviteExpiresAt}
+                            onChange={(event) => setInviteExpiresAt(event.target.value)}
+                            disabled={invitePermanent}
+                          />
+                        </label>
+                        <label className="server-admin-checkbox">
+                          <input
+                            type="checkbox"
+                            checked={invitePermanent}
+                            onChange={(event) => setInvitePermanent(event.target.checked)}
+                          />
+                          <span>Permanent invite</span>
+                        </label>
+                      </div>
+                      <button className="server-admin-confirm-btn" onClick={createInvite}>
+                        Create invite
+                      </button>
+                    </article>
 
+                    <article className="server-admin-card server-admin-card-span-2">
+                      <div className="server-admin-card-head">
+                        <h2>Active Invites</h2>
+                        <p>Track usage, copy join links, or revoke old entry points.</p>
+                      </div>
+
+                      {invitesLoading ? (
+                        <EmptyState>Loading invites...</EmptyState>
+                      ) : invites.length === 0 ? (
+                        <EmptyState>No invites created yet.</EmptyState>
+                      ) : (
+                        <div className="server-admin-invite-list">
+                          {invites.map((invite) => (
+                            <article key={invite.code} className="server-admin-invite-card">
+                              <div>
+                                <strong>{invite.code}</strong>
+                                <p>
+                                  {invite.permanent ? "Permanent" : `Uses ${invite.uses}${invite.maxUses ? ` / ${invite.maxUses}` : ""}`}
+                                  {" · "}
+                                  {invite.expiresAt ? `Expires ${formatDateTime(invite.expiresAt)}` : "No expiry"}
+                                </p>
+                                <code>{invite.joinUrl}</code>
+                              </div>
+                              <div className="server-admin-row-actions">
+                                <button className="server-admin-action-btn" onClick={() => copyInvite(invite.joinUrl)}>
+                                  Copy link
+                                </button>
+                                <button className="server-admin-action-btn danger" onClick={() => deleteInvite(invite.code)}>
+                                  Delete
+                                </button>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === "extensions" && (
+                <div className="server-admin-section">
+                  <article className="server-admin-card">
+                    <div className="server-admin-card-head">
+                      <h2>Server Extensions</h2>
+                      <p>Enable approved extensions and edit their live server config.</p>
+                    </div>
+
+                    {extensionsLoading ? (
+                      <EmptyState>Loading extensions...</EmptyState>
+                    ) : extensionCatalog.serverExtensions.length === 0 ? (
+                      <EmptyState>No server extensions found in the catalog.</EmptyState>
+                    ) : (
                       <div className="server-admin-extension-list">
-                        {extensionsLoading ? (
-                          <p className="server-admin-empty-inline">Loading installed extension state...</p>
-                        ) : extensionCatalog.serverExtensions.length === 0 ? (
-                          <p className="server-admin-empty-inline">No server extensions found in <code>Extensions/Server</code>.</p>
-                        ) : (
-                          extensionCatalog.serverExtensions.map((ext) => {
-                            const enabled = isExtensionEnabled(ext.id);
-                            return (
-                              <article key={ext.id} className="server-admin-extension-card">
+                        {extensionCatalog.serverExtensions.map((extension) => {
+                          const enabled = isExtensionEnabled(extension.id);
+                          const draft = extensionConfigDrafts[extension.id];
+                          return (
+                            <article key={extension.id} className="server-admin-extension-card server-admin-extension-card-stacked">
+                              <div className="server-admin-extension-head">
                                 <div>
-                                  <strong>{ext.name}</strong>
-                                  <p>{ext.description || "No description available."}</p>
-                                  <code>{ext.id}</code>
+                                  <strong>{extension.name}</strong>
+                                  <p>{extension.description || "No description provided."}</p>
+                                  <code>{extension.id}</code>
                                 </div>
-                                <button
-                                  className={`server-admin-action-btn ${enabled ? "danger" : "success"}`}
-                                  onClick={() => toggleExtension(ext.id, !enabled)}
-                                >
-                                  {enabled ? "Disable" : "Enable"}
+                                <div className="server-admin-row-actions">
+                                  <button
+                                    className={`server-admin-action-btn ${enabled ? "danger" : "success"}`}
+                                    onClick={() => toggleExtension(extension.id, !enabled)}
+                                  >
+                                    {enabled ? "Disable" : "Enable"}
+                                  </button>
+                                  <button
+                                    className="server-admin-action-btn"
+                                    onClick={() => loadExtensionConfig(extension.id)}
+                                  >
+                                    {extensionConfigLoadingId === extension.id ? "Loading..." : "Config"}
+                                  </button>
+                                </div>
+                              </div>
+
+                              {selectedExtensionId === extension.id ? (
+                                <div className="server-admin-extension-config">
+                                  <textarea
+                                    className="server-admin-json-editor"
+                                    value={
+                                      draft
+                                      ?? JSON.stringify(extension.configDefaults || {}, null, 2)
+                                    }
+                                    onChange={(event) =>
+                                      setExtensionConfigDrafts((current) => ({
+                                        ...current,
+                                        [extension.id]: event.target.value,
+                                      }))
+                                    }
+                                    rows={14}
+                                  />
+                                  <div className="server-admin-row-actions">
+                                    <button className="server-admin-confirm-btn" onClick={() => saveExtensionConfig(extension.id)}>
+                                      Save config
+                                    </button>
+                                    <button className="server-admin-action-btn" onClick={() => setSelectedExtensionId("")}>
+                                      Close
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </article>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </article>
+                </div>
+              )}
+
+              {activeTab === "moderation" && (
+                <div className="server-admin-section">
+                  {!selectedGuildId ? (
+                    <div className="server-admin-empty">Choose a workspace to review moderation controls.</div>
+                  ) : (
+                    <div className="server-admin-panel-grid">
+                      <article className="server-admin-card">
+                        <div className="server-admin-card-head">
+                          <h2>Voice Moderation</h2>
+                          <p>Mute, deafen, or disconnect members currently in voice channels.</p>
+                        </div>
+                        {voiceStates.length === 0 ? (
+                          <EmptyState>No one is currently connected to voice.</EmptyState>
+                        ) : (
+                          <div className="server-admin-voice-list">
+                            {voiceStates.map((voiceState) => (
+                              <article key={`${voiceState.userId}:${voiceState.channelId}`} className="server-admin-voice-card">
+                                <div>
+                                  <strong>{voiceState.username}</strong>
+                                  <p>{voiceChannelMap.get(voiceState.channelId)?.name || voiceState.channelId}</p>
+                                  <span>{voiceState.muted ? "Muted" : "Unmuted"} · {voiceState.deafened ? "Deafened" : "Hearing"}</span>
+                                </div>
+                                <div className="server-admin-row-actions">
+                                  <button
+                                    className="server-admin-action-btn"
+                                    onClick={() => updateVoiceMember(voiceState.channelId, voiceState.userId, { muted: !voiceState.muted })}
+                                  >
+                                    {voiceState.muted ? "Unmute" : "Mute"}
+                                  </button>
+                                  <button
+                                    className="server-admin-action-btn"
+                                    onClick={() => updateVoiceMember(voiceState.channelId, voiceState.userId, { deafened: !voiceState.deafened })}
+                                  >
+                                    {voiceState.deafened ? "Undeafen" : "Deafen"}
+                                  </button>
+                                  <button
+                                    className="server-admin-action-btn danger"
+                                    onClick={() => disconnectVoiceMember(voiceState.channelId, voiceState.userId)}
+                                  >
+                                    Disconnect
+                                  </button>
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        )}
+                      </article>
+
+                      <article className="server-admin-card">
+                        <div className="server-admin-card-head">
+                          <h2>Banned Users</h2>
+                          <p>Review bans on this workspace and reverse them when needed.</p>
+                        </div>
+                        {bansLoading ? (
+                          <EmptyState>Loading bans...</EmptyState>
+                        ) : bans.length === 0 ? (
+                          <EmptyState>No banned users on this workspace.</EmptyState>
+                        ) : (
+                          <div className="server-admin-ban-list">
+                            {bans.map((ban) => (
+                              <article key={ban.userId} className="server-admin-ban-card">
+                                <div className="server-admin-member-head">
+                                  <SafeAvatar
+                                    src={profileImageUrl(ban.pfp_url)}
+                                    alt={ban.username}
+                                    name={ban.username}
+                                    seed={ban.userId}
+                                    className="server-admin-member-fallback"
+                                    imgStyle={{
+                                      width: "100%",
+                                      height: "100%",
+                                      objectFit: "cover",
+                                      display: "block",
+                                    }}
+                                  />
+                                  <div>
+                                    <strong>{ban.displayName || ban.username}</strong>
+                                    <p>{ban.username} · {ban.userId}</p>
+                                  </div>
+                                </div>
+                                <p className="server-admin-note">
+                                  {ban.reason || "No reason recorded."}
+                                </p>
+                                <span className="server-admin-meta-line">
+                                  Banned by {ban.bannedByUsername} on {formatDateTime(ban.createdAt)}
+                                </span>
+                                <button className="server-admin-action-btn success" onClick={() => unbanMember(ban.userId)}>
+                                  Unban
                                 </button>
                               </article>
-                            );
-                          })
+                            ))}
+                          </div>
                         )}
-                      </div>
+                      </article>
                     </div>
                   )}
-                </section>
-              </>
-            )}
+                </div>
+              )}
+            </section>
           </>
         )}
       </main>

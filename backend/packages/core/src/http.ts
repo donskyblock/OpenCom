@@ -5,6 +5,7 @@ import multipart from "@fastify/multipart";
 import rateLimit from "@fastify/rate-limit";
 import { ZodError } from "zod";
 import { env } from "./env.js";
+import { beginTrackedRequest, recordTrackedRequest } from "./adminStats.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -34,7 +35,20 @@ export function buildHttp() {
 
   app.register(jwt, { secret: env.CORE_JWT_ACCESS_SECRET });
 
+  app.addHook("onRequest", async (req) => {
+    (req as any)._trackedRequestStartNs = beginTrackedRequest();
+  });
+
   app.addHook("onResponse", async (req, rep) => {
+    const startNs = (req as any)._trackedRequestStartNs;
+    if (typeof startNs === "bigint") {
+      recordTrackedRequest({
+        startNs,
+        method: req.method,
+        route: String((req as any).routeOptions?.url || String(req.url || "").split("?")[0] || "/unknown"),
+        statusCode: rep.statusCode,
+      });
+    }
     if (rep.statusCode >= 500) {
       writeCoreLogLine(`[${new Date().toISOString()}] [ERROR] [core-http] ${req.method} ${req.url} -> ${rep.statusCode}`);
       return;

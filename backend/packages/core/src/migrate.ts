@@ -6,6 +6,17 @@ import { q, pool } from "./db.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+async function assertExpectedDatabase(expectedDatabase: string) {
+  const rows = await q<{ name: string | null }>(`SELECT DATABASE() AS name`);
+  const currentDatabase = rows[0]?.name ?? null;
+
+  if (currentDatabase !== expectedDatabase) {
+    throw new Error(
+      `Refusing to run core migrations against ${currentDatabase ?? "<none>"}; expected ${expectedDatabase}. Check CORE_DATABASE_URL.`,
+    );
+  }
+}
+
 function splitSqlStatements(sql: string): string[] {
   const statements: string[] = [];
   let current = "";
@@ -70,6 +81,7 @@ function splitSqlStatements(sql: string): string[] {
 }
 
 async function main() {
+  await assertExpectedDatabase("ods_core");
   await q(`CREATE TABLE IF NOT EXISTS schema_migrations (id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci PRIMARY KEY, ran_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci`);
 
   const sqlDir = path.join(__dirname, "sql");

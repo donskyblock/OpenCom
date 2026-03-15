@@ -11,6 +11,7 @@ export function FriendsSurface({
   filteredFriends,
   getPresence,
   presenceLabel,
+  getActivitySummary,
   renderPresenceAvatar,
   openDmFromFriend,
   openMemberProfile,
@@ -19,6 +20,32 @@ export function FriendsSurface({
     friendView === "online"
       ? filteredFriends.filter((friend) => getPresence(friend.id) !== "offline")
       : filteredFriends;
+
+  function getFriendPrimaryLabel(friend) {
+    return friend.displayName || friend.username || "Unknown user";
+  }
+
+  function truncateLabel(value, maxLength = 60) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    if (text.length <= maxLength) return text;
+    return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+  }
+
+  function getFriendSecondaryLabel(friend, maxLength = 60) {
+    const activityLabel = getActivitySummary(friend.id, {
+      fallback: presenceLabel(getPresence(friend.id)),
+      maxLength,
+    });
+    const hasDisplayName =
+      friend.displayName &&
+      friend.username &&
+      friend.displayName !== friend.username;
+    if (hasDisplayName) {
+      return truncateLabel(`@${friend.username} · ${activityLabel}`, maxLength);
+    }
+    return truncateLabel(activityLabel, maxLength);
+  }
 
   return (
     <div className="friends-surface">
@@ -118,65 +145,73 @@ export function FriendsSurface({
           </div>
         )}
 
-        {visibleFriends.map((friend) => (
-          <div key={friend.id} className="friend-row">
-            <div className="friend-row-main">
-              {renderPresenceAvatar({
-                userId: friend.id,
-                username: friend.username,
-                pfpUrl: friend.pfp_url,
-                size: 32,
-              })}
-              <div className="friend-meta">
-                <strong>{friend.username}</strong>
-                <span>{presenceLabel(getPresence(friend.id))}</span>
+        {visibleFriends.map((friend) => {
+          const primaryLabel = getFriendPrimaryLabel(friend);
+          const secondaryLabel = getFriendSecondaryLabel(friend);
+          return (
+            <div key={friend.id} className="friend-row">
+              <div className="friend-row-main">
+                {renderPresenceAvatar({
+                  userId: friend.id,
+                  username: primaryLabel,
+                  pfpUrl: friend.pfp_url,
+                  size: 32,
+                })}
+                <div className="friend-meta">
+                  <strong>{primaryLabel}</strong>
+                  <span title={secondaryLabel}>
+                    {secondaryLabel}
+                  </span>
+                </div>
               </div>
+              <button
+                className="ghost"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openDmFromFriend(friend);
+                }}
+              >
+                Message
+              </button>
             </div>
-            <button
-              className="ghost"
-              onClick={(event) => {
-                event.stopPropagation();
-                openDmFromFriend(friend);
-              }}
-            >
-              Message
-            </button>
-          </div>
-        ))}
+          );
+        })}
       </section>
 
       <aside className="active-now">
         <h4>Active Now</h4>
-        {filteredFriends.slice(0, 5).map((friend) => (
-          <button
-            key={`active-${friend.id}`}
-            className="active-card"
-            onClick={(event) => {
-              event.stopPropagation();
-              openMemberProfile(friend, {
-                x: event.clientX,
-                y: event.clientY,
-              });
-            }}
-          >
-            <div className="friend-row-main">
-              {renderPresenceAvatar({
-                userId: friend.id,
-                username: friend.username,
-                pfpUrl: friend.pfp_url,
-                size: 30,
-              })}
-              <div className="friend-meta">
-                <strong>{friend.username}</strong>
-                <span>
-                  {getPresence(friend.id) === "online"
-                    ? "Available now"
-                    : presenceLabel(getPresence(friend.id))}
-                </span>
-              </div>
-            </div>
-          </button>
-        ))}
+        {filteredFriends.slice(0, 5).map((friend) => {
+          const primaryLabel = getFriendPrimaryLabel(friend);
+          const secondaryLabel = getFriendSecondaryLabel(friend, 48);
+          return (
+            <button
+              key={`active-${friend.id}`}
+              className="active-card"
+              onClick={(event) => {
+                event.stopPropagation();
+                openMemberProfile(friend, {
+                  x: event.clientX,
+                  y: event.clientY,
+                });
+              }}
+            >
+                <div className="friend-row-main">
+                  {renderPresenceAvatar({
+                    userId: friend.id,
+                    username: primaryLabel,
+                    pfpUrl: friend.pfp_url,
+                    size: 30,
+                  })}
+                  <div className="friend-meta">
+                    <strong>{primaryLabel}</strong>
+                    <span title={secondaryLabel}>
+                      {secondaryLabel}
+                    </span>
+                  </div>
+                </div>
+            </button>
+          );
+        })}
         {!filteredFriends.length && (
           <p className="hint">When friends are active, they will appear here.</p>
         )}

@@ -122,6 +122,60 @@ export async function privateCallChannelRoutes(app: FastifyInstance) {
     return rep.code(201).send({ channelId, guildId });
   });
 
+  // ── STATUS ─────────────────────────────────────────────────────────────────
+
+  app.get(
+    "/v1/internal/private-call-channel/:channelId/status",
+    async (req: any, rep) => {
+      if (!checkSecret(req, rep)) return;
+
+      const paramsParsed = DeleteParams.safeParse(req.params || {});
+      if (!paramsParsed.success) {
+        return rep.code(400).send({ error: "INVALID_PARAMS" });
+      }
+
+      const { channelId } = paramsParsed.data;
+
+      const channels = await q<{ id: string; guild_id: string; is_system: number }>(
+        `SELECT c.id, c.guild_id, g.is_system
+         FROM channels c
+         JOIN guilds g ON g.id = c.guild_id
+         WHERE c.id = :channelId
+         LIMIT 1`,
+        { channelId }
+      );
+
+      if (!channels.length) {
+        return rep.code(404).send({ error: "CHANNEL_NOT_FOUND" });
+      }
+
+      if (!channels[0].is_system) {
+        return rep.code(403).send({ error: "NOT_A_SYSTEM_CHANNEL" });
+      }
+
+      const guildId = channels[0].guild_id;
+      const voiceStates = await q<{ user_id: string; updated_at: string }>(
+        `SELECT user_id, updated_at
+         FROM voice_states
+         WHERE guild_id = :guildId
+           AND channel_id = :channelId
+         ORDER BY updated_at DESC`,
+        { guildId, channelId }
+      );
+
+      return rep.send({
+        ok: true,
+        guildId,
+        channelId,
+        connectedUserIds: voiceStates.map((row) => row.user_id),
+        voiceStates: voiceStates.map((row) => ({
+          userId: row.user_id,
+          updatedAt: new Date(row.updated_at).toISOString()
+        }))
+      });
+    }
+  );
+
   // ── MARK SYSTEM GUILD ──────────────────────────────────────────────────────
   //
   // Used once by the setup script to flag the private-calls guild as a system

@@ -28,6 +28,47 @@ load_backend_env() {
   set +a
 }
 
+CORE_PID=""
+NODE_PID=""
+FE_PID=""
+
+cleanup() {
+  local pids=()
+  [[ -n "$CORE_PID" ]] && pids+=("$CORE_PID")
+  [[ -n "$NODE_PID" ]] && pids+=("$NODE_PID")
+  [[ -n "$FE_PID" ]] && pids+=("$FE_PID")
+  if ((${#pids[@]})); then
+    kill "${pids[@]}" 2>/dev/null || true
+  fi
+}
+
+wait_for_core_health() {
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "[warn] curl not found; starting node without waiting for core health."
+    return 0
+  fi
+
+  local core_base_url="${CORE_BASE_URL:-http://127.0.0.1:3001}"
+  local health_url="${core_base_url%/}/health"
+  local attempt=0
+  local max_attempts=120
+
+  echo "[wait] Waiting for core API at $health_url"
+  until curl -fsS --max-time 2 "$health_url" >/dev/null 2>&1; do
+    attempt=$((attempt + 1))
+    if [[ -n "$CORE_PID" ]] && ! kill -0 "$CORE_PID" 2>/dev/null; then
+      echo "[warn] Core process exited before becoming healthy."
+      return 0
+    fi
+    if ((attempt >= max_attempts)); then
+      echo "[warn] Core health check timed out; starting node anyway."
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "[ready] Core API is responding."
+}
+
 start_core() {
   echo "[start] Core API"
   pushd "$ROOT_DIR/backend" >/dev/null
@@ -67,9 +108,10 @@ case "$TARGET" in
     pushd "$ROOT_DIR/backend" >/dev/null
     npm run dev:core &
     CORE_PID=$!
+    trap cleanup EXIT INT TERM
+    wait_for_core_health
     npm run dev:node &
     NODE_PID=$!
-    trap 'kill $CORE_PID $NODE_PID 2>/dev/null || true' EXIT INT TERM
     wait
     ;;
   all)
@@ -79,8 +121,6 @@ case "$TARGET" in
     pushd "$ROOT_DIR/backend" >/dev/null
     npm run dev:core &
     CORE_PID=$!
-    npm run dev:node &
-    NODE_PID=$!
     popd >/dev/null
 
     pushd "$ROOT_DIR/frontend" >/dev/null
@@ -88,7 +128,14 @@ case "$TARGET" in
     FE_PID=$!
     popd >/dev/null
 
-    trap 'kill $CORE_PID $NODE_PID $FE_PID 2>/dev/null || true' EXIT INT TERM
+    trap cleanup EXIT INT TERM
+    wait_for_core_health
+
+    pushd "$ROOT_DIR/backend" >/dev/null
+    npm run dev:node &
+    NODE_PID=$!
+    popd >/dev/null
+
     wait
     ;;
   -h|--help|help)

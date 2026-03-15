@@ -72,6 +72,32 @@ function resolveNodeBaseUrl(baseUrl: string): string {
   return normalized;
 }
 
+async function resolveVoiceProxyBaseUrl(
+  coreServerId: string,
+  nodeServerId: string
+): Promise<string> {
+  if (coreServerId) {
+    const rows = await q<{ base_url: string }>(
+      `SELECT base_url FROM servers WHERE id=:serverId LIMIT 1`,
+      { serverId: coreServerId }
+    );
+    const resolved = resolveNodeBaseUrl(rows[0]?.base_url || "");
+    if (resolved) return resolved;
+  }
+
+  const officialNodeServerId = String(env.OFFICIAL_NODE_SERVER_ID || "").trim();
+  const officialNodeBaseUrl = resolveNodeBaseUrl(env.OFFICIAL_NODE_BASE_URL || "");
+  if (
+    officialNodeBaseUrl &&
+    officialNodeServerId &&
+    (coreServerId === officialNodeServerId || nodeServerId === officialNodeServerId)
+  ) {
+    return officialNodeBaseUrl;
+  }
+
+  return "";
+}
+
 export function attachCoreGateway(app: FastifyInstance, redis: { pub: any; sub: any }) {
   const wss = new WebSocketServer({ noServer: true });
   const HEARTBEAT_TIMEOUT_MS = 90_000;
@@ -288,12 +314,10 @@ export function attachCoreGateway(app: FastifyInstance, redis: { pub: any; sub: 
 
             if (!userId || !nodeServerId || !coreServerId) throw new Error("INVALID_MEMBERSHIP");
 
-            const rows = await q<{ base_url: string }>(
-              `SELECT base_url FROM servers WHERE id=:serverId LIMIT 1`,
-              { serverId: coreServerId }
+            const resolvedNodeBaseUrl = await resolveVoiceProxyBaseUrl(
+              coreServerId,
+              nodeServerId
             );
-            if (!rows.length || !rows[0].base_url) throw new Error("SERVER_NOT_FOUND");
-            const resolvedNodeBaseUrl = resolveNodeBaseUrl(rows[0].base_url);
             if (!resolvedNodeBaseUrl) throw new Error("SERVER_NODE_UNAVAILABLE");
             const upstreamUrl = nodeGatewayUrl(resolvedNodeBaseUrl);
 
