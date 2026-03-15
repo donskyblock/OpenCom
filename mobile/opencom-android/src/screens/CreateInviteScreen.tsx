@@ -11,6 +11,13 @@ import {
   TextInput,
   View,
 } from "react-native";
+import {
+  EmptyState,
+  ScreenBackground,
+  StatusBanner,
+  SurfaceCard,
+  TopBar,
+} from "../components/chrome";
 import { useAuth } from "../context/AuthContext";
 import type { CoreServer, Invite } from "../types";
 import { colors, radii, spacing, typography } from "../theme";
@@ -213,25 +220,16 @@ export function CreateInviteScreen({ server, onBack }: CreateInviteScreenProps) 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Pressable onPress={onBack} style={styles.backBtn} hitSlop={8}>
-          <Text style={styles.backText}>←</Text>
-        </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          Invites — {server.name}
-        </Text>
-      </View>
+    <ScreenBackground>
+      <TopBar title="Invites" subtitle={server.name} onBack={onBack} />
 
       <FlatList
         data={invites}
-        keyExtractor={(i) => i.code}
+        keyExtractor={(invite) => invite.code}
         contentContainerStyle={styles.listContent}
         ListHeaderComponent={
           <>
-            {/* Create invite form */}
-            <View style={styles.formCard}>
+            <SurfaceCard style={styles.formCard}>
               <Text style={styles.formTitle}>Create Invite</Text>
 
               <Text style={styles.label}>Custom code (optional)</Text>
@@ -274,14 +272,11 @@ export function CreateInviteScreen({ server, onBack }: CreateInviteScreenProps) 
                 {creating ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
-                  <Text style={styles.createBtnText}>🔗  Create Invite</Text>
+                  <Text style={styles.createBtnText}>Create Invite</Text>
                 )}
               </Pressable>
+            </SurfaceCard>
 
-              {!!status && <Text style={styles.statusText}>{status}</Text>}
-            </View>
-
-            {/* Section title */}
             {invites.length > 0 || loading ? (
               <Text style={styles.sectionTitle}>Active Invites</Text>
             ) : null}
@@ -293,12 +288,13 @@ export function CreateInviteScreen({ server, onBack }: CreateInviteScreenProps) 
               <ActivityIndicator size="large" color={colors.brand} />
             </View>
           ) : (
-            <View style={styles.emptyBox}>
-              <Text style={styles.emptyIcon}>🔗</Text>
-              <Text style={styles.emptyText}>No active invites</Text>
-              <Text style={styles.emptyHint}>
-                Create an invite above to let others join {server.name}.
-              </Text>
+            <View style={styles.emptyWrap}>
+              <EmptyState
+                eyebrow="INVITES"
+                icon="🔗"
+                title="No active invites"
+                hint={`Create an invite above to let others join ${server.name}.`}
+              />
             </View>
           )
         }
@@ -307,45 +303,24 @@ export function CreateInviteScreen({ server, onBack }: CreateInviteScreenProps) 
         )}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
       />
-    </View>
+
+      {status ? <StatusBanner text={status} onDismiss={() => setStatus("")} /> : null}
+    </ScreenBackground>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-
-  // Header
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.sidebar,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    gap: spacing.sm,
-  },
-  backBtn: { padding: spacing.xs },
-  backText: { fontSize: 22, color: colors.text },
-  headerTitle: { ...typography.heading, color: colors.text, flex: 1 },
-
   // List
   listContent: {
-    padding: spacing.md,
+    paddingHorizontal: spacing.md,
     paddingBottom: spacing.xl,
-    gap: spacing.md,
   },
   separator: { height: spacing.sm },
 
   // Form card
   formCard: {
-    backgroundColor: colors.sidebar,
-    borderRadius: radii.lg,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
     gap: spacing.md,
     marginBottom: spacing.md,
   },
@@ -391,12 +366,6 @@ const styles = StyleSheet.create({
   createBtnDisabled: { opacity: 0.6 },
   createBtnPressed: { opacity: 0.85 },
   createBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
-  statusText: {
-    ...typography.caption,
-    color: colors.textDim,
-    textAlign: "center",
-  },
-
   // Section title
   sectionTitle: {
     ...typography.heading,
@@ -461,6 +430,9 @@ const styles = StyleSheet.create({
   centered: {
     paddingVertical: spacing.xl,
     alignItems: "center",
+  },
+  emptyWrap: {
+    paddingTop: spacing.md,
   },
   emptyBox: {
     alignItems: "center",

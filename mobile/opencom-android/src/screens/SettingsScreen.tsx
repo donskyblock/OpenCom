@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { useAuth } from "../context/AuthContext";
 import { Avatar } from "../components/Avatar";
+import { ScreenBackground, SurfaceCard, TopBar } from "../components/chrome";
 import type { UserStatus } from "../types";
 import { colors, radii, spacing, typography } from "../theme";
 
@@ -217,24 +218,25 @@ function TabBar({
 
 const tabStyles = StyleSheet.create({
   bar: {
-    backgroundColor: colors.sidebar,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    marginHorizontal: spacing.md,
   },
   container: {
     flexDirection: "row",
-    paddingHorizontal: spacing.md,
+    padding: spacing.xs,
     gap: spacing.xs,
+    borderRadius: radii.full,
+    backgroundColor: colors.sidebarStrong,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   tab: {
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
-    borderBottomWidth: 2,
-    borderBottomColor: "transparent",
+    borderRadius: radii.full,
   },
-  tabActive: { borderBottomColor: colors.brand },
+  tabActive: { backgroundColor: colors.active },
   tabText: { ...typography.body, color: colors.textDim, fontWeight: "600" },
-  tabTextActive: { color: colors.brand },
+  tabTextActive: { color: colors.text },
 });
 
 // ─── Profile tab ──────────────────────────────────────────────────────────────
@@ -848,52 +850,52 @@ export function SettingsScreen({ onLogout }: SettingsScreenProps) {
   const statusOpt = STATUS_OPTIONS.find((o) => o.value === selfStatus);
 
   return (
-    <View style={styles.container}>
-      {/* Compact header */}
-      <View style={styles.header}>
-        <Avatar
-          username={myProfile?.displayName ?? me?.username}
-          pfpUrl={myProfile?.pfp_url}
-          size={40}
-          status={selfStatus}
-          showStatus
-        />
-        <View style={styles.headerInfo}>
-          <Text style={styles.headerName} numberOfLines={1}>
-            {myProfile?.displayName ?? me?.username ?? "Account"}
-          </Text>
-          <Text style={styles.headerStatus} numberOfLines={1}>
-            {statusOpt?.emoji ?? "🟢"} {statusOpt?.label ?? "Online"}
-          </Text>
-        </View>
+    <ScreenBackground>
+      <TopBar title="Settings" subtitle="Profile, presence, security, and sessions" />
+      <View style={styles.container}>
+        <SurfaceCard style={styles.headerCard}>
+          <Avatar
+            username={myProfile?.displayName ?? me?.username}
+            pfpUrl={myProfile?.pfp_url}
+            size={44}
+            status={selfStatus}
+            showStatus
+          />
+          <View style={styles.headerInfo}>
+            <Text style={styles.headerName} numberOfLines={1}>
+              {myProfile?.displayName ?? me?.username ?? "Account"}
+            </Text>
+            <Text style={styles.headerStatus} numberOfLines={1}>
+              {statusOpt?.emoji ?? "🟢"} {statusOpt?.label ?? "Online"}
+            </Text>
+          </View>
+        </SurfaceCard>
+
+        <TabBar active={activeTab} onChange={setActiveTab} />
+
+        {activeTab === "profile" && <ProfileTab />}
+        {activeTab === "status" && <StatusTab />}
+        {activeTab === "account" && <AccountTab onLogout={onLogout} />}
+        {activeTab === "sessions" && <SessionsTab />}
       </View>
-
-      {/* Tab bar */}
-      <TabBar active={activeTab} onChange={setActiveTab} />
-
-      {/* Tab content */}
-      {activeTab === "profile" && <ProfileTab />}
-      {activeTab === "status" && <StatusTab />}
-      {activeTab === "account" && <AccountTab onLogout={onLogout} />}
-      {activeTab === "sessions" && <SessionsTab />}
-    </View>
+    </ScreenBackground>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
+  container: {
+    flex: 1,
+    gap: spacing.sm,
+  },
 
   // Header
-  header: {
+  headerCard: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
-    backgroundColor: colors.sidebar,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    marginHorizontal: spacing.md,
     gap: spacing.md,
   },
   headerInfo: { flex: 1, minWidth: 0, gap: 2 },

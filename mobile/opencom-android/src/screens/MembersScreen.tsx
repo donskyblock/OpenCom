@@ -11,6 +11,13 @@ import {
   Text,
   View,
 } from "react-native";
+import {
+  EmptyState,
+  ScreenBackground,
+  StatusBanner,
+  SurfaceCard,
+  TopBar,
+} from "../components/chrome";
 import { useAuth } from "../context/AuthContext";
 import { Avatar } from "../components/Avatar";
 import type { CoreServer, Guild, GuildMember, Role } from "../types";
@@ -328,17 +335,13 @@ export function MembersScreen({
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Pressable onPress={onBack} style={styles.backBtn} hitSlop={8}>
-          <Text style={styles.backText}>←</Text>
-        </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          Members — {guild.name}
-        </Text>
-        <Text style={styles.headerCount}>{members.length}</Text>
-      </View>
+    <ScreenBackground>
+      <TopBar
+        title="Members"
+        subtitle={`${members.length} people in ${guild.name}`}
+        onBack={onBack}
+        right={<Text style={styles.headerCount}>{members.length}</Text>}
+      />
 
       {loading ? (
         <View style={styles.centered}>
@@ -347,7 +350,7 @@ export function MembersScreen({
       ) : (
         <FlatList
           data={rows}
-          keyExtractor={(row, i) =>
+          keyExtractor={(row) =>
             row.kind === "header"
               ? `header-${row.role?.id ?? "none"}`
               : `member-${row.member.id}`
@@ -360,13 +363,24 @@ export function MembersScreen({
               colors={[colors.brand]}
             />
           }
-          contentContainerStyle={
-            rows.length === 0 ? styles.listContent : styles.listContent
+          contentContainerStyle={styles.listContent}
+          ListHeaderComponent={
+            <SurfaceCard style={styles.summaryCard}>
+              <Text style={styles.summaryTitle}>{guild.name}</Text>
+              <Text style={styles.summaryText}>
+                Browse the guild roster by role, then message or moderate members
+                with a long-press.
+              </Text>
+            </SurfaceCard>
           }
           ListEmptyComponent={
-            <View style={styles.emptyBox}>
-              <Text style={styles.emptyIcon}>👥</Text>
-              <Text style={styles.emptyText}>No members found</Text>
+            <View style={styles.emptyWrap}>
+              <EmptyState
+                eyebrow="MEMBERS"
+                icon="👥"
+                title="No members found"
+                hint="Members will appear here once the guild data loads."
+              />
             </View>
           }
           renderItem={({ item: row }) => {
@@ -376,10 +390,8 @@ export function MembersScreen({
 
             const { member } = row;
             const presence = presenceByUserId[member.id];
-
-            // Find highest role to get color
             const memberRoles = roles
-              .filter((r) => member.roleIds?.includes(r.id))
+              .filter((role) => member.roleIds?.includes(role.id))
               .sort((a, b) => b.position - a.position);
             const topRole = memberRoles[0];
             const roleColor = topRole?.color ?? null;
@@ -403,38 +415,18 @@ export function MembersScreen({
         />
       )}
 
-      {!!status && (
-        <View style={styles.statusBar}>
-          <Text style={styles.statusText}>{status}</Text>
-        </View>
-      )}
-    </View>
+      {status ? <StatusBanner text={status} onDismiss={() => setStatus("")} /> : null}
+    </ScreenBackground>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-
-  // Header
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.sidebar,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    gap: spacing.sm,
-  },
-  backBtn: { padding: spacing.xs },
-  backText: { fontSize: 22, color: colors.text },
-  headerTitle: { ...typography.heading, color: colors.text, flex: 1 },
   headerCount: {
     ...typography.caption,
-    color: colors.textDim,
-    backgroundColor: colors.elev,
+    color: colors.textSoft,
+    backgroundColor: colors.panelAlt,
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
     borderRadius: radii.full,
@@ -444,14 +436,24 @@ const styles = StyleSheet.create({
 
   // List
   listContent: {
-    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
     paddingBottom: spacing.xl,
+    gap: spacing.sm,
   },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingVertical: spacing.xl * 2,
+  summaryCard: {
+    gap: spacing.xs,
+  },
+  summaryTitle: {
+    ...typography.title,
+    color: colors.text,
+  },
+  summaryText: {
+    ...typography.body,
+    color: colors.textDim,
+    lineHeight: 22,
+  },
+  emptyWrap: {
+    paddingTop: spacing.sm,
   },
   centered: {
     flex: 1,
@@ -530,17 +532,4 @@ const styles = StyleSheet.create({
   },
   emptyIcon: { fontSize: 48 },
   emptyText: { ...typography.heading, color: colors.textDim },
-
-  // Status bar
-  statusBar: {
-    padding: spacing.md,
-    backgroundColor: colors.elev,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    alignItems: "center",
-  },
-  statusText: {
-    ...typography.caption,
-    color: colors.textDim,
-  },
 });

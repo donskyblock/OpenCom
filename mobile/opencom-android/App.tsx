@@ -9,6 +9,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider, useAuth } from "./src/context/AuthContext";
 import { useCoreGateway, httpToCoreGatewayWs } from "./src/hooks/useGateway";
+import { AppTabBar } from "./src/components/chrome";
 
 import { AuthScreen } from "./src/screens/AuthScreen";
 import { ServersScreen } from "./src/screens/ServersScreen";
@@ -134,17 +135,12 @@ function TabProfile({ navigation }: { navigation: any }) {
 function MainTabs() {
   return (
     <Tab.Navigator
+      tabBar={(props) => <AppTabBar {...props} />}
       screenOptions={{
-        headerStyle: { backgroundColor: colors.sidebar },
-        headerTintColor: colors.text,
-        headerShadowVisible: false,
-        tabBarStyle: {
-          backgroundColor: colors.rail,
-          borderTopColor: colors.border,
+        headerShown: false,
+        sceneStyle: {
+          backgroundColor: "transparent",
         },
-        tabBarActiveTintColor: colors.brand,
-        tabBarInactiveTintColor: colors.textDim,
-        tabBarLabelStyle: { fontSize: 12, fontWeight: "600" },
       }}
     >
       <Tab.Screen

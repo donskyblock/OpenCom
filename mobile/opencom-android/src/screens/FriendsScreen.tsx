@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -10,20 +10,29 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useAuth } from "../context/AuthContext";
 import { Avatar } from "../components/Avatar";
-import type { Friend } from "../types";
+import {
+  EmptyState,
+  ScreenBackground,
+  SectionLabel,
+  SegmentedControl,
+  StatusBanner,
+  SurfaceCard,
+  TopBar,
+} from "../components/chrome";
+import { useAuth } from "../context/AuthContext";
 import { colors, radii, spacing, typography } from "../theme";
+import type { Friend } from "../types";
 
 type FriendsScreenProps = {
   onOpenDm: (friend: Friend) => void;
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+type FriendView = "online" | "all" | "add" | "requests";
 
 const STATUS_COLORS: Record<string, string> = {
   online: colors.success,
-  idle: "#f0b429",
+  idle: colors.warning,
   dnd: colors.danger,
   offline: colors.textDim,
   invisible: colors.textDim,
@@ -37,159 +46,137 @@ const STATUS_LABELS: Record<string, string> = {
   invisible: "Invisible",
 };
 
-// ─── Section header ───────────────────────────────────────────────────────────
-
-function SectionHeader({ title, count }: { title: string; count: number }) {
-  return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>
-        {title.toUpperCase()} — {count}
-      </Text>
-    </View>
-  );
-}
-
-// ─── Friend row ───────────────────────────────────────────────────────────────
-
 function FriendRow({
   friend,
   status,
   customStatus,
   onMessage,
   onRemove,
+  showDivider,
 }: {
   friend: Friend;
   status?: string | null;
   customStatus?: string | null;
   onMessage: () => void;
   onRemove: () => void;
+  showDivider?: boolean;
 }) {
   const resolvedStatus = status ?? friend.status ?? "offline";
-  const statusColor = STATUS_COLORS[resolvedStatus] ?? STATUS_COLORS.offline;
   const statusLabel =
-    customStatus ?? STATUS_LABELS[resolvedStatus] ?? "Offline";
+    customStatus ?? STATUS_LABELS[resolvedStatus] ?? STATUS_LABELS.offline;
 
   return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.friendRow,
-        pressed && styles.friendRowPressed,
-      ]}
-      onPress={onMessage}
-    >
-      <Avatar
-        username={friend.username}
-        pfpUrl={friend.pfp_url}
-        size={44}
-        status={resolvedStatus}
-        showStatus
-      />
-
-      <View style={styles.friendInfo}>
-        <Text style={styles.friendName} numberOfLines={1}>
-          {friend.username}
-        </Text>
-        <Text
-          style={[styles.friendStatus, { color: statusColor }]}
-          numberOfLines={1}
-        >
-          {statusLabel}
-        </Text>
-      </View>
-
-      <View style={styles.friendActions}>
-        <Pressable
-          style={({ pressed }) => [
-            styles.iconBtn,
-            styles.iconBtnMessage,
-            pressed && styles.iconBtnPressed,
-          ]}
-          onPress={onMessage}
-          hitSlop={6}
-        >
-          <Text style={styles.iconBtnText}>💬</Text>
-        </Pressable>
-        <Pressable
-          style={({ pressed }) => [
-            styles.iconBtn,
-            styles.iconBtnRemove,
-            pressed && styles.iconBtnPressed,
-          ]}
-          onPress={onRemove}
-          hitSlop={6}
-        >
-          <Text style={styles.iconBtnText}>✕</Text>
-        </Pressable>
-      </View>
-    </Pressable>
-  );
-}
-
-// ─── Incoming request row ─────────────────────────────────────────────────────
-
-function IncomingRequestRow({
-  request,
-  onAccept,
-  onDecline,
-}: {
-  request: { id: string; userId: string; username: string };
-  onAccept: () => void;
-  onDecline: () => void;
-}) {
-  return (
-    <View style={styles.requestRow}>
-      <Avatar username={request.username} size={40} />
-      <Text style={styles.requestName} numberOfLines={1}>
-        {request.username}
-      </Text>
-      <View style={styles.requestActions}>
-        <Pressable
-          style={({ pressed }) => [
-            styles.acceptBtn,
-            pressed && styles.acceptBtnPressed,
-          ]}
-          onPress={onAccept}
-        >
-          <Text style={styles.acceptBtnText}>✓ Accept</Text>
-        </Pressable>
-        <Pressable
-          style={({ pressed }) => [
-            styles.declineBtn,
-            pressed && styles.declineBtnPressed,
-          ]}
-          onPress={onDecline}
-        >
-          <Text style={styles.declineBtnText}>✕</Text>
-        </Pressable>
-      </View>
+    <View>
+      <Pressable
+        style={({ pressed }) => [styles.friendRow, pressed && styles.friendRowPressed]}
+        onPress={onMessage}
+      >
+        <Avatar
+          username={friend.username}
+          pfpUrl={friend.pfp_url}
+          size={44}
+          status={resolvedStatus}
+          showStatus
+        />
+        <View style={styles.friendInfo}>
+          <Text style={styles.friendName} numberOfLines={1}>
+            {friend.username}
+          </Text>
+          <Text
+            style={[styles.friendStatus, { color: STATUS_COLORS[resolvedStatus] }]}
+            numberOfLines={1}
+          >
+            {statusLabel}
+          </Text>
+        </View>
+        <View style={styles.friendActions}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.smallAction,
+              styles.smallActionPrimary,
+              pressed && styles.smallActionPressed,
+            ]}
+            onPress={onMessage}
+          >
+            <Text style={styles.smallActionPrimaryText}>Message</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [
+              styles.smallAction,
+              styles.smallActionGhost,
+              pressed && styles.smallActionPressed,
+            ]}
+            onPress={onRemove}
+          >
+            <Text style={styles.smallActionGhostText}>Remove</Text>
+          </Pressable>
+        </View>
+      </Pressable>
+      {showDivider ? <View style={styles.rowDivider} /> : null}
     </View>
   );
 }
 
-// ─── Outgoing request row ─────────────────────────────────────────────────────
-
-function OutgoingRequestRow({
-  request,
+function RequestRow({
+  username,
+  subtitle,
+  primaryLabel,
+  onPrimary,
+  secondaryLabel,
+  onSecondary,
+  showDivider,
 }: {
-  request: { id: string; userId: string; username: string };
+  username: string;
+  subtitle: string;
+  primaryLabel?: string;
+  onPrimary?: () => void;
+  secondaryLabel?: string;
+  onSecondary?: () => void;
+  showDivider?: boolean;
 }) {
   return (
-    <View style={styles.requestRow}>
-      <Avatar username={request.username} size={40} />
-      <View style={styles.outgoingInfo}>
-        <Text style={styles.requestName} numberOfLines={1}>
-          {request.username}
-        </Text>
-        <Text style={styles.pendingLabel}>Waiting for response…</Text>
+    <View>
+      <View style={styles.requestRow}>
+        <Avatar username={username} size={42} />
+        <View style={styles.requestInfo}>
+          <Text style={styles.requestName} numberOfLines={1}>
+            {username}
+          </Text>
+          <Text style={styles.requestSubtitle} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        </View>
+        <View style={styles.requestActions}>
+          {primaryLabel && onPrimary ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.smallAction,
+                styles.smallActionPrimary,
+                pressed && styles.smallActionPressed,
+              ]}
+              onPress={onPrimary}
+            >
+              <Text style={styles.smallActionPrimaryText}>{primaryLabel}</Text>
+            </Pressable>
+          ) : null}
+          {secondaryLabel && onSecondary ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.smallAction,
+                styles.smallActionGhost,
+                pressed && styles.smallActionPressed,
+              ]}
+              onPress={onSecondary}
+            >
+              <Text style={styles.smallActionGhostText}>{secondaryLabel}</Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
-      <View style={styles.pendingBadge}>
-        <Text style={styles.pendingBadgeText}>Pending</Text>
-      </View>
+      {showDivider ? <View style={styles.rowDivider} /> : null}
     </View>
   );
 }
-
-// ─── Main screen ─────────────────────────────────────────────────────────────
 
 export function FriendsScreen({ onOpenDm }: FriendsScreenProps) {
   const { api, presenceByUserId, updatePresence } = useAuth();
@@ -203,11 +190,11 @@ export function FriendsScreen({ onOpenDm }: FriendsScreenProps) {
   >([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [addUsername, setAddUsername] = useState("");
   const [adding, setAdding] = useState(false);
+  const [addUsername, setAddUsername] = useState("");
   const [status, setStatus] = useState("");
-
-  // ── Load data ─────────────────────────────────────────────────────────────
+  const [view, setView] = useState<FriendView>("online");
+  const [query, setQuery] = useState("");
 
   const load = useCallback(
     async (silent = false) => {
@@ -223,24 +210,23 @@ export function FriendsScreen({ onOpenDm }: FriendsScreenProps) {
         setIncoming(requestsRes.incoming ?? []);
         setOutgoing(requestsRes.outgoing ?? []);
 
-        // Seed presence from friend statuses
-        for (const f of friendList) {
-          if (f.status) {
-            updatePresence(f.id, f.status, null);
+        for (const friend of friendList) {
+          if (friend.status) {
+            updatePresence(friend.id, friend.status, null);
           }
         }
 
-        // Bulk-fetch live presence
         if (friendList.length > 0) {
           try {
-            const ids = friendList.map((f) => f.id);
+            const ids = friendList.map((friend) => friend.id);
             const presenceData = await api.getPresence(ids);
-            const map = presenceData.presence ?? {};
-            for (const [userId, p] of Object.entries(map)) {
-              updatePresence(userId, p.status, p.customStatus ?? null);
+            for (const [userId, presence] of Object.entries(
+              presenceData.presence ?? {},
+            )) {
+              updatePresence(userId, presence.status, presence.customStatus ?? null);
             }
           } catch {
-            // non-fatal
+            // Presence refresh is best effort.
           }
         }
       } catch {
@@ -262,39 +248,36 @@ export function FriendsScreen({ onOpenDm }: FriendsScreenProps) {
     load(true);
   }, [load]);
 
-  // ── Add friend ────────────────────────────────────────────────────────────
-
   const onAddFriend = useCallback(async () => {
     const username = addUsername.trim();
     if (!username || adding) return;
     setAdding(true);
     setStatus("");
     try {
-      const res = await api.addFriend(username);
+      const result = await api.addFriend(username);
       await load(true);
       setAddUsername("");
-      if (res.threadId && res.friend) {
+      if (result.threadId && result.friend) {
         setStatus("Friend added!");
         onOpenDm({
-          id: res.friend.id,
-          username: res.friend.username ?? res.friend.id,
+          id: result.friend.id,
+          username: result.friend.username ?? result.friend.id,
           pfp_url: null,
           status: "online",
         });
-      } else if (res.requestStatus === "pending") {
-        setStatus("Friend request sent to @" + username);
+      } else if (result.requestStatus === "pending") {
+        setStatus(`Friend request sent to @${username}`);
       } else {
         setStatus("Request sent!");
       }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Failed to add friend.";
-      setStatus(msg);
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : "Failed to add friend.";
+      setStatus(message);
     } finally {
       setAdding(false);
     }
-  }, [api, addUsername, adding, load, onOpenDm]);
-
-  // ── Accept / decline requests ─────────────────────────────────────────────
+  }, [addUsername, adding, api, load, onOpenDm]);
 
   const onAccept = useCallback(
     async (requestId: string) => {
@@ -321,8 +304,6 @@ export function FriendsScreen({ onOpenDm }: FriendsScreenProps) {
     [api, load],
   );
 
-  // ── Remove friend ─────────────────────────────────────────────────────────
-
   const onRemoveFriend = useCallback(
     (friend: Friend) => {
       Alert.alert(
@@ -336,7 +317,7 @@ export function FriendsScreen({ onOpenDm }: FriendsScreenProps) {
             onPress: async () => {
               try {
                 await api.removeFriend(friend.id);
-                setFriends((prev) => prev.filter((f) => f.id !== friend.id));
+                setFriends((prev) => prev.filter((entry) => entry.id !== friend.id));
                 setStatus(`${friend.username} removed.`);
               } catch {
                 Alert.alert("Error", "Failed to remove friend.");
@@ -349,434 +330,519 @@ export function FriendsScreen({ onOpenDm }: FriendsScreenProps) {
     [api],
   );
 
-  // ── Derived ───────────────────────────────────────────────────────────────
+  const normalizedQuery = query.trim().toLowerCase();
 
-  const onlineFriends = friends.filter((f) => {
-    const p = presenceByUserId[f.id];
-    const s = p?.status ?? f.status ?? "offline";
-    return s !== "offline" && s !== "invisible";
-  });
+  const allFriends = useMemo(
+    () =>
+      friends.filter((friend) =>
+        normalizedQuery
+          ? friend.username.toLowerCase().includes(normalizedQuery)
+          : true,
+      ),
+    [friends, normalizedQuery],
+  );
 
-  const offlineFriends = friends.filter((f) => {
-    const p = presenceByUserId[f.id];
-    const s = p?.status ?? f.status ?? "offline";
-    return s === "offline" || s === "invisible";
-  });
+  const onlineFriends = useMemo(
+    () =>
+      allFriends.filter((friend) => {
+        const resolved = presenceByUserId[friend.id]?.status ?? friend.status ?? "offline";
+        return resolved !== "offline" && resolved !== "invisible";
+      }),
+    [allFriends, presenceByUserId],
+  );
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  const offlineFriends = useMemo(
+    () =>
+      allFriends.filter((friend) => {
+        const resolved = presenceByUserId[friend.id]?.status ?? friend.status ?? "offline";
+        return resolved === "offline" || resolved === "invisible";
+      }),
+    [allFriends, presenceByUserId],
+  );
+
+  const statusTone =
+    status.toLowerCase().includes("failed") || status.toLowerCase().includes("error")
+      ? "danger"
+      : status.toLowerCase().includes("added") ||
+          status.toLowerCase().includes("sent") ||
+          status.toLowerCase().includes("accepted") ||
+          status.toLowerCase().includes("removed")
+        ? "success"
+        : "neutral";
 
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={colors.brand} />
-      </View>
+      <ScreenBackground>
+        <TopBar title="Friends" subtitle="Loading your social graph" />
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.brand} />
+          <Text style={styles.loadingText}>Fetching friends and requests…</Text>
+        </View>
+      </ScreenBackground>
     );
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          tintColor={colors.brand}
-          colors={[colors.brand]}
-        />
-      }
-    >
-      {/* ── Add friend ── */}
-      <View style={styles.addCard}>
-        <Text style={styles.addTitle}>Add Friend</Text>
-        <Text style={styles.addHint}>Add someone by their exact username.</Text>
-        <View style={styles.addRow}>
-          <TextInput
-            value={addUsername}
-            onChangeText={setAddUsername}
-            style={styles.addInput}
-            placeholder="Enter username"
-            placeholderTextColor={colors.textDim}
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={!adding}
-            returnKeyType="send"
-            onSubmitEditing={onAddFriend}
+    <ScreenBackground>
+      <TopBar
+        title="Friends"
+        subtitle={`${friends.length} ${friends.length === 1 ? "friend" : "friends"} in your orbit`}
+      />
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.brand}
+            colors={[colors.brand]}
           />
-          <Pressable
-            style={[
-              styles.addBtn,
-              (adding || !addUsername.trim()) && styles.addBtnDisabled,
-            ]}
-            onPress={onAddFriend}
-            disabled={adding || !addUsername.trim()}
-          >
-            {adding ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.addBtnText}>Add</Text>
-            )}
-          </Pressable>
-        </View>
-        {!!status && (
-          <Text
-            style={[
-              styles.statusText,
-              (status.includes("added") ||
-                status.includes("sent") ||
-                status.includes("accepted") ||
-                status.includes("removed")) &&
-                styles.statusTextSuccess,
-            ]}
-          >
-            {status}
+        }
+      >
+        <SurfaceCard style={styles.heroCard}>
+          <Text style={styles.heroEyebrow}>FRIENDS SURFACE</Text>
+          <Text style={styles.heroTitle}>Stay close to the people you talk to most</Text>
+          <Text style={styles.heroBody}>
+            Search, add, and jump into DMs using the same layered hierarchy as desktop.
           </Text>
-        )}
-      </View>
+          <SegmentedControl
+            value={view}
+            onChange={(value) => setView(value as FriendView)}
+            options={[
+              { value: "online", label: "Online" },
+              { value: "all", label: "All" },
+              { value: "add", label: "Add" },
+              { value: "requests", label: "Requests" },
+            ]}
+          />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            style={styles.searchInput}
+            placeholder="Search friends"
+            placeholderTextColor={colors.textDim}
+          />
+        </SurfaceCard>
 
-      {/* ── Incoming requests ── */}
-      {incoming.length > 0 && (
-        <View style={styles.section}>
-          <SectionHeader title="Pending Requests" count={incoming.length} />
-          <View style={styles.sectionCard}>
-            {incoming.map((req, i) => (
-              <View key={req.id}>
-                <IncomingRequestRow
-                  request={req}
-                  onAccept={() => onAccept(req.id)}
-                  onDecline={() => onDecline(req.id)}
-                />
-                {i < incoming.length - 1 && (
-                  <View style={styles.rowSeparator} />
-                )}
-              </View>
-            ))}
-          </View>
-        </View>
-      )}
-
-      {/* ── Outgoing requests ── */}
-      {outgoing.length > 0 && (
-        <View style={styles.section}>
-          <SectionHeader title="Sent" count={outgoing.length} />
-          <View style={styles.sectionCard}>
-            {outgoing.map((req, i) => (
-              <View key={req.id}>
-                <OutgoingRequestRow request={req} />
-                {i < outgoing.length - 1 && (
-                  <View style={styles.rowSeparator} />
-                )}
-              </View>
-            ))}
-          </View>
-        </View>
-      )}
-
-      {/* ── Online friends ── */}
-      {onlineFriends.length > 0 && (
-        <View style={styles.section}>
-          <SectionHeader title="Online" count={onlineFriends.length} />
-          <View style={styles.sectionCard}>
-            {onlineFriends.map((f, i) => {
-              const presence = presenceByUserId[f.id];
-              return (
-                <View key={f.id}>
-                  <FriendRow
-                    friend={f}
-                    status={presence?.status ?? f.status}
-                    customStatus={presence?.customStatus}
-                    onMessage={() => onOpenDm(f)}
-                    onRemove={() => onRemoveFriend(f)}
+        {(view === "online" || view === "all") && onlineFriends.length > 0 ? (
+          <SurfaceCard style={styles.activeNowCard}>
+            <SectionLabel title="Active Now" />
+            <View style={styles.activeNowGrid}>
+              {onlineFriends.slice(0, 4).map((friend) => (
+                <Pressable
+                  key={`active-${friend.id}`}
+                  style={({ pressed }) => [
+                    styles.activeNowItem,
+                    pressed && styles.activeNowItemPressed,
+                  ]}
+                  onPress={() => onOpenDm(friend)}
+                >
+                  <Avatar
+                    username={friend.username}
+                    pfpUrl={friend.pfp_url}
+                    size={34}
+                    status={presenceByUserId[friend.id]?.status ?? friend.status}
+                    showStatus
                   />
-                  {i < onlineFriends.length - 1 && (
-                    <View style={styles.rowSeparator} />
-                  )}
-                </View>
-              );
-            })}
-          </View>
-        </View>
-      )}
+                  <View style={styles.activeNowInfo}>
+                    <Text style={styles.activeNowName} numberOfLines={1}>
+                      {friend.username}
+                    </Text>
+                    <Text style={styles.activeNowStatus} numberOfLines={1}>
+                      {presenceByUserId[friend.id]?.customStatus ?? "Available now"}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          </SurfaceCard>
+        ) : null}
 
-      {/* ── Offline friends ── */}
-      {offlineFriends.length > 0 && (
-        <View style={styles.section}>
-          <SectionHeader title="Offline" count={offlineFriends.length} />
-          <View style={styles.sectionCard}>
-            {offlineFriends.map((f, i) => {
-              const presence = presenceByUserId[f.id];
-              return (
-                <View key={f.id}>
-                  <FriendRow
-                    friend={f}
-                    status={presence?.status ?? f.status ?? "offline"}
-                    customStatus={presence?.customStatus}
-                    onMessage={() => onOpenDm(f)}
-                    onRemove={() => onRemoveFriend(f)}
-                  />
-                  {i < offlineFriends.length - 1 && (
-                    <View style={styles.rowSeparator} />
-                  )}
-                </View>
-              );
-            })}
-          </View>
-        </View>
-      )}
-
-      {/* ── Empty state ── */}
-      {friends.length === 0 &&
-        incoming.length === 0 &&
-        outgoing.length === 0 && (
-          <View style={styles.emptyBox}>
-            <Text style={styles.emptyIcon}>👥</Text>
-            <Text style={styles.emptyTitle}>No friends yet</Text>
-            <Text style={styles.emptyHint}>
-              Add someone by username above to get started.
+        {view === "add" ? (
+          <SurfaceCard style={styles.formCard}>
+            <SectionLabel title="Add Friend" />
+            <Text style={styles.formHint}>
+              Type the exact username and OpenCom will either connect you instantly or send a request.
             </Text>
-          </View>
-        )}
+            <TextInput
+              value={addUsername}
+              onChangeText={setAddUsername}
+              style={styles.searchInput}
+              placeholder="Exact username"
+              placeholderTextColor={colors.textDim}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!adding}
+              returnKeyType="send"
+              onSubmitEditing={onAddFriend}
+            />
+            <Pressable
+              style={({ pressed }) => [
+                styles.primaryButton,
+                (!addUsername.trim() || adding) && styles.primaryButtonDisabled,
+                pressed && addUsername.trim() && !adding && styles.primaryButtonPressed,
+              ]}
+              onPress={onAddFriend}
+              disabled={!addUsername.trim() || adding}
+            >
+              {adding ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Send Friend Request</Text>
+              )}
+            </Pressable>
+          </SurfaceCard>
+        ) : null}
 
-      <View style={{ height: spacing.xl }} />
-    </ScrollView>
+        {view === "requests" ? (
+          <>
+            {incoming.length > 0 ? (
+              <SurfaceCard style={styles.listCard} padded={false}>
+                <View style={styles.cardHeaderWrap}>
+                  <SectionLabel title={`Incoming (${incoming.length})`} />
+                </View>
+                {incoming.map((request, index) => (
+                  <RequestRow
+                    key={request.id}
+                    username={request.username}
+                    subtitle="Incoming request"
+                    primaryLabel="Accept"
+                    onPrimary={() => onAccept(request.id)}
+                    secondaryLabel="Decline"
+                    onSecondary={() => onDecline(request.id)}
+                    showDivider={index < incoming.length - 1}
+                  />
+                ))}
+              </SurfaceCard>
+            ) : null}
+
+            {outgoing.length > 0 ? (
+              <SurfaceCard style={styles.listCard} padded={false}>
+                <View style={styles.cardHeaderWrap}>
+                  <SectionLabel title={`Outgoing (${outgoing.length})`} />
+                </View>
+                {outgoing.map((request, index) => (
+                  <RequestRow
+                    key={request.id}
+                    username={request.username}
+                    subtitle="Waiting for a response"
+                    showDivider={index < outgoing.length - 1}
+                  />
+                ))}
+              </SurfaceCard>
+            ) : null}
+
+            {incoming.length === 0 && outgoing.length === 0 ? (
+              <EmptyState
+                eyebrow="REQUESTS"
+                icon="👋"
+                title="No pending friend requests"
+                hint="When someone sends you a request, it will show up here."
+              />
+            ) : null}
+          </>
+        ) : null}
+
+        {view === "online" ? (
+          onlineFriends.length > 0 ? (
+            <SurfaceCard style={styles.listCard} padded={false}>
+              <View style={styles.cardHeaderWrap}>
+                <SectionLabel title={`Online (${onlineFriends.length})`} />
+              </View>
+              {onlineFriends.map((friend, index) => {
+                const presence = presenceByUserId[friend.id];
+                return (
+                  <FriendRow
+                    key={friend.id}
+                    friend={friend}
+                    status={presence?.status ?? friend.status}
+                    customStatus={presence?.customStatus}
+                    onMessage={() => onOpenDm(friend)}
+                    onRemove={() => onRemoveFriend(friend)}
+                    showDivider={index < onlineFriends.length - 1}
+                  />
+                );
+              })}
+            </SurfaceCard>
+          ) : (
+            <EmptyState
+              eyebrow="ONLINE"
+              icon="👥"
+              title="No friends online right now"
+              hint="Your online friends will appear here when they sign in."
+            />
+          )
+        ) : null}
+
+        {view === "all" ? (
+          allFriends.length > 0 ? (
+            <>
+              {onlineFriends.length > 0 ? (
+                <SurfaceCard style={styles.listCard} padded={false}>
+                  <View style={styles.cardHeaderWrap}>
+                    <SectionLabel title={`Online (${onlineFriends.length})`} />
+                  </View>
+                  {onlineFriends.map((friend, index) => {
+                    const presence = presenceByUserId[friend.id];
+                    return (
+                      <FriendRow
+                        key={`online-${friend.id}`}
+                        friend={friend}
+                        status={presence?.status ?? friend.status}
+                        customStatus={presence?.customStatus}
+                        onMessage={() => onOpenDm(friend)}
+                        onRemove={() => onRemoveFriend(friend)}
+                        showDivider={index < onlineFriends.length - 1}
+                      />
+                    );
+                  })}
+                </SurfaceCard>
+              ) : null}
+
+              {offlineFriends.length > 0 ? (
+                <SurfaceCard style={styles.listCard} padded={false}>
+                  <View style={styles.cardHeaderWrap}>
+                    <SectionLabel title={`Offline (${offlineFriends.length})`} />
+                  </View>
+                  {offlineFriends.map((friend, index) => {
+                    const presence = presenceByUserId[friend.id];
+                    return (
+                      <FriendRow
+                        key={`offline-${friend.id}`}
+                        friend={friend}
+                        status={presence?.status ?? friend.status}
+                        customStatus={presence?.customStatus}
+                        onMessage={() => onOpenDm(friend)}
+                        onRemove={() => onRemoveFriend(friend)}
+                        showDivider={index < offlineFriends.length - 1}
+                      />
+                    );
+                  })}
+                </SurfaceCard>
+              ) : null}
+            </>
+          ) : (
+            <EmptyState
+              eyebrow="ALL FRIENDS"
+              icon="🔍"
+              title="No matching friends"
+              hint={
+                normalizedQuery
+                  ? "Try a different search term."
+                  : "Add some friends to start building your social graph."
+              }
+            />
+          )
+        ) : null}
+      </ScrollView>
+
+      {status ? (
+        <StatusBanner
+          text={status}
+          tone={statusTone}
+          onDismiss={() => setStatus("")}
+        />
+      ) : null}
+    </ScreenBackground>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  content: { paddingBottom: spacing.xl },
   centered: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.xl,
   },
-
-  // Add card
-  addCard: {
-    backgroundColor: colors.sidebar,
-    margin: spacing.md,
-    borderRadius: radii.lg,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
+  loadingText: {
+    ...typography.body,
+    color: colors.textDim,
+    textAlign: "center",
+  },
+  content: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xl,
     gap: spacing.sm,
   },
-  addTitle: {
-    ...typography.heading,
-    color: colors.text,
+  heroCard: {
+    gap: spacing.sm,
   },
-  addHint: {
-    ...typography.caption,
+  heroEyebrow: {
+    ...typography.eyebrow,
     color: colors.textDim,
   },
-  addRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginTop: spacing.xs,
+  heroTitle: {
+    ...typography.title,
+    color: colors.text,
   },
-  addInput: {
-    flex: 1,
+  heroBody: {
+    ...typography.body,
+    color: colors.textDim,
+    lineHeight: 22,
+  },
+  searchInput: {
     backgroundColor: colors.input,
-    borderColor: colors.border,
     borderWidth: 1,
+    borderColor: colors.border,
     borderRadius: radii.md,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.md,
     color: colors.text,
     fontSize: 15,
   },
-  addBtn: {
-    backgroundColor: colors.brand,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radii.md,
-    justifyContent: "center",
+  activeNowCard: {
+    gap: spacing.sm,
+  },
+  activeNowGrid: {
+    gap: spacing.sm,
+  },
+  activeNowItem: {
+    flexDirection: "row",
     alignItems: "center",
-    minWidth: 60,
-    minHeight: 42,
-  },
-  addBtnDisabled: { opacity: 0.55 },
-  addBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
-  statusText: {
-    ...typography.caption,
-    color: colors.danger,
-    textAlign: "center",
-  },
-  statusTextSuccess: { color: colors.success },
-
-  // Section
-  section: {
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.md,
-  },
-  sectionHeader: {
-    marginBottom: spacing.sm,
-  },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: colors.textDim,
-    letterSpacing: 0.8,
-  },
-  sectionCard: {
-    backgroundColor: colors.sidebar,
-    borderRadius: radii.lg,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.md,
+    backgroundColor: colors.panelAlt,
     borderWidth: 1,
     borderColor: colors.border,
+  },
+  activeNowItemPressed: {
+    backgroundColor: colors.hover,
+  },
+  activeNowInfo: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  activeNowName: {
+    ...typography.caption,
+    color: colors.text,
+    fontWeight: "700",
+  },
+  activeNowStatus: {
+    ...typography.caption,
+    color: colors.textDim,
+  },
+  formCard: {
+    gap: spacing.sm,
+  },
+  formHint: {
+    ...typography.body,
+    color: colors.textDim,
+    lineHeight: 22,
+  },
+  primaryButton: {
+    minHeight: 48,
+    borderRadius: radii.md,
+    backgroundColor: colors.brand,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  primaryButtonDisabled: {
+    opacity: 0.55,
+  },
+  primaryButtonPressed: {
+    opacity: 0.85,
+  },
+  primaryButtonText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  listCard: {
     overflow: "hidden",
   },
-  rowSeparator: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginLeft: spacing.md + 44 + spacing.md,
+  cardHeaderWrap: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
   },
-
-  // Friend row
   friendRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
     gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
-  friendRowPressed: { backgroundColor: colors.hover },
+  friendRowPressed: {
+    backgroundColor: colors.hover,
+  },
   friendInfo: {
     flex: 1,
     minWidth: 0,
-    gap: 3,
+    gap: 2,
   },
   friendName: {
-    ...typography.body,
+    ...typography.heading,
     color: colors.text,
-    fontWeight: "600",
   },
   friendStatus: {
     ...typography.caption,
-    fontWeight: "600",
-    textTransform: "capitalize",
   },
   friendActions: {
-    flexDirection: "row",
     gap: spacing.xs,
     flexShrink: 0,
   },
-  iconBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: radii.md,
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 1,
-  },
-  iconBtnMessage: {
-    borderColor: colors.brand,
-    backgroundColor: "rgba(115,134,255,0.08)",
-  },
-  iconBtnRemove: {
-    borderColor: colors.border,
-    backgroundColor: "transparent",
-  },
-  iconBtnPressed: { opacity: 0.6 },
-  iconBtnText: { fontSize: 16 },
-
-  // Incoming request row
   requestRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
     gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  requestInfo: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
   },
   requestName: {
-    ...typography.body,
-    color: colors.text,
-    fontWeight: "600",
-    flex: 1,
-    minWidth: 0,
-  },
-  requestActions: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    flexShrink: 0,
-  },
-  acceptBtn: {
-    backgroundColor: colors.success,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radii.md,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  acceptBtnPressed: { opacity: 0.75 },
-  acceptBtnText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 13,
-  },
-  declineBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.danger,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  declineBtnPressed: {
-    backgroundColor: "rgba(239,95,118,0.15)",
-  },
-  declineBtnText: {
-    color: colors.danger,
-    fontWeight: "700",
-    fontSize: 14,
-  },
-
-  // Outgoing request row
-  outgoingInfo: {
-    flex: 1,
-    minWidth: 0,
-    gap: 3,
-  },
-  pendingLabel: {
-    ...typography.caption,
-    color: colors.textDim,
-    fontStyle: "italic",
-  },
-  pendingBadge: {
-    backgroundColor: colors.elev,
-    borderRadius: radii.full,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: colors.border,
-    flexShrink: 0,
-  },
-  pendingBadgeText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: colors.textDim,
-    letterSpacing: 0.3,
-  },
-
-  // Empty state
-  emptyBox: {
-    alignItems: "center",
-    paddingVertical: spacing.xl * 2,
-    paddingHorizontal: spacing.xl,
-    gap: spacing.md,
-  },
-  emptyIcon: { fontSize: 56 },
-  emptyTitle: {
     ...typography.heading,
     color: colors.text,
-    textAlign: "center",
   },
-  emptyHint: {
+  requestSubtitle: {
     ...typography.caption,
     color: colors.textDim,
-    textAlign: "center",
-    lineHeight: 20,
+  },
+  requestActions: {
+    gap: spacing.xs,
+    flexShrink: 0,
+  },
+  rowDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginLeft: spacing.lg + 56,
+    marginRight: spacing.lg,
+  },
+  smallAction: {
+    minWidth: 74,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.full,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+  },
+  smallActionPressed: {
+    opacity: 0.82,
+  },
+  smallActionPrimary: {
+    backgroundColor: colors.brandMuted,
+    borderColor: colors.borderStrong,
+  },
+  smallActionPrimaryText: {
+    ...typography.caption,
+    color: colors.text,
+    fontWeight: "700",
+  },
+  smallActionGhost: {
+    backgroundColor: colors.panelAlt,
+    borderColor: colors.border,
+  },
+  smallActionGhostText: {
+    ...typography.caption,
+    color: colors.textSoft,
+    fontWeight: "700",
   },
 });

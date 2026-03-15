@@ -14,6 +14,12 @@ import {
   TextInput,
   View,
 } from "react-native";
+import {
+  ScreenBackground,
+  StatusBanner,
+  SurfaceCard,
+  TopBar,
+} from "../components/chrome";
 import { useAuth } from "../context/AuthContext";
 import { useNodeGateway, httpToNodeGatewayWs } from "../hooks/useGateway";
 import { Avatar } from "../components/Avatar";
@@ -753,216 +759,264 @@ export function ChannelScreen({
   // ── Render ─────────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={colors.brand} />
-      </View>
+      <ScreenBackground>
+        <TopBar
+          title={channel.name}
+          subtitle={isVoice ? "Voice channel" : `#${channel.name}`}
+          onBack={onBack}
+        />
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.brand} />
+        </View>
+      </ScreenBackground>
     );
   }
 
   // Voice channel view
   if (isVoice) {
     return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Pressable onPress={onBack} style={styles.backBtn} hitSlop={8}>
-            <Text style={styles.backText}>←</Text>
-          </Pressable>
-          <Text style={styles.channelIcon}>🔊</Text>
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {channel.name}
-          </Text>
-          <Pressable
-            onPress={loadVoiceStates}
-            style={styles.headerBtn}
-            hitSlop={8}
-          >
-            <Text style={styles.headerBtnText}>↻</Text>
-          </Pressable>
+      <ScreenBackground>
+        <TopBar
+          title={channel.name}
+          subtitle={`Voice room in ${guild.name}`}
+          onBack={onBack}
+          right={
+            <Pressable
+              onPress={loadVoiceStates}
+              style={styles.headerBtn}
+              hitSlop={8}
+            >
+              <Text style={styles.headerBtnText}>↻</Text>
+            </Pressable>
+          }
+        />
+        <View style={styles.voiceWrap}>
+          <SurfaceCard style={styles.voiceIntro}>
+            <Text style={styles.voiceIntroTitle}>Voice overview</Text>
+            <Text style={styles.voiceIntroText}>
+              See who is connected here right now. Joining voice is still handled
+              by the desktop and web clients.
+            </Text>
+          </SurfaceCard>
+          <VoiceMembersPanel voiceStates={voiceStates} />
         </View>
-        <VoiceMembersPanel voiceStates={voiceStates} />
-      </View>
+      </ScreenBackground>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={0}
-    >
-      {/* Header */}
-      <View style={styles.header}>
-        <Pressable onPress={onBack} style={styles.backBtn} hitSlop={8}>
-          <Text style={styles.backText}>←</Text>
-        </Pressable>
-        <Text style={styles.channelIcon}>#</Text>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {channel.name}
-        </Text>
-        <View style={styles.headerActions}>
-          {onViewPins && (
-            <Pressable
-              onPress={onViewPins}
-              style={styles.headerBtn}
-              hitSlop={8}
-            >
-              <Text style={styles.headerBtnText}>📌</Text>
-            </Pressable>
-          )}
-          {onViewMembers && (
-            <Pressable
-              onPress={onViewMembers}
-              style={styles.headerBtn}
-              hitSlop={8}
-            >
-              <Text style={styles.headerBtnText}>👥</Text>
-            </Pressable>
-          )}
-        </View>
-      </View>
-
-      {/* Message list */}
-      <FlatList
-        ref={listRef}
-        data={messages}
-        keyExtractor={(m) => m.id}
-        contentContainerStyle={styles.listContent}
-        onScroll={(e) => {
-          const { layoutMeasurement, contentOffset, contentSize } =
-            e.nativeEvent;
-          isAtBottomRef.current =
-            layoutMeasurement.height + contentOffset.y >=
-            contentSize.height - 40;
-        }}
-        scrollEventThrottle={100}
-        onEndReachedThreshold={0.15}
-        ListHeaderComponent={
-          loadingOlder ? (
-            <ActivityIndicator
-              style={{ marginVertical: spacing.md }}
-              color={colors.brand}
-            />
-          ) : hasMore ? (
-            <Pressable style={styles.loadMoreBtn} onPress={loadOlderMessages}>
-              <Text style={styles.loadMoreText}>Load older messages</Text>
-            </Pressable>
-          ) : null
-        }
-        renderItem={({ item }) => (
-          <MessageItem
-            message={item}
-            myId={me?.id ?? ""}
-            onLongPress={openContextMenu}
-          />
-        )}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>
-              No messages yet. Say hello in #{channel.name}!
-            </Text>
-          </View>
-        }
-      />
-
-      {/* Status */}
-      {!!status && <Text style={styles.statusText}>{status}</Text>}
-
-      {/* Reply bar */}
-      {replyTarget && (
-        <ReplyBar target={replyTarget} onClear={() => setReplyTarget(null)} />
-      )}
-
-      {/* Composer */}
-      <View style={styles.composerRow}>
-        <TextInput
-          value={composer}
-          onChangeText={setComposer}
-          style={styles.composerInput}
-          placeholder={`Message #${channel.name}`}
-          placeholderTextColor={colors.textDim}
-          multiline
-          maxLength={4000}
-          editable={!sending}
-        />
-        <Pressable
-          style={[
-            styles.sendBtn,
-            (!composer.trim() || sending) && styles.sendBtnDisabled,
-          ]}
-          onPress={onSend}
-          disabled={!composer.trim() || sending}
-        >
-          {sending ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={styles.sendBtnText}>Send</Text>
-          )}
-        </Pressable>
-      </View>
-
-      {/* Edit modal */}
-      <EditModal
-        visible={!!editModal}
-        initialContent={editModal?.content ?? ""}
-        onSave={saveEdit}
-        onCancel={() => setEditModal(null)}
-      />
-
-      {/* Android context menu */}
-      <Modal
-        visible={!!contextMenu}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setContextMenu(null)}
+    <ScreenBackground>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={0}
       >
-        <Pressable
-          style={styles.contextOverlay}
-          onPress={() => setContextMenu(null)}
-        >
-          <View style={styles.contextCard}>
-            <Text style={styles.contextTitle} numberOfLines={2}>
-              {contextMenu?.message.content}
-            </Text>
-            {[
-              { label: "↩️  Reply", action: "reply" },
-              ...(contextMenu?.isOwn
-                ? [
-                    { label: "✏️  Edit", action: "edit" },
-                    { label: "🗑️  Delete", action: "delete" },
-                  ]
-                : []),
-              { label: "📋  Copy", action: "copy" },
-              { label: "📌  Pin", action: "pin" },
-            ].map(({ label, action }) => (
-              <Pressable
-                key={action}
-                style={({ pressed }) => [
-                  styles.contextItem,
-                  pressed && styles.contextItemPressed,
-                  action === "delete" && styles.contextItemDanger,
-                ]}
-                onPress={() => handleContextAction(action)}
-              >
-                <Text
-                  style={[
-                    styles.contextItemText,
-                    action === "delete" && styles.contextItemTextDanger,
-                  ]}
+        <TopBar
+          title={channel.name}
+          subtitle={`#${channel.name} in ${guild.name}`}
+          onBack={onBack}
+          right={
+            <View style={styles.headerActions}>
+              {onViewPins ? (
+                <Pressable
+                  onPress={onViewPins}
+                  style={styles.headerBtn}
+                  hitSlop={8}
                 >
-                  {label}
+                  <Text style={styles.headerBtnText}>📌</Text>
+                </Pressable>
+              ) : null}
+              {onViewMembers ? (
+                <Pressable
+                  onPress={onViewMembers}
+                  style={styles.headerBtn}
+                  hitSlop={8}
+                >
+                  <Text style={styles.headerBtnText}>👥</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          }
+        />
+
+        <FlatList
+          ref={listRef}
+          data={messages}
+          keyExtractor={(message) => message.id}
+          contentContainerStyle={styles.listContent}
+          onScroll={(event) => {
+            const { layoutMeasurement, contentOffset, contentSize } =
+              event.nativeEvent;
+            isAtBottomRef.current =
+              layoutMeasurement.height + contentOffset.y >=
+              contentSize.height - 40;
+          }}
+          scrollEventThrottle={100}
+          onEndReachedThreshold={0.15}
+          ListHeaderComponent={
+            <>
+              <SurfaceCard style={styles.chatIntro}>
+                <Text style={styles.chatIntroTitle}>#{channel.name}</Text>
+                <Text style={styles.chatIntroText}>
+                  This room follows the same channel-first layout as desktop:
+                  scroll the history, pin important messages, then reply from the
+                  composer below.
                 </Text>
-              </Pressable>
-            ))}
-          </View>
-        </Pressable>
-      </Modal>
-    </KeyboardAvoidingView>
+              </SurfaceCard>
+              {loadingOlder ? (
+                <ActivityIndicator
+                  style={{ marginVertical: spacing.md }}
+                  color={colors.brand}
+                />
+              ) : hasMore ? (
+                <Pressable style={styles.loadMoreBtn} onPress={loadOlderMessages}>
+                  <Text style={styles.loadMoreText}>Load older messages</Text>
+                </Pressable>
+              ) : null}
+            </>
+          }
+          renderItem={({ item }) => (
+            <MessageItem
+              message={item}
+              myId={me?.id ?? ""}
+              onLongPress={openContextMenu}
+            />
+          )}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Text style={styles.emptyText}>
+                No messages yet. Say hello in #{channel.name}!
+              </Text>
+            </View>
+          }
+        />
+
+        {status ? <StatusBanner text={status} onDismiss={() => setStatus("")} /> : null}
+
+        {replyTarget ? (
+          <ReplyBar target={replyTarget} onClear={() => setReplyTarget(null)} />
+        ) : null}
+
+        <View style={styles.composerRow}>
+          <TextInput
+            value={composer}
+            onChangeText={setComposer}
+            style={styles.composerInput}
+            placeholder={`Message #${channel.name}`}
+            placeholderTextColor={colors.textDim}
+            multiline
+            maxLength={4000}
+            editable={!sending}
+          />
+          <Pressable
+            style={[
+              styles.sendBtn,
+              (!composer.trim() || sending) && styles.sendBtnDisabled,
+            ]}
+            onPress={onSend}
+            disabled={!composer.trim() || sending}
+          >
+            {sending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.sendBtnText}>Send</Text>
+            )}
+          </Pressable>
+        </View>
+
+        <EditModal
+          visible={!!editModal}
+          initialContent={editModal?.content ?? ""}
+          onSave={saveEdit}
+          onCancel={() => setEditModal(null)}
+        />
+
+        <Modal
+          visible={!!contextMenu}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setContextMenu(null)}
+        >
+          <Pressable
+            style={styles.contextOverlay}
+            onPress={() => setContextMenu(null)}
+          >
+            <View style={styles.contextCard}>
+              <Text style={styles.contextTitle} numberOfLines={2}>
+                {contextMenu?.message.content}
+              </Text>
+              {[
+                { label: "↩️  Reply", action: "reply" },
+                ...(contextMenu?.isOwn
+                  ? [
+                      { label: "✏️  Edit", action: "edit" },
+                      { label: "🗑️  Delete", action: "delete" },
+                    ]
+                  : []),
+                { label: "📋  Copy", action: "copy" },
+                { label: "📌  Pin", action: "pin" },
+              ].map(({ label, action }) => (
+                <Pressable
+                  key={action}
+                  style={({ pressed }) => [
+                    styles.contextItem,
+                    pressed && styles.contextItemPressed,
+                    action === "delete" && styles.contextItemDanger,
+                  ]}
+                  onPress={() => handleContextAction(action)}
+                >
+                  <Text
+                    style={[
+                      styles.contextItemText,
+                      action === "delete" && styles.contextItemTextDanger,
+                    ]}
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </Pressable>
+        </Modal>
+      </KeyboardAvoidingView>
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
+  container: { flex: 1 },
   centered: { flex: 1, justifyContent: "center", alignItems: "center" },
+  voiceWrap: {
+    flex: 1,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xl,
+    gap: spacing.sm,
+  },
+  voiceIntro: {
+    gap: spacing.xs,
+  },
+  voiceIntroTitle: {
+    ...typography.title,
+    color: colors.text,
+  },
+  voiceIntroText: {
+    ...typography.body,
+    color: colors.textDim,
+    lineHeight: 22,
+  },
+  chatIntro: {
+    marginBottom: spacing.md,
+    gap: spacing.xs,
+  },
+  chatIntroTitle: {
+    ...typography.title,
+    color: colors.text,
+  },
+  chatIntroText: {
+    ...typography.body,
+    color: colors.textDim,
+    lineHeight: 22,
+  },
 
   // Header
   header: {
@@ -1057,20 +1111,12 @@ const styles = StyleSheet.create({
   empty: { paddingVertical: spacing.xl, alignItems: "center" },
   emptyText: { color: colors.textDim, textAlign: "center" },
 
-  // Status
-  statusText: {
-    color: colors.textDim,
-    fontSize: 12,
-    paddingHorizontal: spacing.md,
-    paddingBottom: 4,
-  },
-
   // Composer
   composerRow: {
     flexDirection: "row",
     alignItems: "flex-end",
     padding: spacing.md,
-    backgroundColor: colors.sidebar,
+    backgroundColor: colors.panel,
     borderTopWidth: 1,
     borderTopColor: colors.border,
     gap: spacing.sm,

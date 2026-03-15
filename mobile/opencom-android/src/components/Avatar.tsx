@@ -1,5 +1,5 @@
 import { Image, StyleSheet, Text, View } from "react-native";
-import { colors } from "../theme";
+import { colors, shadows } from "../theme";
 
 type AvatarProps = {
   username?: string | null;
@@ -49,7 +49,15 @@ export function Avatar({
       {pfpUrl ? (
         <Image
           source={{ uri: pfpUrl }}
-          style={[styles.image, { width: size, height: size, borderRadius }]}
+          style={[
+            styles.image,
+            {
+              width: size,
+              height: size,
+              borderRadius,
+              borderWidth: 1,
+            },
+          ]}
           resizeMode="cover"
         />
       ) : (
@@ -61,6 +69,7 @@ export function Avatar({
               height: size,
               borderRadius,
               backgroundColor: hashColor(username),
+              borderWidth: 1,
             },
           ]}
         >
@@ -99,10 +108,14 @@ export function Avatar({
 const styles = StyleSheet.create({
   image: {
     backgroundColor: colors.elev,
+    borderColor: colors.border,
+    ...shadows.card,
   },
   placeholder: {
     justifyContent: "center",
     alignItems: "center",
+    borderColor: colors.border,
+    ...shadows.card,
   },
   initial: {
     color: "#fff",

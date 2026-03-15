@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -8,11 +8,19 @@ import {
   Text,
   View,
 } from "react-native";
+import { Avatar } from "../components/Avatar";
+import {
+  EmptyState,
+  ScreenBackground,
+  SectionLabel,
+  StatusBanner,
+  SurfaceCard,
+  TopBar,
+} from "../components/chrome";
 import { useAuth } from "../context/AuthContext";
 import { useCoreGateway, httpToCoreGatewayWs } from "../hooks/useGateway";
-import { Avatar } from "../components/Avatar";
-import type { DmThreadApi } from "../types";
 import { colors, radii, spacing, typography } from "../theme";
+import type { DmThreadApi } from "../types";
 
 type DmsScreenProps = {
   onSelectDm: (thread: DmThreadApi) => void;
@@ -56,16 +64,13 @@ export function DmsScreen({ onSelectDm }: DmsScreenProps) {
 
   const gatewayWsUrl = httpToCoreGatewayWs(coreApiUrl);
 
-  // ── Load DMs ─────────────────────────────────────────────────────────────
-
   const loadDms = useCallback(
     async (silent = false) => {
       if (!silent) setLoading(true);
       setStatus("");
       try {
         const data = await api.getDms();
-        const threads = (data.dms ?? []) as DmThreadApi[];
-        setDmThreads(threads);
+        setDmThreads((data.dms ?? []) as DmThreadApi[]);
       } catch {
         setStatus("Failed to load messages.");
       } finally {
@@ -85,8 +90,6 @@ export function DmsScreen({ onSelectDm }: DmsScreenProps) {
     loadDms(true);
   }, [loadDms]);
 
-  // ── Real-time gateway ────────────────────────────────────────────────────
-
   useCoreGateway({
     wsUrl: gatewayWsUrl,
     accessToken: tokens?.accessToken ?? null,
@@ -95,16 +98,12 @@ export function DmsScreen({ onSelectDm }: DmsScreenProps) {
       (event) => {
         if (event.type === "DM_NEW_MESSAGE") {
           upsertDmMessage(event.threadId, event.message);
-          // If thread not in list yet, refresh from server
           setDmThreads((prev) => {
-            const exists = prev.some((t) => t.id === event.threadId);
+            const exists = prev.some((thread) => thread.id === event.threadId);
             if (!exists) {
-              // Trigger a background refresh to pick up new thread
               api
                 .getDms()
-                .then((data) => {
-                  setDmThreads(data.dms ?? []);
-                })
+                .then((data) => setDmThreads(data.dms ?? []))
                 .catch(() => {});
             }
             return prev;
@@ -113,179 +112,269 @@ export function DmsScreen({ onSelectDm }: DmsScreenProps) {
           updatePresence(event.userId, event.status, event.customStatus);
         }
       },
-      [upsertDmMessage, updatePresence, api, setDmThreads],
+      [api, setDmThreads, updatePresence, upsertDmMessage],
     ),
   });
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  const onlineThreads = useMemo(
+    () =>
+      dmThreads.filter((thread) => {
+        const statusValue = presenceByUserId[thread.participantId]?.status;
+        return statusValue && statusValue !== "offline" && statusValue !== "invisible";
+      }),
+    [dmThreads, presenceByUserId],
+  );
 
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={colors.brand} />
-        <Text style={styles.subtle}>Loading messages...</Text>
-      </View>
-    );
-  }
-
-  if (dmThreads.length === 0) {
-    return (
-      <View style={styles.centered}>
-        <Text style={styles.emptyIcon}>💬</Text>
-        <Text style={styles.empty}>No direct messages yet.</Text>
-        <Text style={styles.emptyHint}>
-          Add friends to start a conversation.
-        </Text>
-        {status ? <Text style={styles.status}>{status}</Text> : null}
-      </View>
+      <ScreenBackground>
+        <TopBar title="Messages" subtitle="Loading your conversations" />
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.brand} />
+          <Text style={styles.loadingText}>Syncing recent direct messages…</Text>
+        </View>
+      </ScreenBackground>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <FlatList
-        data={dmThreads}
-        keyExtractor={(t) => t.id}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={colors.brand}
-            colors={[colors.brand]}
-          />
-        }
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
-        renderItem={({ item }) => {
-          const presence = presenceByUserId[item.participantId];
-          const status = presence?.status;
-          const lastTime = formatLastTime(item.lastMessageAt);
-          const preview = item.lastMessageContent
-            ? item.lastMessageContent.length > 60
-              ? item.lastMessageContent.slice(0, 60) + "…"
-              : item.lastMessageContent
-            : null;
-
-          return (
-            <Pressable
-              style={({ pressed }) => [
-                styles.threadRow,
-                pressed && styles.threadRowPressed,
-              ]}
-              onPress={() => onSelectDm(item)}
-            >
-              <Avatar
-                username={item.name}
-                pfpUrl={item.pfp_url}
-                size={46}
-                status={status}
-                showStatus
-              />
-              <View style={styles.threadInfo}>
-                <View style={styles.threadTop}>
-                  <Text style={styles.threadName} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                  {lastTime ? (
-                    <Text style={styles.threadTime}>{lastTime}</Text>
-                  ) : null}
-                </View>
-                {preview ? (
-                  <Text style={styles.threadPreview} numberOfLines={1}>
-                    {preview}
-                  </Text>
-                ) : status ? (
-                  <Text
-                    style={[styles.threadPreview, styles.threadPreviewStatus]}
-                    numberOfLines={1}
-                  >
-                    {presence?.customStatus ?? status}
-                  </Text>
-                ) : null}
-              </View>
-              <Text style={styles.chevron}>›</Text>
-            </Pressable>
-          );
-        }}
+    <ScreenBackground>
+      <TopBar
+        title="Messages"
+        subtitle={`${dmThreads.length} direct ${dmThreads.length === 1 ? "message" : "messages"} ready`}
       />
-      {status ? <Text style={styles.status}>{status}</Text> : null}
-    </View>
+
+      {dmThreads.length === 0 ? (
+        <View style={styles.emptyWrap}>
+          <EmptyState
+            eyebrow="DIRECT MESSAGES"
+            icon="💬"
+            title="No direct messages yet"
+            hint="Add friends from the Friends tab and your conversations will appear here."
+          />
+        </View>
+      ) : (
+        <FlatList
+          data={dmThreads}
+          keyExtractor={(thread) => thread.id}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.brand}
+              colors={[colors.brand]}
+            />
+          }
+          contentContainerStyle={styles.listContent}
+          ListHeaderComponent={
+            <View style={styles.headerStack}>
+              <SurfaceCard style={styles.summaryCard}>
+                <Text style={styles.summaryEyebrow}>DIRECT MESSAGES</Text>
+                <Text style={styles.summaryTitle}>Your recent conversations</Text>
+                <Text style={styles.summaryBody}>
+                  Pick up where you left off or jump into an active chat.
+                </Text>
+
+                {onlineThreads.length > 0 ? (
+                  <View style={styles.activeStrip}>
+                    {onlineThreads.slice(0, 4).map((thread) => (
+                      <Pressable
+                        key={`active-${thread.id}`}
+                        style={({ pressed }) => [
+                          styles.activeChip,
+                          pressed && styles.activeChipPressed,
+                        ]}
+                        onPress={() => onSelectDm(thread)}
+                      >
+                        <Avatar
+                          username={thread.name}
+                          pfpUrl={thread.pfp_url}
+                          size={30}
+                          status={presenceByUserId[thread.participantId]?.status}
+                          showStatus
+                        />
+                        <Text style={styles.activeChipLabel} numberOfLines={1}>
+                          {thread.name}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : null}
+              </SurfaceCard>
+
+              <SectionLabel title="Recent Threads" />
+            </View>
+          }
+          ItemSeparatorComponent={() => <View style={{ height: spacing.sm }} />}
+          renderItem={({ item }) => {
+            const presence = presenceByUserId[item.participantId];
+            const preview = item.lastMessageContent
+              ? item.lastMessageContent.length > 72
+                ? item.lastMessageContent.slice(0, 72) + "…"
+                : item.lastMessageContent
+              : presence?.customStatus || presence?.status || "No messages yet";
+
+            return (
+              <SurfaceCard style={styles.threadCard} padded={false}>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.threadRow,
+                    pressed && styles.threadRowPressed,
+                  ]}
+                  onPress={() => onSelectDm(item)}
+                >
+                  <Avatar
+                    username={item.name}
+                    pfpUrl={item.pfp_url}
+                    size={48}
+                    status={presence?.status}
+                    showStatus
+                  />
+                  <View style={styles.threadInfo}>
+                    <View style={styles.threadTop}>
+                      <Text style={styles.threadName} numberOfLines={1}>
+                        {item.name}
+                      </Text>
+                      <Text style={styles.threadTime}>
+                        {formatLastTime(item.lastMessageAt)}
+                      </Text>
+                    </View>
+                    <Text style={styles.threadPreview} numberOfLines={2}>
+                      {preview}
+                    </Text>
+                  </View>
+                  <View style={styles.threadChevronWrap}>
+                    <Text style={styles.threadChevron}>›</Text>
+                  </View>
+                </Pressable>
+              </SurfaceCard>
+            );
+          }}
+        />
+      )}
+
+      {status ? <StatusBanner text={status} onDismiss={() => setStatus("")} /> : null}
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
   centered: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    padding: spacing.xl,
+    paddingHorizontal: spacing.xl,
+    gap: spacing.sm,
   },
-  subtle: { color: colors.textDim, marginTop: spacing.sm },
-  emptyIcon: { fontSize: 48, marginBottom: spacing.md },
-  empty: {
+  loadingText: {
     ...typography.body,
+    color: colors.textDim,
+    textAlign: "center",
+  },
+  emptyWrap: {
+    flex: 1,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xl,
+    justifyContent: "center",
+  },
+  listContent: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xl,
+  },
+  headerStack: {
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  summaryCard: {
+    gap: spacing.sm,
+  },
+  summaryEyebrow: {
+    ...typography.eyebrow,
+    color: colors.textDim,
+  },
+  summaryTitle: {
+    ...typography.title,
     color: colors.text,
-    textAlign: "center",
-    fontWeight: "600",
   },
-  emptyHint: {
+  summaryBody: {
+    ...typography.body,
     color: colors.textDim,
-    marginTop: spacing.sm,
-    textAlign: "center",
+    lineHeight: 22,
   },
-  status: {
-    color: colors.textDim,
-    fontSize: 13,
-    padding: spacing.md,
-    textAlign: "center",
+  activeStrip: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
   },
-  separator: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginHorizontal: spacing.md,
+  activeChip: {
+    minWidth: "47%",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.md,
+    backgroundColor: colors.panelAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  activeChipPressed: {
+    backgroundColor: colors.hover,
+  },
+  activeChipLabel: {
+    ...typography.caption,
+    color: colors.textSoft,
+    fontWeight: "700",
+    flex: 1,
+  },
+  threadCard: {
+    overflow: "hidden",
   },
   threadRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
     gap: spacing.md,
-    backgroundColor: colors.background,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
   },
-  threadRowPressed: { backgroundColor: colors.hover },
+  threadRowPressed: {
+    backgroundColor: colors.hover,
+  },
   threadInfo: {
     flex: 1,
     minWidth: 0,
-    gap: 3,
+    gap: 4,
   },
   threadTop: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     gap: spacing.sm,
   },
   threadName: {
-    ...typography.body,
+    ...typography.heading,
     color: colors.text,
-    fontWeight: "600",
     flex: 1,
   },
   threadTime: {
     ...typography.label,
     color: colors.textDim,
-    flexShrink: 0,
   },
   threadPreview: {
     ...typography.caption,
-    color: colors.textDim,
+    color: colors.textSoft,
+    lineHeight: 18,
   },
-  threadPreviewStatus: {
-    textTransform: "capitalize",
-    fontStyle: "italic",
+  threadChevronWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.brandMuted,
   },
-  chevron: {
+  threadChevron: {
     fontSize: 20,
-    color: colors.textDim,
-    flexShrink: 0,
+    color: colors.text,
+    lineHeight: 22,
   },
 });

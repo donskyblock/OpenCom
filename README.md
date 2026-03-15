@@ -62,7 +62,7 @@ An open source communication platform
 
 **TODO LIST**
 
-- [ ] Finish Mobile APp
+- [ ] Finish Mobile APP
 
 - [ ] Add more callbacks to the github in the frontend
 

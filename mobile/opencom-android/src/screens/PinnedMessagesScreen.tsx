@@ -8,6 +8,13 @@ import {
   Text,
   View,
 } from "react-native";
+import {
+  EmptyState,
+  ScreenBackground,
+  StatusBanner,
+  SurfaceCard,
+  TopBar,
+} from "../components/chrome";
 import { useAuth } from "../context/AuthContext";
 import { Avatar } from "../components/Avatar";
 import type { CoreServer, Channel, DmThreadApi, PinnedMessage } from "../types";
@@ -182,34 +189,35 @@ export function PinnedMessagesScreen(props: PinnedMessagesScreenProps) {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Pressable onPress={onBack} style={styles.backBtn} hitSlop={8}>
-          <Text style={styles.backText}>←</Text>
-        </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          📌 {title}
-        </Text>
-      </View>
+    <ScreenBackground>
+      <TopBar title="Pinned Messages" subtitle={title} onBack={onBack} />
 
       {loading ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={colors.brand} />
         </View>
       ) : pins.length === 0 ? (
-        <View style={styles.centered}>
-          <Text style={styles.emptyIcon}>📌</Text>
-          <Text style={styles.emptyText}>No pinned messages</Text>
-          <Text style={styles.emptyHint}>
-            Long-press a message and tap Pin to save it here.
-          </Text>
+        <View style={styles.emptyWrap}>
+          <EmptyState
+            eyebrow="PINS"
+            icon="📌"
+            title="No pinned messages"
+            hint="Long-press a message and tap Pin to save it here."
+          />
         </View>
       ) : (
         <FlatList
           data={pins}
-          keyExtractor={(p) => p.id}
+          keyExtractor={(pin) => pin.id}
           contentContainerStyle={styles.listContent}
+          ListHeaderComponent={
+            <SurfaceCard style={styles.summaryCard}>
+              <Text style={styles.summaryText}>
+                Saved messages stay here so you can revisit important notes,
+                links, and decisions without digging through the whole chat.
+              </Text>
+            </SurfaceCard>
+          }
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           renderItem={({ item }) => (
             <PinCard pin={item} canUnpin onUnpin={handleUnpin} />
@@ -217,35 +225,14 @@ export function PinnedMessagesScreen(props: PinnedMessagesScreenProps) {
         />
       )}
 
-      {!!status && (
-        <View style={styles.statusBar}>
-          <Text style={styles.statusText}>{status}</Text>
-        </View>
-      )}
-    </View>
+      {status ? <StatusBanner text={status} onDismiss={() => setStatus("")} /> : null}
+    </ScreenBackground>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-
-  // Header
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.sidebar,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    gap: spacing.sm,
-  },
-  backBtn: { padding: spacing.xs },
-  backText: { fontSize: 22, color: colors.text },
-  headerTitle: { ...typography.heading, color: colors.text, flex: 1 },
-
   // States
   centered: {
     flex: 1,
@@ -253,6 +240,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: spacing.xl,
     gap: spacing.md,
+  },
+  emptyWrap: {
+    flex: 1,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xl,
+    justifyContent: "center",
+  },
+  summaryCard: {
+    marginBottom: spacing.md,
+  },
+  summaryText: {
+    ...typography.body,
+    color: colors.textDim,
+    lineHeight: 22,
   },
   emptyIcon: { fontSize: 48 },
   emptyText: {
@@ -268,7 +269,8 @@ const styles = StyleSheet.create({
 
   // List
   listContent: {
-    padding: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xl,
     gap: spacing.sm,
   },
   separator: {
@@ -350,18 +352,5 @@ const styles = StyleSheet.create({
     color: colors.danger,
     fontSize: 13,
     fontWeight: "600",
-  },
-
-  // Status
-  statusBar: {
-    padding: spacing.md,
-    backgroundColor: colors.elev,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    alignItems: "center",
-  },
-  statusText: {
-    ...typography.caption,
-    color: colors.textDim,
   },
 });

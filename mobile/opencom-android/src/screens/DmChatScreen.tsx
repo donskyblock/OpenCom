@@ -13,6 +13,12 @@ import {
   TextInput,
   View,
 } from "react-native";
+import {
+  ScreenBackground,
+  StatusBanner,
+  SurfaceCard,
+  TopBar,
+} from "../components/chrome";
 import { useAuth } from "../context/AuthContext";
 import { useCoreGateway, httpToCoreGatewayWs } from "../hooks/useGateway";
 import { Avatar } from "../components/Avatar";
@@ -407,179 +413,200 @@ export function DmChatScreen({
   // ── Render ─────────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={colors.brand} />
-      </View>
+      <ScreenBackground>
+        <TopBar
+          title={thread.name}
+          subtitle="Loading conversation"
+          onBack={onBack}
+        />
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.brand} />
+        </View>
+      </ScreenBackground>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={0}
-    >
-      {/* Header */}
-      <View style={styles.header}>
-        <Pressable onPress={onBack} style={styles.backBtn} hitSlop={8}>
-          <Text style={styles.backText}>←</Text>
-        </Pressable>
-        <Avatar
-          username={thread.name}
-          pfpUrl={thread.pfp_url}
-          size={32}
-          status={participantPresence?.status}
-          showStatus
-        />
-        <View style={styles.headerInfo}>
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {thread.name}
-          </Text>
-          {participantPresence?.status && (
-            <Text style={styles.headerStatus}>
-              {participantPresence.customStatus
-                ? participantPresence.customStatus
-                : participantPresence.status}
-            </Text>
-          )}
-        </View>
-        {onViewPins && (
-          <Pressable onPress={onViewPins} style={styles.headerBtn} hitSlop={8}>
-            <Text style={styles.headerBtnText}>📌</Text>
-          </Pressable>
-        )}
-      </View>
-
-      {/* Message list */}
-      <FlatList
-        ref={listRef}
-        data={messages}
-        keyExtractor={(m) => m.id}
-        contentContainerStyle={styles.listContent}
-        onScroll={(e) => {
-          const { layoutMeasurement, contentOffset, contentSize } =
-            e.nativeEvent;
-          isAtBottomRef.current =
-            layoutMeasurement.height + contentOffset.y >=
-            contentSize.height - 40;
-        }}
-        scrollEventThrottle={100}
-        ListHeaderComponent={
-          loadingOlder ? (
-            <ActivityIndicator
-              style={{ marginVertical: spacing.md }}
-              color={colors.brand}
-            />
-          ) : hasMore ? (
-            <Pressable style={styles.loadMoreBtn} onPress={loadOlderMessages}>
-              <Text style={styles.loadMoreText}>Load older messages</Text>
-            </Pressable>
-          ) : null
-        }
-        renderItem={({ item }) => (
-          <MessageItem
-            message={item}
-            myId={me?.id ?? ""}
-            participantId={thread.participantId}
-            onLongPress={openContextMenu}
-          />
-        )}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>
-              No messages yet. Say hello to {thread.name}!
-            </Text>
-          </View>
-        }
-      />
-
-      {/* Status */}
-      {!!status && <Text style={styles.statusText}>{status}</Text>}
-
-      {/* Reply bar */}
-      {replyTarget && (
-        <ReplyBar target={replyTarget} onClear={() => setReplyTarget(null)} />
-      )}
-
-      {/* Composer */}
-      <View style={styles.composerRow}>
-        <TextInput
-          value={composer}
-          onChangeText={setComposer}
-          style={styles.composerInput}
-          placeholder={`Message ${thread.name}`}
-          placeholderTextColor={colors.textDim}
-          multiline
-          maxLength={4000}
-          editable={!sending}
-        />
-        <Pressable
-          style={[
-            styles.sendBtn,
-            (!composer.trim() || sending) && styles.sendBtnDisabled,
-          ]}
-          onPress={onSend}
-          disabled={!composer.trim() || sending}
-        >
-          {sending ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={styles.sendBtnText}>Send</Text>
-          )}
-        </Pressable>
-      </View>
-
-      {/* Android context menu */}
-      <Modal
-        visible={!!contextMenu}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setContextMenu(null)}
+    <ScreenBackground>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={0}
       >
-        <Pressable
-          style={styles.contextOverlay}
-          onPress={() => setContextMenu(null)}
-        >
-          <View style={styles.contextCard}>
-            <Text style={styles.contextTitle} numberOfLines={2}>
-              {contextMenu?.message.content}
-            </Text>
-            {[
-              { label: "↩️  Reply", action: "reply" },
-              ...(contextMenu?.isOwn
-                ? [{ label: "🗑️  Delete", action: "delete" }]
-                : []),
-              { label: "📋  Copy", action: "copy" },
-            ].map(({ label, action }) => (
-              <Pressable
-                key={action}
-                style={({ pressed }) => [
-                  styles.contextItem,
-                  pressed && styles.contextItemPressed,
-                  action === "delete" && styles.contextItemDanger,
-                ]}
-                onPress={() => handleContextAction(action)}
-              >
-                <Text
-                  style={[
-                    styles.contextItemText,
-                    action === "delete" && styles.contextItemTextDanger,
-                  ]}
-                >
-                  {label}
-                </Text>
+        <TopBar
+          title={thread.name}
+          subtitle={
+            participantPresence?.customStatus ||
+            participantPresence?.status ||
+            "Direct message"
+          }
+          onBack={onBack}
+          leading={
+            <Avatar
+              username={thread.name}
+              pfpUrl={thread.pfp_url}
+              size={32}
+              status={participantPresence?.status}
+              showStatus
+            />
+          }
+          right={
+            onViewPins ? (
+              <Pressable onPress={onViewPins} style={styles.headerBtn} hitSlop={8}>
+                <Text style={styles.headerBtnText}>📌</Text>
               </Pressable>
-            ))}
-          </View>
-        </Pressable>
-      </Modal>
-    </KeyboardAvoidingView>
+            ) : undefined
+          }
+        />
+
+        <FlatList
+          ref={listRef}
+          data={messages}
+          keyExtractor={(message) => message.id}
+          contentContainerStyle={styles.listContent}
+          onScroll={(event) => {
+            const { layoutMeasurement, contentOffset, contentSize } =
+              event.nativeEvent;
+            isAtBottomRef.current =
+              layoutMeasurement.height + contentOffset.y >=
+              contentSize.height - 40;
+          }}
+          scrollEventThrottle={100}
+          ListHeaderComponent={
+            <>
+              <SurfaceCard style={styles.chatIntro}>
+                <Text style={styles.chatIntroTitle}>{thread.name}</Text>
+                <Text style={styles.chatIntroText}>
+                  Direct messages share the same layered chat shell as desktop,
+                  with pinned messages, replies, and live updates.
+                </Text>
+              </SurfaceCard>
+              {loadingOlder ? (
+                <ActivityIndicator
+                  style={{ marginVertical: spacing.md }}
+                  color={colors.brand}
+                />
+              ) : hasMore ? (
+                <Pressable style={styles.loadMoreBtn} onPress={loadOlderMessages}>
+                  <Text style={styles.loadMoreText}>Load older messages</Text>
+                </Pressable>
+              ) : null}
+            </>
+          }
+          renderItem={({ item }) => (
+            <MessageItem
+              message={item}
+              myId={me?.id ?? ""}
+              participantId={thread.participantId}
+              onLongPress={openContextMenu}
+            />
+          )}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Text style={styles.emptyText}>
+                No messages yet. Say hello to {thread.name}!
+              </Text>
+            </View>
+          }
+        />
+
+        {status ? <StatusBanner text={status} onDismiss={() => setStatus("")} /> : null}
+
+        {replyTarget ? (
+          <ReplyBar target={replyTarget} onClear={() => setReplyTarget(null)} />
+        ) : null}
+
+        <View style={styles.composerRow}>
+          <TextInput
+            value={composer}
+            onChangeText={setComposer}
+            style={styles.composerInput}
+            placeholder={`Message ${thread.name}`}
+            placeholderTextColor={colors.textDim}
+            multiline
+            maxLength={4000}
+            editable={!sending}
+          />
+          <Pressable
+            style={[
+              styles.sendBtn,
+              (!composer.trim() || sending) && styles.sendBtnDisabled,
+            ]}
+            onPress={onSend}
+            disabled={!composer.trim() || sending}
+          >
+            {sending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.sendBtnText}>Send</Text>
+            )}
+          </Pressable>
+        </View>
+
+        <Modal
+          visible={!!contextMenu}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setContextMenu(null)}
+        >
+          <Pressable
+            style={styles.contextOverlay}
+            onPress={() => setContextMenu(null)}
+          >
+            <View style={styles.contextCard}>
+              <Text style={styles.contextTitle} numberOfLines={2}>
+                {contextMenu?.message.content}
+              </Text>
+              {[
+                { label: "↩️  Reply", action: "reply" },
+                ...(contextMenu?.isOwn
+                  ? [{ label: "🗑️  Delete", action: "delete" }]
+                  : []),
+                { label: "📋  Copy", action: "copy" },
+              ].map(({ label, action }) => (
+                <Pressable
+                  key={action}
+                  style={({ pressed }) => [
+                    styles.contextItem,
+                    pressed && styles.contextItemPressed,
+                    action === "delete" && styles.contextItemDanger,
+                  ]}
+                  onPress={() => handleContextAction(action)}
+                >
+                  <Text
+                    style={[
+                      styles.contextItemText,
+                      action === "delete" && styles.contextItemTextDanger,
+                    ]}
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </Pressable>
+        </Modal>
+      </KeyboardAvoidingView>
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
+  container: { flex: 1 },
   centered: { flex: 1, justifyContent: "center", alignItems: "center" },
+  chatIntro: {
+    marginBottom: spacing.md,
+    gap: spacing.xs,
+  },
+  chatIntroTitle: {
+    ...typography.title,
+    color: colors.text,
+  },
+  chatIntroText: {
+    ...typography.body,
+    color: colors.textDim,
+    lineHeight: 22,
+  },
 
   // Header
   header: {
@@ -693,20 +720,12 @@ const styles = StyleSheet.create({
   empty: { paddingVertical: spacing.xl, alignItems: "center" },
   emptyText: { color: colors.textDim, textAlign: "center" },
 
-  // Status
-  statusText: {
-    color: colors.textDim,
-    fontSize: 12,
-    paddingHorizontal: spacing.md,
-    paddingBottom: 4,
-  },
-
   // Composer
   composerRow: {
     flexDirection: "row",
     alignItems: "flex-end",
     padding: spacing.md,
-    backgroundColor: colors.sidebar,
+    backgroundColor: colors.panel,
     borderTopWidth: 1,
     borderTopColor: colors.border,
     gap: spacing.sm,
