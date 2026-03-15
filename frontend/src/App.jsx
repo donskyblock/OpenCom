@@ -1748,7 +1748,9 @@ export function App() {
     channelId: "",
   });
   const [isDisconnectingVoice, setIsDisconnectingVoice] = useState(false);
+  const [isCameraEnabled, setIsCameraEnabled] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [localCameraStream, setLocalCameraStream] = useState(null);
   const [selectedScreenShareProducerId, setSelectedScreenShareProducerId] =
     useState("");
   const [isMuted, setIsMuted] = useState(false);
@@ -1905,7 +1907,7 @@ export function App() {
   const [dmNotification, setDmNotification] = useState(null);
   const [voiceStatesByGuild, setVoiceStatesByGuild] = useState({});
   const [voiceSpeakingByGuild, setVoiceSpeakingByGuild] = useState({});
-  const [remoteScreenSharesByProducerId, setRemoteScreenSharesByProducerId] =
+  const [remoteVideoStreamsByProducerId, setRemoteVideoStreamsByProducerId] =
     useState({});
   const [voiceMemberAudioPrefsByGuild, setVoiceMemberAudioPrefsByGuild] =
     useState(getStoredJson(VOICE_MEMBER_AUDIO_PREFS_KEY, {}));
@@ -1997,11 +1999,16 @@ export function App() {
       onLocalAudioProcessingInfo: (info) => {
         setLocalAudioProcessingInfo(info || null);
       },
-      onRemoteVideoAdded: ({ producerId, userId, stream }) => {
+      onRemoteVideoAdded: ({ producerId, userId, stream, source }) => {
         if (!producerId || !stream) return;
-        setRemoteScreenSharesByProducerId((prev) => ({
+        setRemoteVideoStreamsByProducerId((prev) => ({
           ...prev,
-          [producerId]: { producerId, userId: userId || "", stream },
+          [producerId]: {
+            producerId,
+            userId: userId || "",
+            stream,
+            source: source === "screen" ? "screen" : "camera",
+          },
         }));
       },
       onRemoteAudioAdded: ({ guildId, userId }) => {
@@ -2014,15 +2021,21 @@ export function App() {
       },
       onRemoteVideoRemoved: ({ producerId }) => {
         if (!producerId) return;
-        setRemoteScreenSharesByProducerId((prev) => {
+        setRemoteVideoStreamsByProducerId((prev) => {
           if (!prev[producerId]) return prev;
           const next = { ...prev };
           delete next[producerId];
           return next;
         });
       },
+      onCameraStateChange: (nextState) => {
+        setIsCameraEnabled(!!nextState);
+      },
       onScreenShareStateChange: (nextState) => {
         setIsScreenSharing(!!nextState);
+      },
+      onLocalCameraStreamChange: (stream) => {
+        setLocalCameraStream(stream || null);
       },
     });
   }
@@ -2624,6 +2637,7 @@ export function App() {
             channelId: voiceSession.channelId || "",
             muted: !!isMuted,
             deafened: !!isDeafened,
+            cameraEnabled: !!isCameraEnabled,
             screenSharing: !!isScreenSharing,
           }),
           join: async (channelId) => {
@@ -2640,6 +2654,9 @@ export function App() {
           setDeafened: (nextDeafened) => setIsDeafened(!!nextDeafened),
           toggleScreenShare: async () => {
             await toggleScreenShare();
+          },
+          toggleCamera: async () => {
+            await toggleCamera();
           },
           onStateChange: (handler) => {
             if (typeof handler !== "function") return () => {};
@@ -3434,9 +3451,19 @@ export function App() {
       voiceSpeakingByGuild,
     ],
   );
+  const remoteVideoStreams = useMemo(
+    () => Object.values(remoteVideoStreamsByProducerId),
+    [remoteVideoStreamsByProducerId],
+  );
   const remoteScreenShares = useMemo(
-    () => Object.values(remoteScreenSharesByProducerId),
-    [remoteScreenSharesByProducerId],
+    () =>
+      remoteVideoStreams.filter((stream) => String(stream?.source) === "screen"),
+    [remoteVideoStreams],
+  );
+  const remoteCameraStreams = useMemo(
+    () =>
+      remoteVideoStreams.filter((stream) => String(stream?.source) === "camera"),
+    [remoteVideoStreams],
   );
   const enrichedRemoteScreenShares = useMemo(
     () =>
@@ -3450,6 +3477,26 @@ export function App() {
       }),
     [remoteScreenShares, voiceIdentityByUserId],
   );
+  const enrichedRemoteCameraStreams = useMemo(
+    () =>
+      remoteCameraStreams.map((camera) => {
+        const identity = voiceIdentityByUserId.get(camera.userId) || null;
+        return {
+          ...camera,
+          userName: identity?.username || camera.userId || "Camera",
+          userPfp: identity?.pfpUrl || null,
+        };
+      }),
+    [remoteCameraStreams, voiceIdentityByUserId],
+  );
+  const remoteCameraByUserId = useMemo(() => {
+    const map = new Map();
+    enrichedRemoteCameraStreams.forEach((camera) => {
+      if (!camera.userId || map.has(camera.userId)) return;
+      map.set(camera.userId, camera);
+    });
+    return map;
+  }, [enrichedRemoteCameraStreams]);
   const selectedRemoteScreenShare = useMemo(() => {
     if (!enrichedRemoteScreenShares.length) return null;
     return (
@@ -3458,32 +3505,60 @@ export function App() {
       ) || enrichedRemoteScreenShares[0]
     );
   }, [enrichedRemoteScreenShares, selectedScreenShareProducerId]);
+  const liveCameraCount =
+    enrichedRemoteCameraStreams.length + (isCameraEnabled ? 1 : 0);
 
   const isViewingConnectedServerVoice =
     activeChannel?.type === "voice" &&
     activeChannel?.id === voiceConnectedChannelId &&
     activeGuildId === voiceConnectedGuildId;
 
+  function attachCameraStreamsToParticipants(participants = []) {
+    return participants.map((participant) => {
+      const remoteCamera =
+        remoteCameraByUserId.get(participant.userId) || null;
+      const selfCameraStream =
+        participant.userId === me?.id && isCameraEnabled ? localCameraStream : null;
+      return {
+        ...participant,
+        videoStream: selfCameraStream || remoteCamera?.stream || null,
+        hasCamera: !!(selfCameraStream || remoteCamera?.stream),
+      };
+    });
+  }
+
   const activeVoiceStageParticipants = useMemo(() => {
     if (activeChannel?.type !== "voice") return [];
-    return getVoiceParticipantsForContext(activeGuildId, activeChannel.id);
+    return attachCameraStreamsToParticipants(
+      getVoiceParticipantsForContext(activeGuildId, activeChannel.id),
+    );
   }, [
     activeChannel?.id,
     activeChannel?.type,
     activeGuildId,
     getVoiceParticipantsForContext,
+    isCameraEnabled,
+    localCameraStream,
+    me?.id,
+    remoteCameraByUserId,
   ]);
 
   const privateCallParticipants = useMemo(() => {
     if (!activePrivateCall?.channelId || !activePrivateCall?.guildId) return [];
-    return getVoiceParticipantsForContext(
-      activePrivateCall.guildId,
-      activePrivateCall.channelId,
+    return attachCameraStreamsToParticipants(
+      getVoiceParticipantsForContext(
+        activePrivateCall.guildId,
+        activePrivateCall.channelId,
+      ),
     );
   }, [
     activePrivateCall?.channelId,
     activePrivateCall?.guildId,
     getVoiceParticipantsForContext,
+    isCameraEnabled,
+    localCameraStream,
+    me?.id,
+    remoteCameraByUserId,
   ]);
   const fullProfileViewerHasMusicElement = useMemo(() => {
     const elements = fullProfileViewer?.fullProfile?.elements;
@@ -6265,6 +6340,7 @@ export function App() {
           channelId: voiceSession.channelId || "",
           muted: !!isMuted,
           deafened: !!isDeafened,
+          cameraEnabled: !!isCameraEnabled,
           screenSharing: !!isScreenSharing,
         },
       }),
@@ -6274,6 +6350,7 @@ export function App() {
     voiceSession.channelId,
     isMuted,
     isDeafened,
+    isCameraEnabled,
     isScreenSharing,
   ]);
 
@@ -9640,8 +9717,10 @@ export function App() {
     };
     setIsMicMonitorActive(false);
     await voiceSfuRef.current?.cleanup();
+    setIsCameraEnabled(false);
     setIsScreenSharing(false);
-    setRemoteScreenSharesByProducerId({});
+    setLocalCameraStream(null);
+    setRemoteVideoStreamsByProducerId({});
     setSelectedScreenShareProducerId("");
   }
 
@@ -10102,6 +10181,44 @@ export function App() {
 
   // ── End private call functions ──────────────────────────────────────────────
 
+  async function toggleCamera() {
+    if (!isInVoiceChannel) return;
+    try {
+      if (isCameraEnabled) {
+        await voiceSfuRef.current?.stopCamera();
+        setStatus("Camera turned off.");
+      } else {
+        await voiceSfuRef.current?.startCamera();
+        setStatus("Camera turned on.");
+      }
+    } catch (error) {
+      const reason = String(error?.name || error?.message || "");
+      if (
+        reason === "NotAllowedError" ||
+        reason === "PermissionDeniedError" ||
+        reason.includes("Permission denied")
+      ) {
+        setStatus("Camera access was denied.");
+        await alertDialog(
+          "OpenCom needs camera permission before you can turn your webcam on.",
+          "Camera Permission Needed",
+        );
+        return;
+      }
+      if (reason === "NotFoundError" || reason === "CAMERA_TRACK_NOT_FOUND") {
+        setStatus("No camera was found.");
+        await alertDialog(
+          "No usable camera device was found for this call.",
+          "Camera Not Found",
+        );
+        return;
+      }
+      const message = `Camera failed: ${error?.message || "CAMERA_FAILED"}`;
+      setStatus(message);
+      await alertDialog(message, "Camera Error");
+    }
+  }
+
   async function toggleScreenShare() {
     if (!isInVoiceChannel) return;
     try {
@@ -10237,8 +10354,10 @@ export function App() {
 
     const forceLocalDisconnect = async () => {
       setVoiceSession({ guildId: "", channelId: "" });
+      setIsCameraEnabled(false);
       setIsScreenSharing(false);
-      setRemoteScreenSharesByProducerId({});
+      setLocalCameraStream(null);
+      setRemoteVideoStreamsByProducerId({});
       setIsMuted(false);
       setIsDeafened(false);
       if (me?.id) {
@@ -12037,6 +12156,13 @@ export function App() {
                   {isDeafened ? "🔕" : "🎧"}
                 </button>
                 <button
+                  className={`voice-action-pill ${isCameraEnabled ? "active" : ""}`}
+                  title={isCameraEnabled ? "Turn camera off" : "Turn camera on"}
+                  onClick={toggleCamera}
+                >
+                  {isCameraEnabled ? "📷" : "📸"}
+                </button>
+                <button
                   className={`voice-action-pill ${isScreenSharing ? "active" : ""}`}
                   title={
                     isScreenSharing ? "Stop screen share" : "Start screen share"
@@ -12071,14 +12197,16 @@ export function App() {
                       ? `${remoteScreenShares.length} live ${
                           remoteScreenShares.length === 1 ? "share" : "shares"
                         }`
+                      : liveCameraCount
+                        ? `${liveCameraCount} camera${liveCameraCount === 1 ? "" : "s"} live`
                       : activePrivateCall?.callId
                         ? "Private call live"
                         : "Voice room live"}
                   </strong>
                   <span>
                     {activePrivateCall?.callId
-                      ? "Open the call stage to switch screens or go fullscreen."
-                      : "Jump back into the full call view anytime."}
+                      ? "Open the call stage to switch screens, watch cameras, or go fullscreen."
+                      : "Jump back into the full call view for screens and cameras anytime."}
                   </span>
                 </div>
                 <button type="button" className="ghost" onClick={openCurrentCallView}>
@@ -12238,13 +12366,30 @@ export function App() {
                   {showServerVoiceStage ? (
                     <>
                       {isViewingConnectedServerVoice ? (
-                        <button
-                          className="icon-btn ghost"
-                          title={isScreenSharing ? "Stop screen share" : "Start screen share"}
-                          onClick={toggleScreenShare}
-                        >
-                          {isScreenSharing ? "🖥️" : "📺"}
-                        </button>
+                        <>
+                          <button
+                            className="icon-btn ghost"
+                            title={
+                              isCameraEnabled
+                                ? "Turn camera off"
+                                : "Turn camera on"
+                            }
+                            onClick={toggleCamera}
+                          >
+                            {isCameraEnabled ? "📷" : "📸"}
+                          </button>
+                          <button
+                            className="icon-btn ghost"
+                            title={
+                              isScreenSharing
+                                ? "Stop screen share"
+                                : "Start screen share"
+                            }
+                            onClick={toggleScreenShare}
+                          >
+                            {isScreenSharing ? "🖥️" : "📺"}
+                          </button>
+                        </>
                       ) : null}
                       <button
                         className="ghost"
@@ -12311,9 +12456,12 @@ export function App() {
                   isConnected={!!isViewingConnectedServerVoice}
                   isMuted={isMuted}
                   isDeafened={isDeafened}
+                  isCameraEnabled={isCameraEnabled}
                   isScreenSharing={isScreenSharing}
+                  liveCameraCount={liveCameraCount}
                   onToggleMute={() => setIsMuted((value) => !value)}
                   onToggleDeafen={() => setIsDeafened((value) => !value)}
+                  onToggleCamera={toggleCamera}
                   onToggleScreenShare={toggleScreenShare}
                   onJoin={() => joinVoiceChannel(activeChannel)}
                   onLeave={leaveVoiceChannel}
@@ -12326,8 +12474,8 @@ export function App() {
                   }
                   emptyDescription={
                     isViewingConnectedServerVoice
-                      ? "Everyone in the voice room appears here, and live shares can be focused in fullscreen."
-                      : "Join this voice room to hear the call, watch live shares, and pop them fullscreen."
+                      ? "Everyone in the voice room appears here, with live cameras and screen shares ready to focus fullscreen."
+                      : "Join this voice room to hear the call, watch live cameras and shares, and pop them fullscreen."
                   }
                 />
               ) : (
@@ -13090,7 +13238,7 @@ export function App() {
             {showPrivateCallStage ? (
               <VoiceCallStage
                 title={activePrivateCall?.otherName || activeDm?.name || "Private call"}
-                subtitle="Private voice call with live screen sharing"
+                subtitle="Private voice call with camera and screen sharing"
                 participants={privateCallParticipants}
                 remoteScreenShares={enrichedRemoteScreenShares}
                 selectedRemoteScreenShare={selectedRemoteScreenShare}
@@ -13098,17 +13246,20 @@ export function App() {
                 isConnected
                 isMuted={isMuted}
                 isDeafened={isDeafened}
+                isCameraEnabled={isCameraEnabled}
                 isScreenSharing={isScreenSharing}
+                liveCameraCount={liveCameraCount}
                 duration={callDuration}
                 onToggleMute={() => setIsMuted((value) => !value)}
                 onToggleDeafen={() => setIsDeafened((value) => !value)}
+                onToggleCamera={toggleCamera}
                 onToggleScreenShare={toggleScreenShare}
                 onLeave={endPrivateCall}
                 onClose={() => setPrivateCallViewOpen(false)}
                 showClose
                 leaveLabel="End call"
                 emptyTitle="Focus the conversation"
-                emptyDescription="Screen shares, participant cards, and fullscreen viewing all live here while the private call is active."
+                emptyDescription="Camera tiles, screen shares, and fullscreen viewing all live here while the private call is active."
               />
             ) : (
               <>

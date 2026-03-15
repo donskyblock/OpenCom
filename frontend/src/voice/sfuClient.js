@@ -179,7 +179,9 @@ export function createSfuVoiceClient({
   onRemoteAudioRemoved,
   onRemoteVideoAdded,
   onRemoteVideoRemoved,
+  onCameraStateChange,
   onScreenShareStateChange,
+  onLocalCameraStreamChange,
 }) {
   const log = (message, context = {}) => {
     if (typeof debugLog === "function") debugLog(message, context);
@@ -192,9 +194,12 @@ export function createSfuVoiceClient({
     sendTransport: null,
     recvTransport: null,
     localAudioProducer: null,
+    localCameraProducer: null,
     localScreenProducer: null,
     localStream: null,
+    localCameraStream: null,
     localScreenStream: null,
+    localCameraTrackEndedHandler: null,
     localScreenTrackEndedHandler: null,
     consumersByProducerId: new Map(),
     producerOwnerByProducerId: new Map(),
@@ -261,6 +266,11 @@ export function createSfuVoiceClient({
           ? iceTransportPolicy
           : undefined,
     };
+  }
+
+  function normalizeProducerSource(kind, source) {
+    if (kind === "audio") return "microphone";
+    return source === "screen" ? "screen" : "camera";
   }
 
   function clearPendingIceRestart(transportId) {
@@ -1188,7 +1198,7 @@ export function createSfuVoiceClient({
     return transport;
   }
 
-  async function consumeProducer(producerId, userId, token) {
+  async function consumeProducer(producerId, userId, token, producerMeta = {}) {
     if (
       !producerId ||
       !state.recvTransport ||
@@ -1283,10 +1293,23 @@ export function createSfuVoiceClient({
       consumer,
       stream,
       kind: consumer.kind,
+      source: normalizeProducerSource(
+        consumer.kind,
+        consumerOptions?.source ?? producerMeta?.source,
+      ),
       userId: userId || "",
     });
     if (userId) state.producerOwnerByProducerId.set(producerId, userId);
-    onRemoteVideoAdded?.({ producerId, userId, stream, kind: consumer.kind });
+    onRemoteVideoAdded?.({
+      producerId,
+      userId,
+      stream,
+      kind: consumer.kind,
+      source: normalizeProducerSource(
+        consumer.kind,
+        consumerOptions?.source ?? producerMeta?.source,
+      ),
+    });
   }
 
   async function join({
@@ -1379,7 +1402,7 @@ export function createSfuVoiceClient({
     );
     state.sendTransport.on(
       "produce",
-      async ({ kind, rtpParameters }, callback, errback) => {
+      async ({ kind, rtpParameters, appData }, callback, errback) => {
         try {
           const requestId = createVoiceRequestId(`produce-${kind}`);
           await sendDispatch("VOICE_PRODUCE", {
@@ -1388,6 +1411,10 @@ export function createSfuVoiceClient({
             transportId: state.sendTransport.id,
             kind,
             rtpParameters,
+            source:
+              kind === "video"
+                ? normalizeProducerSource(kind, appData?.source)
+                : undefined,
             requestId,
           });
           const produced = await waitForVoiceResponse(() =>
@@ -1453,7 +1480,9 @@ export function createSfuVoiceClient({
     );
 
     for (const producer of joined.producers || []) {
-      await consumeProducer(producer.producerId, producer.userId, token);
+      await consumeProducer(producer.producerId, producer.userId, token, {
+        source: producer?.source,
+      });
     }
   }
 
@@ -1475,7 +1504,96 @@ export function createSfuVoiceClient({
       onRemoteAudioRemoved?.({ producerId, userId: entry.userId || "" });
       return;
     }
-    onRemoteVideoRemoved?.({ producerId, userId: entry.userId || "" });
+    onRemoteVideoRemoved?.({
+      producerId,
+      userId: entry.userId || "",
+      source: entry.source || normalizeProducerSource(entry.kind, null),
+    });
+  }
+
+  function clearLocalCameraState({ stopTracks = false } = {}) {
+    if (state.localCameraStream) {
+      const track = state.localCameraStream.getVideoTracks?.()[0];
+      if (track && state.localCameraTrackEndedHandler) {
+        track.removeEventListener("ended", state.localCameraTrackEndedHandler);
+      }
+      if (stopTracks) {
+        state.localCameraStream
+          .getTracks()
+          .forEach((currentTrack) => currentTrack.stop());
+      }
+    }
+    state.localCameraTrackEndedHandler = null;
+    state.localCameraStream = null;
+    state.localCameraProducer = null;
+    onLocalCameraStreamChange?.(null);
+    onCameraStateChange?.(false);
+  }
+
+  async function stopCamera({ notifyServer = true } = {}) {
+    if (!state.localCameraProducer) {
+      clearLocalCameraState({ stopTracks: true });
+      return;
+    }
+
+    const producerId = state.localCameraProducer.id;
+    try {
+      state.localCameraProducer.close();
+    } catch {}
+    clearLocalCameraState({ stopTracks: true });
+
+    if (!notifyServer || !producerId || !state.guildId || !state.channelId) {
+      return;
+    }
+    await sendDispatch("VOICE_CLOSE_PRODUCER", {
+      guildId: state.guildId,
+      channelId: state.channelId,
+      producerId,
+    }).catch(() => {});
+  }
+
+  async function startCamera() {
+    if (!state.sendTransport || !state.guildId || !state.channelId) {
+      throw new Error("NOT_IN_VOICE_CHANNEL");
+    }
+    if (state.localCameraProducer) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("CAMERA_NOT_SUPPORTED");
+    }
+
+    const cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30, max: 60 },
+      },
+      audio: false,
+    });
+    const cameraTrack = cameraStream.getVideoTracks()[0];
+    if (!cameraTrack) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      throw new Error("CAMERA_TRACK_NOT_FOUND");
+    }
+
+    try {
+      const producer = await state.sendTransport.produce({
+        track: cameraTrack,
+        appData: { source: "camera" },
+      });
+      state.localCameraProducer = producer;
+      state.localCameraStream = cameraStream;
+      const endedHandler = () => {
+        stopCamera().catch(() => {});
+      };
+      state.localCameraTrackEndedHandler = endedHandler;
+      cameraTrack.addEventListener("ended", endedHandler);
+      onLocalCameraStreamChange?.(cameraStream);
+      onCameraStateChange?.(true);
+    } catch (error) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      clearLocalCameraState({ stopTracks: false });
+      throw error;
+    }
   }
 
   function clearLocalScreenState({ stopTracks = false } = {}) {
@@ -1587,6 +1705,7 @@ export function createSfuVoiceClient({
     for (const producerId of [...state.consumersByProducerId.keys()]) {
       await cleanupConsumer(producerId);
     }
+    await stopCamera({ notifyServer: false }).catch(() => {});
     await stopScreenShare({ notifyServer: false }).catch(() => {});
     try {
       state.localAudioProducer?.close();
@@ -1619,6 +1738,11 @@ export function createSfuVoiceClient({
     )
       return;
     if (
+      state.localCameraProducer &&
+      data.producerId === state.localCameraProducer.id
+    )
+      return;
+    if (
       state.localScreenProducer &&
       data.producerId === state.localScreenProducer.id
     )
@@ -1630,6 +1754,7 @@ export function createSfuVoiceClient({
         data.producerId,
         data.userId,
         state.sessionToken,
+        { source: data?.source },
       ).catch(() => {});
       return;
     }
@@ -1756,6 +1881,10 @@ export function createSfuVoiceClient({
     return state.localStream;
   }
 
+  function getLocalCameraStream() {
+    return state.localCameraStream;
+  }
+
   function getContext() {
     return { guildId: state.guildId, channelId: state.channelId };
   }
@@ -1775,9 +1904,12 @@ export function createSfuVoiceClient({
     setAudioOutputDevice,
     startSelfMonitor,
     stopSelfMonitor,
+    startCamera,
+    stopCamera,
     startScreenShare,
     stopScreenShare,
     getLocalStream,
+    getLocalCameraStream,
     getContext,
   };
 }

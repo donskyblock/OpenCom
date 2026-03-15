@@ -646,9 +646,15 @@ export function attachNodeGateway(app: FastifyInstance) {
           const transportId = (msg.d as any)?.transportId;
           const kind = (msg.d as any)?.kind;
           const rtpParameters = (msg.d as any)?.rtpParameters;
+          const source = (msg.d as any)?.source;
 
           if (typeof transportId !== "string" || (kind !== "audio" && kind !== "video") || !rtpParameters) {
             sendVoiceError(conn, "BAD_VOICE_PRODUCE", new Error("Missing transportId/kind/rtpParameters"), { requestId });
+            return;
+          }
+
+          if (source !== undefined && typeof source !== "string") {
+            sendVoiceError(conn, "BAD_VOICE_PRODUCE", new Error("source must be a string"), { requestId });
             return;
           }
 
@@ -659,6 +665,7 @@ export function attachNodeGateway(app: FastifyInstance) {
             transportId,
             kind,
             rtpParameters,
+            source,
             conn.connId,
           );
           sendDispatch(conn, "VOICE_PRODUCED", { ...result, userId: conn.userId, guildId, channelId, requestId });
@@ -666,7 +673,8 @@ export function attachNodeGateway(app: FastifyInstance) {
             guildId,
             channelId,
             userId: conn.userId,
-            producerId: result.producerId
+            producerId: result.producerId,
+            source: result.source,
           }, conn.userId);
         } catch (error) {
           sendVoiceError(conn, "VOICE_PRODUCE_FAILED", error);

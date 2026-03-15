@@ -45,19 +45,51 @@ function clampDockRect(rect, bounds) {
   };
 }
 
+function StreamVideo({ stream, className = "" }) {
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    bindStream(videoRef.current, stream || null);
+  }, [stream]);
+
+  return (
+    <video
+      ref={videoRef}
+      className={className}
+      autoPlay
+      playsInline
+      muted
+    />
+  );
+}
+
 function ParticipantCard({ participant, compact = false }) {
   if (!participant) return null;
   return (
     <article
       className={`voice-call-participant-card ${compact ? "compact" : ""} ${
         participant.speaking ? "speaking" : ""
-      }`}
+      } ${participant.videoStream ? "has-video" : ""}`}
     >
-      <div className="voice-call-participant-avatar">
-        {participant.pfpUrl ? (
-          <img src={participant.pfpUrl} alt={participant.username} />
+      <div className="voice-call-participant-media">
+        {participant.videoStream ? (
+          <>
+            <StreamVideo
+              stream={participant.videoStream}
+              className="voice-call-participant-video"
+            />
+            <span className="voice-call-participant-video-badge">
+              {participant.isSelf ? "Your camera" : "Camera live"}
+            </span>
+          </>
         ) : (
-          <span>{getInitials(participant.username)}</span>
+          <div className="voice-call-participant-avatar">
+            {participant.pfpUrl ? (
+              <img src={participant.pfpUrl} alt={participant.username} />
+            ) : (
+              <span>{getInitials(participant.username)}</span>
+            )}
+          </div>
         )}
       </div>
       <div className="voice-call-participant-meta">
@@ -128,10 +160,13 @@ export function VoiceCallStage({
   isConnected = false,
   isMuted = false,
   isDeafened = false,
+  isCameraEnabled = false,
   isScreenSharing = false,
+  liveCameraCount = 0,
   duration = 0,
   onToggleMute,
   onToggleDeafen,
+  onToggleCamera,
   onToggleScreenShare,
   onJoin,
   onLeave,
@@ -158,9 +193,24 @@ export function VoiceCallStage({
   const participantCountLabel = `${participants.length} ${
     participants.length === 1 ? "person" : "people"
   }`;
+  const cameraParticipants = useMemo(
+    () => participants.filter((participant) => !!participant.videoStream),
+    [participants],
+  );
+  const cameraCount =
+    liveCameraCount || cameraParticipants.length || (isCameraEnabled ? 1 : 0);
+  const cameraCountLabel = `${cameraCount} ${
+    cameraCount === 1 ? "camera" : "cameras"
+  }`;
   const shareCountLabel = `${remoteScreenShares.length} ${
     remoteScreenShares.length === 1 ? "live share" : "live shares"
   }`;
+  const spotlightParticipants = useMemo(() => {
+    const voiceOnlyParticipants = participants.filter(
+      (participant) => !participant.videoStream,
+    );
+    return [...cameraParticipants, ...voiceOnlyParticipants].slice(0, 4);
+  }, [cameraParticipants, participants]);
 
   const primaryParticipant = useMemo(
     () => participants.find((participant) => !participant.isSelf) || participants[0] || null,
@@ -316,7 +366,10 @@ export function VoiceCallStage({
             {duration > 0 ? `Live call • ${formatDuration(duration)}` : "Live voice"}
           </span>
           <h2>{title || "Voice Call"}</h2>
-          <p>{subtitle || `${participantCountLabel} • ${shareCountLabel}`}</p>
+          <p>
+            {subtitle ||
+              `${participantCountLabel} • ${cameraCountLabel} • ${shareCountLabel}`}
+          </p>
         </div>
 
         <div className="voice-call-stage-controls">
@@ -335,6 +388,13 @@ export function VoiceCallStage({
                 onClick={() => onToggleDeafen?.()}
               >
                 {isDeafened ? "Undeafen" : "Deafen"}
+              </button>
+              <button
+                type="button"
+                className={`voice-call-stage-control ${isCameraEnabled ? "active" : ""}`}
+                onClick={() => onToggleCamera?.()}
+              >
+                {isCameraEnabled ? "Camera off" : "Camera on"}
               </button>
               <button
                 type="button"
@@ -425,7 +485,7 @@ export function VoiceCallStage({
               </div>
 
               <div className="voice-call-stage-focus-grid">
-                {participants.slice(0, 4).map((participant) => (
+                {spotlightParticipants.map((participant) => (
                   <ParticipantCard
                     key={participant.userId || participant.username}
                     participant={participant}
@@ -440,6 +500,28 @@ export function VoiceCallStage({
         </div>
 
         <aside className="voice-call-stage-sidebar">
+          <section className="voice-call-stage-panel">
+            <div className="voice-call-stage-panel-head">
+              <strong>Camera feeds</strong>
+              <span>{cameraCountLabel}</span>
+            </div>
+            <div className="voice-call-stage-camera-list">
+              {cameraParticipants.length ? (
+                cameraParticipants.map((participant) => (
+                  <ParticipantCard
+                    key={`camera-${participant.userId || participant.username}`}
+                    participant={participant}
+                    compact
+                  />
+                ))
+              ) : (
+                <p className="voice-call-stage-panel-empty">
+                  Camera feeds will appear here once someone turns one on.
+                </p>
+              )}
+            </div>
+          </section>
+
           <section className="voice-call-stage-panel">
             <div className="voice-call-stage-panel-head">
               <strong>In the room</strong>
@@ -541,6 +623,18 @@ export function VoiceCallStage({
                     onSelect={onSelectScreenShare}
                     ownerName={share.userName}
                     ownerPfp={share.userPfp}
+                  />
+                ))}
+              </div>
+            )}
+
+            {cameraParticipants.length > 0 && (
+              <div className="voice-call-stage-dock-camera-strip">
+                {cameraParticipants.map((participant) => (
+                  <ParticipantCard
+                    key={`dock-camera-${participant.userId || participant.username}`}
+                    participant={participant}
+                    compact
                   />
                 ))}
               </div>

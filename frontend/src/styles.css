@@ -1791,6 +1791,7 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
   font-size: 0.86rem;
 }
 .voice-call-stage-participant-list,
+.voice-call-stage-camera-list,
 .voice-call-stage-share-list,
 .voice-call-stage-dock-participants {
   min-height: 0;
@@ -1808,12 +1809,21 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
   border: 1px solid rgba(128, 159, 220, 0.16);
   background: linear-gradient(180deg, rgba(13, 23, 41, 0.92), rgba(9, 16, 29, 0.96));
 }
+.voice-call-participant-card.has-video {
+  grid-template-columns: minmax(0, 150px) minmax(0, 1fr) auto;
+}
 .voice-call-participant-card.compact {
   padding: 0.68rem 0.72rem;
+}
+.voice-call-participant-card.compact.has-video {
+  grid-template-columns: minmax(0, 110px) minmax(0, 1fr) auto;
 }
 .voice-call-participant-card.speaking {
   border-color: rgba(92, 217, 178, 0.42);
   box-shadow: inset 0 0 0 1px rgba(92, 217, 178, 0.16);
+}
+.voice-call-participant-media {
+  position: relative;
 }
 .voice-call-participant-avatar {
   width: 2.8rem;
@@ -1829,6 +1839,27 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 .voice-call-participant-card.compact .voice-call-participant-avatar {
   width: 2.3rem;
   height: 2.3rem;
+}
+.voice-call-participant-video {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: calc(var(--radius) * 0.72);
+  object-fit: cover;
+  display: block;
+  background: #04070d;
+  border: 1px solid rgba(121, 151, 212, 0.22);
+}
+.voice-call-participant-video-badge {
+  position: absolute;
+  left: 0.45rem;
+  bottom: 0.45rem;
+  padding: 0.18rem 0.42rem;
+  border-radius: 999px;
+  background: rgba(5, 9, 18, 0.76);
+  color: #f2f6ff;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
 }
 .voice-call-participant-avatar img,
 .voice-call-share-owner img {
@@ -1871,6 +1902,11 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
 }
 .voice-call-share-list,
 .voice-call-stage-dock-strip {
+  display: grid;
+  gap: 0.65rem;
+}
+.voice-call-stage-camera-list,
+.voice-call-stage-dock-camera-strip {
   display: grid;
   gap: 0.65rem;
 }
@@ -1998,6 +2034,9 @@ button.danger { background: linear-gradient(135deg, #eb5d73, #c84159); }
   grid-auto-columns: minmax(180px, 1fr);
   overflow-x: auto;
   padding-bottom: 0.1rem;
+}
+.voice-call-stage-dock-camera-strip {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 .voice-call-stage-dock-resize {
   position: absolute;
