@@ -1,6 +1,6 @@
 {
   "name": "opencom-client",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Desktop wrapper for OpenCom frontend",
   "homepage": "https://opencom.online",
   "author": {
@@ -53,6 +53,8 @@
       "src/main.js",
       "src/preload.cjs",
       "src/web/**/*",
+      "!src/web/downloads",
+      "!src/web/downloads/**/*",
       "package.json"
     ],
     "win": {
