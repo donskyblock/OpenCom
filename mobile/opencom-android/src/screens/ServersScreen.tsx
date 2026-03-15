@@ -13,6 +13,14 @@ import {
   TextInput,
   View,
 } from "react-native";
+import {
+  EmptyState,
+  ScreenBackground,
+  SectionLabel,
+  StatusBanner,
+  SurfaceCard,
+  TopBar,
+} from "../components/chrome";
 import { useAuth } from "../context/AuthContext";
 import { Avatar } from "../components/Avatar";
 import type { Channel, CoreServer, Guild, VoiceState } from "../types";
@@ -101,24 +109,31 @@ function ServerPill({
       onLongPress={onLongPress}
       delayLongPress={400}
     >
-      {server.logoUrl ? (
-        <Image
-          source={{ uri: server.logoUrl }}
-          style={styles.serverPillIcon}
-          resizeMode="cover"
-        />
-      ) : (
-        <View
-          style={[
-            styles.serverPillIconFallback,
-            selected && styles.serverPillIconFallbackActive,
-          ]}
-        >
-          <Text style={styles.serverPillIconText} numberOfLines={1}>
-            {server.name.slice(0, 2).toUpperCase()}
-          </Text>
-        </View>
-      )}
+      <View
+        style={[
+          styles.serverPillIconWrap,
+          selected && styles.serverPillIconWrapActive,
+        ]}
+      >
+        {server.logoUrl ? (
+          <Image
+            source={{ uri: server.logoUrl }}
+            style={styles.serverPillIcon}
+            resizeMode="cover"
+          />
+        ) : (
+          <View
+            style={[
+              styles.serverPillIconFallback,
+              selected && styles.serverPillIconFallbackActive,
+            ]}
+          >
+            <Text style={styles.serverPillIconText} numberOfLines={1}>
+              {server.name.slice(0, 2).toUpperCase()}
+            </Text>
+          </View>
+        )}
+      </View>
       <Text
         style={[styles.serverPillName, selected && styles.serverPillNameActive]}
         numberOfLines={1}
@@ -222,7 +237,7 @@ function ServerHeader({
   onOptionsPress: () => void;
 }) {
   return (
-    <View style={styles.serverHeader}>
+    <SurfaceCard style={styles.serverHeader} padded={false}>
       {server.bannerUrl ? (
         <Image
           source={{ uri: server.bannerUrl }}
@@ -258,7 +273,7 @@ function ServerHeader({
           <Text style={styles.serverOptionsBtnText}>⋯</Text>
         </Pressable>
       </View>
-    </View>
+    </SurfaceCard>
   );
 }
 
@@ -564,62 +579,117 @@ export function ServersScreen({
 
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={colors.brand} />
-        <Text style={styles.subtle}>Loading servers…</Text>
-      </View>
+      <ScreenBackground>
+        <TopBar
+          title="Servers"
+          subtitle={me?.username ? `Loading spaces for @${me.username}` : "Loading your spaces"}
+        />
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.brand} />
+          <Text style={styles.subtle}>Loading servers…</Text>
+        </View>
+      </ScreenBackground>
     );
   }
 
   return (
-    <View style={styles.container}>
-      {/* Join invite row */}
-      <View style={styles.inviteRow}>
-        <TextInput
-          value={inviteCode}
-          onChangeText={setInviteCode}
-          style={styles.inviteInput}
-          placeholder="Enter invite code"
-          placeholderTextColor={colors.textDim}
-          autoCapitalize="none"
-          autoCorrect={false}
-          editable={!joining}
-          returnKeyType="join"
-          onSubmitEditing={onJoinInvite}
-        />
-        <Pressable
-          style={[
-            styles.joinBtn,
-            (joining || !inviteCode.trim()) && styles.joinBtnDisabled,
-          ]}
-          onPress={onJoinInvite}
-          disabled={joining || !inviteCode.trim()}
-        >
-          {joining ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={styles.joinBtnText}>Join</Text>
-          )}
-        </Pressable>
-      </View>
+    <ScreenBackground>
+      <TopBar
+        title="Servers"
+        subtitle={
+          me?.username
+            ? `${servers.length} ${servers.length === 1 ? "server" : "servers"} for @${me.username}`
+            : `${servers.length} connected servers`
+        }
+      />
 
       {servers.length === 0 ? (
-        <View style={styles.centered}>
-          <Text style={styles.emptyIcon}>🏠</Text>
-          <Text style={styles.empty}>No servers yet.</Text>
-          <Text style={styles.emptyHint}>
-            Enter an invite code above to join one.
-          </Text>
+        <View style={styles.emptyWrap}>
+          <SurfaceCard style={styles.joinCard}>
+            <SectionLabel title="Join a Server" />
+            <Text style={styles.joinHint}>
+              Enter an invite code to jump into a workspace.
+            </Text>
+            <View style={styles.inviteRow}>
+              <TextInput
+                value={inviteCode}
+                onChangeText={setInviteCode}
+                style={styles.inviteInput}
+                placeholder="Enter invite code"
+                placeholderTextColor={colors.textDim}
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!joining}
+                returnKeyType="join"
+                onSubmitEditing={onJoinInvite}
+              />
+              <Pressable
+                style={[
+                  styles.joinBtn,
+                  (joining || !inviteCode.trim()) && styles.joinBtnDisabled,
+                ]}
+                onPress={onJoinInvite}
+                disabled={joining || !inviteCode.trim()}
+              >
+                {joining ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.joinBtnText}>Join</Text>
+                )}
+              </Pressable>
+            </View>
+          </SurfaceCard>
+          <EmptyState
+            eyebrow="SERVERS"
+            icon="🏠"
+            title="No servers yet"
+            hint="Join a workspace with an invite code and it will appear here."
+          />
         </View>
       ) : (
         <ScrollView
           style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* ── Server rail ── */}
+          <SurfaceCard style={styles.joinCard}>
+            <SectionLabel title="Quick Join" />
+            <Text style={styles.joinHint}>
+              Paste an invite code to add another server to your rail.
+            </Text>
+            <View style={styles.inviteRow}>
+              <TextInput
+                value={inviteCode}
+                onChangeText={setInviteCode}
+                style={styles.inviteInput}
+                placeholder="Invite code"
+                placeholderTextColor={colors.textDim}
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!joining}
+                returnKeyType="join"
+                onSubmitEditing={onJoinInvite}
+              />
+              <Pressable
+                style={[
+                  styles.joinBtn,
+                  (joining || !inviteCode.trim()) && styles.joinBtnDisabled,
+                ]}
+                onPress={onJoinInvite}
+                disabled={joining || !inviteCode.trim()}
+              >
+                {joining ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.joinBtnText}>Join</Text>
+                )}
+              </Pressable>
+            </View>
+          </SurfaceCard>
+
           <View style={styles.sectionBlock}>
-            <Text style={styles.sectionLabel}>SERVERS</Text>
+            <SectionLabel title="Server Rail" />
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -637,22 +707,20 @@ export function ServersScreen({
             </ScrollView>
           </View>
 
-          {/* ── Selected server header ── */}
-          {selectedServer && (
+          {selectedServer ? (
             <ServerHeader
               server={selectedServer}
               onOptionsPress={() => openServerOptions(selectedServer)}
             />
-          )}
+          ) : null}
 
-          {/* ── Guild picker ── */}
-          {selectedServer && guilds.length > 1 && (
+          {selectedServer && guilds.length > 1 ? (
             <View style={styles.sectionBlock}>
-              <Text style={styles.sectionLabel}>WORKSPACES</Text>
+              <SectionLabel title="Workspaces" />
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.pillRow}
+                contentContainerStyle={styles.guildRow}
               >
                 {guilds.map((guild) => (
                   <GuildPill
@@ -664,30 +732,40 @@ export function ServersScreen({
                 ))}
               </ScrollView>
             </View>
-          )}
+          ) : null}
 
-          {/* ── Channel list ── */}
-          {selectedServer && selectedGuild && (
-            <View style={styles.channelList}>
-              {/* Header row with Members shortcut */}
+          {selectedServer && selectedGuild ? (
+            <SurfaceCard style={styles.channelSurface} padded={false}>
               <View style={styles.channelListHeader}>
-                <Text style={styles.sectionLabel}>
-                  CHANNELS (
-                  {
-                    allChannels.filter(
-                      (c) => c.type === "text" || c.type === "voice",
-                    ).length
-                  }
-                  )
-                </Text>
-                {onViewMembers && (
-                  <Pressable
-                    onPress={() => onViewMembers(selectedServer, selectedGuild)}
-                    hitSlop={8}
-                  >
-                    <Text style={styles.membersLink}>👥 Members</Text>
-                  </Pressable>
-                )}
+                <View style={styles.channelListMeta}>
+                  <Text style={styles.sectionLabel}>CHANNELS</Text>
+                  <Text style={styles.channelCount}>
+                    {
+                      allChannels.filter(
+                        (entry) => entry.type === "text" || entry.type === "voice",
+                      ).length
+                    }{" "}
+                    available
+                  </Text>
+                </View>
+                <View style={styles.headerLinks}>
+                  {onViewInvites ? (
+                    <Pressable
+                      onPress={() => onViewInvites(selectedServer)}
+                      hitSlop={8}
+                    >
+                      <Text style={styles.membersLink}>Invites</Text>
+                    </Pressable>
+                  ) : null}
+                  {onViewMembers ? (
+                    <Pressable
+                      onPress={() => onViewMembers(selectedServer, selectedGuild)}
+                      hitSlop={8}
+                    >
+                      <Text style={styles.membersLink}>Members</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               </View>
 
               {categorySections.length === 0 ? (
@@ -697,49 +775,45 @@ export function ServersScreen({
                   </Text>
                 </View>
               ) : (
-                categorySections.map((section, sIdx) => {
-                  const catKey =
-                    section.category?.id ?? `uncategorized-${sIdx}`;
+                categorySections.map((section, index) => {
+                  const key = section.category?.id ?? `uncategorized-${index}`;
                   const isCollapsed = section.category
                     ? collapsedCategories.has(section.category.id)
                     : false;
 
                   return (
-                    <View key={catKey}>
-                      {/* Category header */}
-                      {section.category && (
+                    <View key={key}>
+                      {section.category ? (
                         <CategoryHeader
                           name={section.category.name}
                           collapsed={isCollapsed}
                           onToggle={() => toggleCategory(section.category!.id)}
                         />
-                      )}
-
-                      {/* Channels inside category */}
+                      ) : null}
                       {!isCollapsed &&
-                        section.channels.map((ch) => {
-                          const vcCount =
-                            ch.type === "voice"
-                              ? getVoiceCountForChannel(voiceStates, ch.id)
+                        section.channels.map((channelEntry) => {
+                          const voiceCount =
+                            channelEntry.type === "voice"
+                              ? getVoiceCountForChannel(voiceStates, channelEntry.id)
                               : 0;
-                          const vcMembers =
-                            ch.type === "voice"
+                          const voiceMembers =
+                            channelEntry.type === "voice"
                               ? voiceStates.filter(
-                                  (vs) => vs.channelId === ch.id,
+                                  (voiceState) => voiceState.channelId === channelEntry.id,
                                 )
                               : [];
 
                           return (
                             <ChannelRow
-                              key={ch.id}
-                              channel={ch}
-                              voiceCount={vcCount}
-                              voiceMembers={vcMembers}
+                              key={channelEntry.id}
+                              channel={channelEntry}
+                              voiceCount={voiceCount}
+                              voiceMembers={voiceMembers}
                               onPress={() =>
                                 onSelectChannel(
                                   selectedServer,
                                   selectedGuild,
-                                  ch,
+                                  channelEntry,
                                 )
                               }
                             />
@@ -749,26 +823,13 @@ export function ServersScreen({
                   );
                 })
               )}
-            </View>
-          )}
-
-          {/* Spacer */}
-          <View style={{ height: spacing.xl }} />
+            </SurfaceCard>
+          ) : null}
         </ScrollView>
       )}
 
-      {/* Status bar */}
-      {!!status && (
-        <View style={styles.statusBar}>
-          <Text style={styles.statusText} numberOfLines={2}>
-            {status}
-          </Text>
-          <Pressable onPress={() => setStatus("")} hitSlop={8}>
-            <Text style={styles.statusDismiss}>✕</Text>
-          </Pressable>
-        </View>
-      )}
-    </View>
+      {status ? <StatusBanner text={status} onDismiss={() => setStatus("")} /> : null}
+    </ScreenBackground>
   );
 }
 
@@ -777,18 +838,33 @@ export function ServersScreen({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+  },
+
+  scrollContent: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xl,
+    gap: spacing.sm,
+  },
+  emptyWrap: {
+    flex: 1,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xl,
+    justifyContent: "center",
+    gap: spacing.sm,
+  },
+  joinCard: {
+    gap: spacing.sm,
+  },
+  joinHint: {
+    ...typography.body,
+    color: colors.textDim,
+    lineHeight: 22,
   },
 
   // Invite row
   inviteRow: {
     flexDirection: "row",
     gap: spacing.sm,
-    padding: spacing.md,
-    paddingBottom: spacing.sm,
-    backgroundColor: colors.sidebar,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
   },
   inviteInput: {
     flex: 1,
@@ -803,7 +879,7 @@ const styles = StyleSheet.create({
   },
   joinBtn: {
     backgroundColor: colors.brand,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md,
     borderRadius: radii.md,
     justifyContent: "center",
     alignItems: "center",
@@ -839,72 +915,78 @@ const styles = StyleSheet.create({
 
   // Section blocks
   sectionBlock: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
+    gap: spacing.sm,
   },
   sectionLabel: {
-    fontSize: 11,
-    fontWeight: "700",
+    ...typography.eyebrow,
     color: colors.textDim,
-    letterSpacing: 0.8,
-    marginBottom: spacing.sm,
   },
 
   // Server pills (horizontal scroll)
   pillRow: {
     flexDirection: "row",
     gap: spacing.sm,
-    paddingBottom: spacing.xs,
   },
   serverPill: {
-    flexDirection: "row",
+    width: 84,
     alignItems: "center",
-    gap: spacing.xs,
-    backgroundColor: colors.elev,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderRadius: radii.full,
-    borderWidth: 1,
-    borderColor: "transparent",
-    maxWidth: 160,
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
   },
   serverPillActive: {
-    borderColor: colors.brand,
-    backgroundColor: colors.active,
+    transform: [{ translateY: -2 }],
   },
-  serverPillPressed: { opacity: 0.75 },
+  serverPillPressed: { opacity: 0.8 },
+  serverPillIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: radii.lg,
+    backgroundColor: colors.panelAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  serverPillIconWrapActive: {
+    backgroundColor: colors.active,
+    borderColor: colors.borderStrong,
+  },
   serverPillIcon: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: colors.elev,
+    width: 54,
+    height: 54,
+    borderRadius: radii.md,
+    backgroundColor: colors.elevStrong,
   },
   serverPillIconFallback: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: colors.elev,
+    width: 54,
+    height: 54,
+    borderRadius: radii.md,
+    backgroundColor: colors.elevStrong,
     justifyContent: "center",
     alignItems: "center",
   },
   serverPillIconFallbackActive: { backgroundColor: colors.brand },
   serverPillIconText: {
-    fontSize: 9,
+    fontSize: 16,
     fontWeight: "800",
-    color: colors.textSoft,
+    color: colors.text,
   },
   serverPillName: {
     ...typography.caption,
-    color: colors.textSoft,
+    color: colors.textDim,
     fontWeight: "600",
-    flex: 1,
+    textAlign: "center",
+    width: "100%",
   },
   serverPillNameActive: { color: colors.text },
 
   // Guild pills
+  guildRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
   pill: {
-    backgroundColor: colors.elev,
+    backgroundColor: colors.panelAlt,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radii.full,
@@ -924,34 +1006,27 @@ const styles = StyleSheet.create({
 
   // Server header
   serverHeader: {
-    backgroundColor: colors.sidebar,
-    marginHorizontal: spacing.md,
-    marginTop: spacing.sm,
-    marginBottom: spacing.xs,
-    borderRadius: radii.lg,
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: colors.border,
   },
   serverBanner: {
     width: "100%",
-    height: 80,
+    height: 96,
   },
   serverHeaderContent: {
     flexDirection: "row",
     alignItems: "center",
-    padding: spacing.md,
+    padding: spacing.lg,
     gap: spacing.sm,
   },
   serverLogo: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     borderRadius: radii.md,
-    backgroundColor: colors.elev,
+    backgroundColor: colors.elevStrong,
   },
   serverLogoFallback: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     borderRadius: radii.md,
     backgroundColor: colors.brand,
     justifyContent: "center",
@@ -963,7 +1038,7 @@ const styles = StyleSheet.create({
     color: "#fff",
   },
   serverName: {
-    ...typography.heading,
+    ...typography.title,
     color: colors.text,
     flex: 1,
   },
@@ -980,15 +1055,29 @@ const styles = StyleSheet.create({
   },
 
   // Channel list
-  channelList: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
+  channelSurface: {
+    overflow: "hidden",
   },
   channelListHeader: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+    gap: spacing.md,
+  },
+  channelListMeta: {
+    flex: 1,
+    gap: 4,
+  },
+  channelCount: {
+    ...typography.caption,
+    color: colors.textDim,
+  },
+  headerLinks: {
+    flexDirection: "row",
+    gap: spacing.sm,
   },
   membersLink: {
     ...typography.caption,
@@ -1001,7 +1090,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.xs,
+    paddingHorizontal: spacing.lg,
     gap: spacing.xs,
     marginTop: spacing.xs,
   },
@@ -1024,10 +1113,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.lg,
     borderRadius: radii.md,
     gap: spacing.xs,
-    marginLeft: spacing.sm,
   },
   channelRowPressed: { backgroundColor: colors.hover },
   channelIcon: {
@@ -1064,31 +1152,11 @@ const styles = StyleSheet.create({
   emptyChannels: {
     paddingVertical: spacing.xl,
     alignItems: "center",
+    paddingHorizontal: spacing.lg,
   },
   emptyChannelsText: {
     ...typography.caption,
     color: colors.textDim,
     textAlign: "center",
-  },
-
-  // Status bar
-  statusBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: spacing.md,
-    backgroundColor: colors.elev,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    gap: spacing.sm,
-  },
-  statusText: {
-    ...typography.caption,
-    color: colors.textDim,
-    flex: 1,
-  },
-  statusDismiss: {
-    color: colors.textDim,
-    fontSize: 14,
-    padding: spacing.xs,
   },
 });

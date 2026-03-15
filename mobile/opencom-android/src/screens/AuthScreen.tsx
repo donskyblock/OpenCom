@@ -1,32 +1,63 @@
-import { useCallback, useState } from "react";
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import {
+  ScreenBackground,
+  SegmentedControl,
+  StatusBanner,
+  SurfaceCard,
+} from "../components/chrome";
 import { colors, radii, spacing, typography } from "../theme";
 
 type AuthMode = "login" | "register";
 
 type AuthScreenProps = {
-  onLogin: (email: string, username: string, password: string, mode: AuthMode) => Promise<void>;
+  onLogin: (
+    email: string,
+    username: string,
+    password: string,
+    mode: AuthMode,
+  ) => Promise<void>;
   onForgotPassword: (email: string) => Promise<void>;
   status: string;
 };
 
-export function AuthScreen({ onLogin, onForgotPassword, status }: AuthScreenProps) {
+export function AuthScreen({
+  onLogin,
+  onForgotPassword,
+  status,
+}: AuthScreenProps) {
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [working, setWorking] = useState(false);
 
+  const title = useMemo(
+    () => (mode === "login" ? "Welcome back" : "Create your account"),
+    [mode],
+  );
+
   const handleSubmit = useCallback(async () => {
     if (!email.trim() || !password.trim()) return;
     if (mode === "register" && !username.trim()) return;
+
     setWorking(true);
     try {
       await onLogin(email.trim(), username.trim(), password, mode);
     } finally {
       setWorking(false);
     }
-  }, [email, username, password, mode, onLogin]);
+  }, [email, mode, onLogin, password, username]);
 
   const handleForgotPassword = useCallback(async () => {
     if (!email.trim() || working) return;
@@ -36,137 +67,204 @@ export function AuthScreen({ onLogin, onForgotPassword, status }: AuthScreenProp
     } finally {
       setWorking(false);
     }
-  }, [email, working, onForgotPassword]);
+  }, [email, onForgotPassword, working]);
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={styles.container}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
+    <ScreenBackground>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.container}
       >
-        <View style={styles.card}>
-          <Text style={styles.title}>Welcome back</Text>
-          <Text style={styles.subtitle}>
-            OpenCom keeps your teams, communities, and updates in one place.
-          </Text>
-
-          <View style={styles.toggleRow}>
-            <Pressable
-              style={[styles.toggleBtn, mode === "login" && styles.toggleBtnActive]}
-              onPress={() => setMode("login")}
-            >
-              <Text style={[styles.toggleText, mode === "login" && styles.toggleTextActive]}>
-                Log in
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.toggleBtn, mode === "register" && styles.toggleBtnActive]}
-              onPress={() => setMode("register")}
-            >
-              <Text style={[styles.toggleText, mode === "register" && styles.toggleTextActive]}>
-                Create account
-              </Text>
-            </Pressable>
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.hero}>
+            <View style={styles.brandChip}>
+              <Text style={styles.brandChipText}>OPENCOM</Text>
+            </View>
+            <Text style={styles.heroTitle}>{title}</Text>
+            <Text style={styles.heroSubtitle}>
+              OpenCom keeps your teams, communities, and updates in one place.
+            </Text>
           </View>
 
-          <TextInput
-            value={email}
-            onChangeText={setEmail}
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor={colors.textDim}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            editable={!working}
-          />
-          {mode === "register" && (
-            <TextInput
-              value={username}
-              onChangeText={setUsername}
-              style={styles.input}
-              placeholder="Username"
-              placeholderTextColor={colors.textDim}
-              autoCapitalize="none"
-              editable={!working}
+          <SurfaceCard style={styles.card}>
+            <SegmentedControl
+              value={mode}
+              onChange={(value) => setMode(value as AuthMode)}
+              options={[
+                { value: "login", label: "Log in" },
+                { value: "register", label: "Create account" },
+              ]}
             />
-          )}
-          <TextInput
-            value={password}
-            onChangeText={setPassword}
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor={colors.textDim}
-            secureTextEntry
-            autoCapitalize="none"
-            editable={!working}
-          />
 
-          <Pressable
-            style={[styles.primaryBtn, working && styles.primaryBtnDisabled]}
-            onPress={handleSubmit}
-            disabled={working}
-          >
-            {working ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.primaryBtnText}>
-                {mode === "login" ? "Log in" : "Create account"}
-              </Text>
-            )}
-          </Pressable>
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>EMAIL</Text>
+              <TextInput
+                value={email}
+                onChangeText={setEmail}
+                style={styles.input}
+                placeholder="you@example.com"
+                placeholderTextColor={colors.textDim}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                editable={!working}
+              />
+            </View>
 
-          {mode === "login" && (
+            {mode === "register" ? (
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>USERNAME</Text>
+                <TextInput
+                  value={username}
+                  onChangeText={setUsername}
+                  style={styles.input}
+                  placeholder="Choose a username"
+                  placeholderTextColor={colors.textDim}
+                  autoCapitalize="none"
+                  editable={!working}
+                />
+              </View>
+            ) : null}
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.fieldLabel}>PASSWORD</Text>
+              <TextInput
+                value={password}
+                onChangeText={setPassword}
+                style={styles.input}
+                placeholder={
+                  mode === "login" ? "Enter your password" : "Create a password"
+                }
+                placeholderTextColor={colors.textDim}
+                secureTextEntry
+                autoCapitalize="none"
+                editable={!working}
+              />
+            </View>
+
             <Pressable
-              style={styles.linkBtn}
-              onPress={handleForgotPassword}
+              style={({ pressed }) => [
+                styles.primaryButton,
+                working && styles.primaryButtonDisabled,
+                pressed && !working && styles.primaryButtonPressed,
+              ]}
+              onPress={handleSubmit}
               disabled={working}
             >
-              <Text style={styles.linkText}>Forgot password?</Text>
+              {working ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.primaryButtonText}>
+                  {mode === "login" ? "Log in" : "Create account"}
+                </Text>
+              )}
             </Pressable>
-          )}
 
-          {status ? <Text style={styles.status}>{status}</Text> : null}
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+            <View style={styles.metaRow}>
+              <Text style={styles.metaText}>
+                {mode === "login"
+                  ? "Need an account?"
+                  : "Already have an account?"}
+              </Text>
+              <Pressable onPress={() => setMode(mode === "login" ? "register" : "login")}>
+                <Text style={styles.metaAction}>
+                  {mode === "login" ? "Create one" : "Log in"}
+                </Text>
+              </Pressable>
+            </View>
+
+            {mode === "login" ? (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.secondaryButton,
+                  pressed && styles.secondaryButtonPressed,
+                ]}
+                onPress={handleForgotPassword}
+                disabled={working}
+              >
+                <Text style={styles.secondaryButtonText}>Send password reset link</Text>
+              </Pressable>
+            ) : null}
+          </SurfaceCard>
+
+          <SurfaceCard style={styles.infoCard}>
+            <Text style={styles.infoEyebrow}>DESKTOP DNA</Text>
+            <Text style={styles.infoTitle}>Built to match the OpenCom desktop feel</Text>
+            <View style={styles.infoList}>
+              <Text style={styles.infoItem}>Layered server navigation</Text>
+              <Text style={styles.infoItem}>Fast access to messages and friends</Text>
+              <Text style={styles.infoItem}>Profile, presence, and invite tools in one flow</Text>
+            </View>
+          </SurfaceCard>
+
+          {status ? (
+            <StatusBanner
+              text={status}
+              tone={
+                status.toLowerCase().includes("invalid") ||
+                status.toLowerCase().includes("failed") ||
+                status.toLowerCase().includes("error")
+                  ? "danger"
+                  : "neutral"
+              }
+            />
+          ) : null}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  scroll: { flexGrow: 1, justifyContent: "center", padding: spacing.xl },
-  card: {
-    backgroundColor: colors.sidebar,
-    borderRadius: radii.lg,
-    padding: spacing.xl,
-    borderWidth: 1,
-    borderColor: colors.border
-  },
-  title: {
-    ...typography.title,
-    color: colors.text,
-    marginBottom: spacing.sm
-  },
-  subtitle: {
-    color: colors.textDim,
-    fontSize: 14,
-    marginBottom: spacing.lg
-  },
-  toggleRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.lg },
-  toggleBtn: {
+  container: {
     flex: 1,
-    paddingVertical: spacing.md,
-    borderRadius: radii.md,
-    backgroundColor: colors.elev,
-    alignItems: "center"
   },
-  toggleBtnActive: { backgroundColor: colors.brand },
-  toggleText: { color: colors.textSoft, fontWeight: "600" },
-  toggleTextActive: { color: "#fff" },
+  scroll: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xxl,
+    gap: spacing.lg,
+  },
+  hero: {
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  brandChip: {
+    alignSelf: "flex-start",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radii.full,
+    backgroundColor: colors.brandMuted,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+  },
+  brandChipText: {
+    ...typography.eyebrow,
+    color: colors.textSoft,
+  },
+  heroTitle: {
+    ...typography.hero,
+    color: colors.text,
+  },
+  heroSubtitle: {
+    ...typography.body,
+    color: colors.textDim,
+    lineHeight: 22,
+  },
+  card: {
+    gap: spacing.md,
+  },
+  fieldGroup: {
+    gap: spacing.xs,
+  },
+  fieldLabel: {
+    ...typography.eyebrow,
+    color: colors.textDim,
+  },
   input: {
     backgroundColor: colors.input,
     borderColor: colors.border,
@@ -176,25 +274,73 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     color: colors.text,
     fontSize: 16,
-    marginBottom: spacing.md
   },
-  primaryBtn: {
-    backgroundColor: colors.brand,
-    borderRadius: radii.md,
-    paddingVertical: spacing.md,
+  primaryButton: {
+    minHeight: 50,
     alignItems: "center",
-    marginTop: spacing.sm
+    justifyContent: "center",
+    borderRadius: radii.md,
+    backgroundColor: colors.brand,
   },
-  primaryBtnDisabled: { opacity: 0.7 },
-  primaryBtnText: { color: "#fff", fontWeight: "700", fontSize: 16 },
-  linkBtn: {
-    alignSelf: "center",
-    paddingVertical: spacing.md,
+  primaryButtonDisabled: {
+    opacity: 0.6,
   },
-  linkText: {
+  primaryButtonPressed: {
+    opacity: 0.86,
+  },
+  primaryButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  metaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 6,
+  },
+  metaText: {
+    ...typography.caption,
+    color: colors.textDim,
+  },
+  metaAction: {
+    ...typography.caption,
     color: colors.brand,
-    fontWeight: "600",
-    fontSize: 14,
+    fontWeight: "700",
   },
-  status: { color: colors.textDim, fontSize: 13, marginTop: spacing.md, textAlign: "center" }
+  secondaryButton: {
+    minHeight: 44,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.panelAlt,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  secondaryButtonPressed: {
+    backgroundColor: colors.hover,
+  },
+  secondaryButtonText: {
+    ...typography.caption,
+    color: colors.textSoft,
+    fontWeight: "700",
+  },
+  infoCard: {
+    gap: spacing.sm,
+  },
+  infoEyebrow: {
+    ...typography.eyebrow,
+    color: colors.textDim,
+  },
+  infoTitle: {
+    ...typography.heading,
+    color: colors.text,
+  },
+  infoList: {
+    gap: spacing.xs,
+  },
+  infoItem: {
+    ...typography.body,
+    color: colors.textSoft,
+  },
 });

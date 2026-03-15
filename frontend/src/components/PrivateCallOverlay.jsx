@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { SafeAvatar } from "./ui/SafeAvatar";
 
 // ─── Tiny ring-tone generator (no external deps) ─────────────────────────────
 function useRingTone(active) {
@@ -60,38 +61,26 @@ function useRingTone(active) {
 
 // ─── Small avatar helper ──────────────────────────────────────────────────────
 function CallAvatar({ pfpUrl, username, size = 56 }) {
-  const seed = username || "?";
-  const hue = seed.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0) % 360;
-
-  return pfpUrl ? (
-    <img
+  return (
+    <SafeAvatar
       src={pfpUrl}
       alt={username}
+      name={username}
+      seed={username}
       style={{
         width: size,
         height: size,
         borderRadius: "50%",
-        objectFit: "cover",
         flexShrink: 0,
+        fontSize: size * 0.38,
+      }}
+      imgStyle={{
+        width: "100%",
+        height: "100%",
+        objectFit: "cover",
+        display: "block",
       }}
     />
-  ) : (
-    <div
-      style={{
-        width: size,
-        height: size,
-        borderRadius: "50%",
-        background: `hsl(${hue},60%,52%)`,
-        display: "grid",
-        placeItems: "center",
-        fontWeight: 700,
-        fontSize: size * 0.38,
-        color: "#fff",
-        flexShrink: 0,
-      }}
-    >
-      {seed[0].toUpperCase()}
-    </div>
   );
 }
 

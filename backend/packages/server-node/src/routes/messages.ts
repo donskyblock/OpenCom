@@ -5,6 +5,7 @@ import { q } from "../db.js";
 import { requireGuildMember } from "../auth/requireGuildMember.js";
 import { resolveChannelPermissions } from "../permissions/resolve.js";
 import { Perm, has } from "../permissions/bits.js";
+import { preferredDisplayName, resolveCoreUserProfiles } from "../userDirectory.js";
 
 type Mention = { userId: string; display: string };
 
@@ -39,13 +40,20 @@ async function loadGuildMentionDirectory(guildId: string) {
     `SELECT user_id,nick FROM guild_members WHERE guild_id=:guildId`,
     { guildId }
   );
+  const profiles = await resolveCoreUserProfiles(rows.map((row) => row.user_id));
 
   const byToken = new Map<string, { userId: string; display: string }>();
   for (const row of rows) {
     const userId = row.user_id;
     const nick = (row.nick || "").trim();
-    byToken.set(normalizeMentionToken(userId), { userId, display: nick || userId });
+    const profile = profiles.get(userId);
+    const username = String(profile?.username || "").trim();
+    const displayName = String(profile?.displayName || "").trim();
+    const display = preferredDisplayName(userId, profile, nick);
+    byToken.set(normalizeMentionToken(userId), { userId, display });
     if (nick) byToken.set(normalizeMentionToken(nick), { userId, display: nick });
+    if (username) byToken.set(normalizeMentionToken(username), { userId, display });
+    if (displayName) byToken.set(normalizeMentionToken(displayName), { userId, display });
   }
 
   return byToken;
@@ -103,7 +111,8 @@ function extractLinkEmbeds(content: string) {
 export async function messageRoutes(
   app: FastifyInstance,
   broadcastToChannel: (channelId: string, event: any) => void,
-  broadcastMention: (userIds: string[], payload: any) => void
+  broadcastMention: (userIds: string[], payload: any) => void,
+  broadcastChannelEvent?: (channelId: string, eventType: string, payload: any) => void
 ) {
   app.get("/v1/channels/:channelId/pins", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const { channelId } = z.object({ channelId: z.string().min(3) }).parse(req.params);
@@ -123,7 +132,7 @@ export async function messageRoutes(
     if (!has(perms, Perm.VIEW_CHANNEL)) return rep.code(403).send({ error: "MISSING_PERMS" });
 
     const rows = await q<any>(
-      `SELECT p.message_id, p.pinned_by, p.pinned_at, m.author_id, m.author_name, m.content, m.created_at
+      `SELECT p.message_id, p.pinned_by, p.pinned_at, m.author_id, m.author_name, m.author_avatar_url, m.content, m.created_at
        FROM channel_pins p
        JOIN messages m ON m.id = p.message_id
        WHERE p.channel_id=:channelId
@@ -131,11 +140,13 @@ export async function messageRoutes(
        LIMIT 50`,
       { channelId }
     );
+    const authorProfiles = await resolveCoreUserProfiles(rows.map((row) => row.author_id));
 
     return rep.send({
       pins: rows.map((row) => ({
         id: row.message_id,
-        author: row.author_name || row.author_id,
+        author: preferredDisplayName(row.author_id, authorProfiles.get(row.author_id), row.author_name),
+        pfp_url: row.author_avatar_url || authorProfiles.get(row.author_id)?.pfpUrl || null,
         content: row.content,
         pinnedBy: row.pinned_by,
         pinnedAt: row.pinned_at,
@@ -249,6 +260,7 @@ export async function messageRoutes(
       );
     }
     const hasMore = rows.length >= qs.limit;
+    const authorProfiles = await resolveCoreUserProfiles(rows.map((row: any) => row.author_id));
     rows = rows.map((r: any) => {
       const mentionMeta = resolveMessageMentions(r.content || "", mentionDirectory);
       let embeds: any[] = [];
@@ -257,10 +269,11 @@ export async function messageRoutes(
       } catch {
         embeds = [];
       }
+      const authorProfile = authorProfiles.get(r.author_id);
       return {
         ...r,
-        username: r.author_name || r.author_id,
-        pfp_url: r.author_avatar_url || null,
+        username: preferredDisplayName(r.author_id, authorProfile, r.author_name),
+        pfp_url: r.author_avatar_url || authorProfile?.pfpUrl || null,
         embeds: Array.isArray(embeds) ? embeds : [],
         linkEmbeds: extractLinkEmbeds(r.content || ""),
         ...mentionMeta
@@ -351,6 +364,9 @@ export async function messageRoutes(
     const mentionDirectory = await loadGuildMentionDirectory(guildId);
     const mentionMeta = resolveMessageMentions(body.content || "", mentionDirectory);
     const embeds = (body.embeds || []) as MessageEmbed[];
+    const authorProfiles = await resolveCoreUserProfiles([authorId]);
+    const authorProfile = authorProfiles.get(authorId);
+    let resolvedAttachments: any[] = [];
 
     await q(
       `INSERT INTO messages (id,channel_id,author_id,author_name,author_avatar_url,content,embeds_json,created_at)
@@ -359,8 +375,8 @@ export async function messageRoutes(
         id,
         channelId,
         authorId: authorId,
-        authorName: null,
-        authorAvatarUrl: null,
+        authorName: preferredDisplayName(authorId, authorProfile),
+        authorAvatarUrl: authorProfile?.pfpUrl || null,
         content: body.content,
         embedsJson: JSON.stringify(embeds),
         createdAt: createdAt.slice(0, 19).replace("T", " ")
@@ -375,19 +391,38 @@ export async function messageRoutes(
         { messageId: id, attId }
       );
     }
+    if (attachmentIds.length) {
+      const params: Record<string, any> = {};
+      const inList = attachmentIds.map((attId, index) => (params[`a${index}`] = attId, `:a${index}`)).join(",");
+      resolvedAttachments = await q<any>(
+        `SELECT id,file_name,content_type,size_bytes,expires_at
+         FROM attachments
+         WHERE id IN (${inList})`,
+        params
+      );
+      resolvedAttachments = resolvedAttachments.map((attachment) => ({
+        id: attachment.id,
+        fileName: attachment.file_name,
+        contentType: attachment.content_type,
+        sizeBytes: attachment.size_bytes,
+        expiresAt: new Date(attachment.expires_at).toISOString(),
+        url: `/v1/attachments/${attachment.id}`
+      }));
+    }
 
     const payload = {
       channelId,
       message: {
         id,
         authorId,
-        username: authorId,
-        pfp_url: null,
+        author_id: authorId,
+        username: preferredDisplayName(authorId, authorProfile),
+        pfp_url: authorProfile?.pfpUrl || null,
         content: body.content,
         embeds,
         linkEmbeds: extractLinkEmbeds(body.content || ""),
         createdAt,
-        attachments: attachmentIds.map(aid => ({ id: aid, url: `/v1/attachments/${aid}` })),
+        attachments: resolvedAttachments,
         mentionEveryone: mentionMeta.mentionEveryone,
         mentions: mentionMeta.mentions
       }
@@ -417,6 +452,50 @@ export async function messageRoutes(
 
     return rep.send({ messageId: id, createdAt, mentionEveryone: mentionMeta.mentionEveryone, mentions: mentionMeta.mentions });
   });
+  app.patch("/v1/channels/:channelId/messages/:messageId", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
+    const { channelId, messageId } = z.object({ channelId: z.string().min(3), messageId: z.string().min(3) }).parse(req.params);
+    const userId = req.auth.userId as string;
+    const body = z.object({
+      content: z.string().trim().min(1).max(4000)
+    }).parse(req.body || {});
+
+    const ch = await q<{ guild_id: string }>(`SELECT guild_id FROM channels WHERE id=:channelId`, { channelId });
+    if (!ch.length) return rep.code(404).send({ error: "CHANNEL_NOT_FOUND" });
+    const guildId = ch[0].guild_id;
+
+    try { await requireGuildMember(guildId, userId, req.auth.roles, req.auth.coreServerId); }
+    catch { return rep.code(403).send({ error: "NOT_GUILD_MEMBER" }); }
+
+    const perms = await resolveChannelPermissions({ guildId, channelId, userId, roles: req.auth.roles || [] });
+    if (!has(perms, Perm.VIEW_CHANNEL)) return rep.code(403).send({ error: "MISSING_PERMS" });
+
+    const rows = await q<{ id: string; author_id: string }>(
+      `SELECT id,author_id FROM messages WHERE id=:messageId AND channel_id=:channelId LIMIT 1`,
+      { messageId, channelId }
+    );
+    if (!rows.length) return rep.code(404).send({ error: "MESSAGE_NOT_FOUND" });
+
+    const canModerateMessages = has(perms, Perm.ADMINISTRATOR) || has(perms, Perm.MANAGE_CHANNELS);
+    if (rows[0].author_id !== userId && !canModerateMessages) return rep.code(403).send({ error: "MISSING_PERMS" });
+
+    await q(
+      `UPDATE messages
+       SET content=:content
+       WHERE id=:messageId AND channel_id=:channelId`,
+      { content: body.content, messageId, channelId }
+    );
+
+    if (broadcastChannelEvent) {
+      broadcastChannelEvent(channelId, "MESSAGE_UPDATE", {
+        channelId,
+        messageId,
+        content: body.content,
+        edited: true
+      });
+    }
+
+    return rep.send({ ok: true });
+  });
   app.delete("/v1/channels/:channelId/messages/:messageId", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const { channelId, messageId } = z.object({ channelId: z.string().min(3), messageId: z.string().min(3) }).parse(req.params);
     const userId = req.auth.userId as string;
@@ -440,7 +519,11 @@ export async function messageRoutes(
     if (rows[0].author_id !== userId && !canModerateMessages) return rep.code(403).send({ error: "MISSING_PERMS" });
 
     await q(`DELETE FROM messages WHERE id=:messageId`, { messageId });
-    broadcastToChannel(channelId, { channelId, messageDelete: { id: messageId } });
+    if (broadcastChannelEvent) {
+      broadcastChannelEvent(channelId, "MESSAGE_DELETE", { channelId, messageId });
+    } else {
+      broadcastToChannel(channelId, { channelId, messageDelete: { id: messageId } });
+    }
     return rep.send({ ok: true });
   });
 

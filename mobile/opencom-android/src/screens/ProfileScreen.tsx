@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useMemo } from "react";
 import {
   Image,
   Pressable,
@@ -7,8 +7,14 @@ import {
   Text,
   View,
 } from "react-native";
-import { useAuth } from "../context/AuthContext";
 import { Avatar } from "../components/Avatar";
+import {
+  ScreenBackground,
+  SectionLabel,
+  SurfaceCard,
+  TopBar,
+} from "../components/chrome";
+import { useAuth } from "../context/AuthContext";
 import { colors, radii, spacing, typography } from "../theme";
 
 type ProfileScreenProps = {
@@ -17,12 +23,44 @@ type ProfileScreenProps = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  online: "🟢  Online",
-  idle: "🌙  Idle",
-  dnd: "⛔  Do Not Disturb",
-  offline: "⬛  Offline",
-  invisible: "👻  Invisible",
+  online: "Online",
+  idle: "Idle",
+  dnd: "Do Not Disturb",
+  offline: "Offline",
+  invisible: "Invisible",
 };
+
+function ActionRow({
+  label,
+  icon,
+  onPress,
+  danger = false,
+  showDivider = false,
+}: {
+  label: string;
+  icon: string;
+  onPress: () => void;
+  danger?: boolean;
+  showDivider?: boolean;
+}) {
+  return (
+    <View>
+      <Pressable
+        style={({ pressed }) => [styles.actionRow, pressed && styles.actionRowPressed]}
+        onPress={onPress}
+      >
+        <View style={[styles.actionIconWrap, danger && styles.actionIconWrapDanger]}>
+          <Text style={styles.actionIcon}>{icon}</Text>
+        </View>
+        <Text style={[styles.actionLabel, danger && styles.actionLabelDanger]}>
+          {label}
+        </Text>
+        <Text style={styles.actionChevron}>›</Text>
+      </Pressable>
+      {showDivider ? <View style={styles.rowDivider} /> : null}
+    </View>
+  );
+}
 
 export function ProfileScreen({
   onLogout,
@@ -32,284 +70,258 @@ export function ProfileScreen({
 
   const displayName = myProfile?.displayName ?? me?.username ?? "User";
   const username = me?.username ?? "";
-  const bio = myProfile?.bio ?? null;
+  const bio = myProfile?.bio ?? "";
   const pfpUrl = myProfile?.pfp_url ?? null;
   const bannerUrl = myProfile?.banner_url ?? null;
   const statusLabel = STATUS_LABELS[selfStatus] ?? STATUS_LABELS.online;
 
+  const profileSubtitle = useMemo(() => {
+    if (bio) return bio;
+    if (username) return `@${username}`;
+    return "Your OpenCom profile";
+  }, [bio, username]);
+
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      showsVerticalScrollIndicator={false}
-    >
-      {/* Banner + avatar */}
-      <View style={styles.heroSection}>
-        {bannerUrl ? (
-          <Image
-            source={{ uri: bannerUrl }}
-            style={styles.banner}
-            resizeMode="cover"
-          />
-        ) : (
-          <View style={styles.bannerPlaceholder} />
-        )}
+    <ScreenBackground>
+      <TopBar title="Profile" subtitle="Identity, presence, and account tools" />
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        <SurfaceCard style={styles.heroCard} padded={false}>
+          {bannerUrl ? (
+            <Image source={{ uri: bannerUrl }} style={styles.banner} resizeMode="cover" />
+          ) : (
+            <View style={styles.bannerPlaceholder} />
+          )}
 
-        <View style={styles.avatarRow}>
-          <View style={styles.avatarContainer}>
-            <Avatar
-              username={displayName}
-              pfpUrl={pfpUrl}
-              size={76}
-              status={selfStatus}
-              showStatus
-            />
+          <View style={styles.identityWrap}>
+            <View style={styles.avatarWrap}>
+              <Avatar
+                username={displayName}
+                pfpUrl={pfpUrl}
+                size={84}
+                status={selfStatus}
+                showStatus
+              />
+            </View>
+            <Pressable
+              style={({ pressed }) => [
+                styles.heroAction,
+                pressed && styles.heroActionPressed,
+              ]}
+              onPress={onOpenSettings}
+            >
+              <Text style={styles.heroActionText}>Edit Profile</Text>
+            </Pressable>
           </View>
-          <Pressable
-            style={({ pressed }) => [
-              styles.editBtn,
-              pressed && styles.editBtnPressed,
-            ]}
-            onPress={onOpenSettings}
-          >
-            <Text style={styles.editBtnText}>⚙️ Edit Profile</Text>
-          </Pressable>
-        </View>
-      </View>
 
-      {/* Identity card */}
-      <View style={styles.card}>
-        <Text style={styles.displayName} numberOfLines={1}>
-          {displayName}
-        </Text>
-        {username && displayName !== username && (
-          <Text style={styles.username} numberOfLines={1}>
-            @{username}
-          </Text>
-        )}
-        {!bio && !bannerUrl && <Text style={styles.username}>@{username}</Text>}
+          <View style={styles.heroBody}>
+            <Text style={styles.displayName}>{displayName}</Text>
+            {username ? <Text style={styles.username}>@{username}</Text> : null}
+            <View style={styles.statusBadge}>
+              <View style={styles.statusDot} />
+              <Text style={styles.statusBadgeText}>{statusLabel}</Text>
+            </View>
+            <Text style={styles.profileSubtitle}>{profileSubtitle}</Text>
+          </View>
+        </SurfaceCard>
 
-        <View style={styles.statusRow}>
-          <Text style={styles.statusText}>{statusLabel}</Text>
-        </View>
-
-        {bio ? (
-          <>
-            <View style={styles.divider} />
-            <Text style={styles.bioLabel}>ABOUT ME</Text>
-            <Text style={styles.bio}>{bio}</Text>
-          </>
+        {myProfile?.email ? (
+          <SurfaceCard>
+            <SectionLabel title="Account" />
+            <View style={styles.infoGrid}>
+              <View style={styles.infoItem}>
+                <Text style={styles.infoLabel}>EMAIL</Text>
+                <Text style={styles.infoValue}>{myProfile.email}</Text>
+              </View>
+              <View style={styles.infoItem}>
+                <Text style={styles.infoLabel}>STATUS</Text>
+                <Text style={styles.infoValue}>{statusLabel}</Text>
+              </View>
+            </View>
+          </SurfaceCard>
         ) : null}
-      </View>
 
-      {/* Account info */}
-      {myProfile?.email ? (
-        <View style={styles.card}>
-          <Text style={styles.infoLabel}>EMAIL</Text>
-          <Text style={styles.infoValue} numberOfLines={1}>
-            {myProfile.email}
-          </Text>
-        </View>
-      ) : null}
+        <SurfaceCard style={styles.listCard} padded={false}>
+          <View style={styles.cardHeaderWrap}>
+            <SectionLabel title="Quick Actions" />
+          </View>
+          <ActionRow
+            icon="⚙️"
+            label="Settings and Profile"
+            onPress={onOpenSettings}
+            showDivider
+          />
+          <ActionRow
+            icon="🔒"
+            label="Account and Security"
+            onPress={onOpenSettings}
+            showDivider
+          />
+          <ActionRow
+            icon="📱"
+            label="Sessions and Devices"
+            onPress={onOpenSettings}
+          />
+        </SurfaceCard>
 
-      {/* Quick actions */}
-      <View style={styles.card}>
-        <Pressable
-          style={({ pressed }) => [
-            styles.actionRow,
-            pressed && styles.actionRowPressed,
-          ]}
-          onPress={onOpenSettings}
-        >
-          <Text style={styles.actionIcon}>⚙️</Text>
-          <Text style={styles.actionLabel}>Settings & Profile</Text>
-          <Text style={styles.actionChevron}>›</Text>
-        </Pressable>
-
-        <View style={styles.rowDivider} />
-
-        <Pressable
-          style={({ pressed }) => [
-            styles.actionRow,
-            pressed && styles.actionRowPressed,
-          ]}
-          onPress={onOpenSettings}
-        >
-          <Text style={styles.actionIcon}>🔒</Text>
-          <Text style={styles.actionLabel}>Account & Security</Text>
-          <Text style={styles.actionChevron}>›</Text>
-        </Pressable>
-
-        <View style={styles.rowDivider} />
-
-        <Pressable
-          style={({ pressed }) => [
-            styles.actionRow,
-            pressed && styles.actionRowPressed,
-          ]}
-          onPress={onOpenSettings}
-        >
-          <Text style={styles.actionIcon}>📱</Text>
-          <Text style={styles.actionLabel}>Active Sessions</Text>
-          <Text style={styles.actionChevron}>›</Text>
-        </Pressable>
-      </View>
-
-      {/* Danger zone */}
-      <View style={styles.card}>
-        <Pressable
-          style={({ pressed }) => [
-            styles.actionRow,
-            pressed && styles.actionRowPressed,
-          ]}
-          onPress={onLogout}
-        >
-          <Text style={styles.actionIcon}>🚪</Text>
-          <Text style={[styles.actionLabel, styles.actionLabelDanger]}>
-            Log Out
-          </Text>
-          <Text style={styles.actionChevron}>›</Text>
-        </Pressable>
-      </View>
-
-      <View style={{ height: spacing.xl }} />
-    </ScrollView>
+        <SurfaceCard style={styles.listCard} padded={false}>
+          <View style={styles.cardHeaderWrap}>
+            <SectionLabel title="Danger Zone" />
+          </View>
+          <ActionRow
+            icon="🚪"
+            label="Log Out"
+            onPress={onLogout}
+            danger
+          />
+        </SurfaceCard>
+      </ScrollView>
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   content: {
+    paddingHorizontal: spacing.md,
     paddingBottom: spacing.xl,
+    gap: spacing.sm,
   },
-
-  // Hero section
-  heroSection: {
-    marginBottom: spacing.md,
+  heroCard: {
+    overflow: "hidden",
   },
   banner: {
     width: "100%",
-    height: 120,
-    backgroundColor: colors.elev,
+    height: 136,
   },
   bannerPlaceholder: {
     width: "100%",
-    height: 80,
-    backgroundColor: colors.sidebar,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    height: 112,
+    backgroundColor: colors.panelAlt,
   },
-  avatarRow: {
+  identityWrap: {
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-between",
-    paddingHorizontal: spacing.md,
-    marginTop: -38,
+    paddingHorizontal: spacing.lg,
+    marginTop: -42,
   },
-  avatarContainer: {
-    borderRadius: 42,
-    borderWidth: 4,
-    borderColor: colors.background,
+  avatarWrap: {
+    padding: 4,
+    borderRadius: radii.full,
     backgroundColor: colors.background,
-    overflow: "hidden",
   },
-  editBtn: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.md,
+  heroAction: {
+    minHeight: 40,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.sidebar,
-    marginBottom: 4,
+    borderRadius: radii.full,
+    backgroundColor: colors.brandMuted,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.sm,
   },
-  editBtnPressed: {
-    backgroundColor: colors.hover,
+  heroActionPressed: {
+    opacity: 0.82,
   },
-  editBtnText: {
+  heroActionText: {
     ...typography.caption,
     color: colors.text,
-    fontWeight: "600",
+    fontWeight: "700",
   },
-
-  // Identity card
-  card: {
-    backgroundColor: colors.sidebar,
-    borderRadius: radii.lg,
-    marginHorizontal: spacing.md,
-    marginBottom: spacing.md,
-    paddingVertical: spacing.md,
+  heroBody: {
     paddingHorizontal: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
+    paddingBottom: spacing.lg,
+    gap: spacing.xs,
   },
   displayName: {
     ...typography.title,
     color: colors.text,
-    marginBottom: 2,
   },
   username: {
     ...typography.caption,
     color: colors.textDim,
-    marginBottom: spacing.xs,
   },
-  statusRow: {
+  statusBadge: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radii.full,
+    backgroundColor: colors.panelAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
     marginTop: spacing.xs,
   },
-  statusText: {
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.success,
+  },
+  statusBadgeText: {
     ...typography.caption,
-    color: colors.textDim,
-    fontWeight: "600",
-    textTransform: "capitalize",
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginVertical: spacing.md,
-  },
-  bioLabel: {
-    fontSize: 11,
+    color: colors.textSoft,
     fontWeight: "700",
-    color: colors.textDim,
-    letterSpacing: 0.8,
-    marginBottom: spacing.xs,
   },
-  bio: {
+  profileSubtitle: {
     ...typography.body,
-    color: colors.text,
+    color: colors.textSoft,
     lineHeight: 22,
+    marginTop: spacing.xs,
   },
-
-  // Account info card
+  infoGrid: {
+    gap: spacing.md,
+  },
+  infoItem: {
+    gap: spacing.xs,
+  },
   infoLabel: {
-    fontSize: 11,
-    fontWeight: "700",
+    ...typography.eyebrow,
     color: colors.textDim,
-    letterSpacing: 0.8,
-    marginBottom: spacing.xs,
   },
   infoValue: {
     ...typography.body,
     color: colors.text,
   },
-
-  // Action rows
+  listCard: {
+    overflow: "hidden",
+  },
+  cardHeaderWrap: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+  },
   actionRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: spacing.md,
     gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
   actionRowPressed: {
     backgroundColor: colors.hover,
-    borderRadius: radii.md,
+  },
+  actionIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.brandMuted,
+  },
+  actionIconWrapDanger: {
+    backgroundColor: "rgba(239, 95, 118, 0.14)",
   },
   actionIcon: {
-    fontSize: 18,
-    width: 26,
-    textAlign: "center",
+    fontSize: 16,
   },
   actionLabel: {
     ...typography.body,
@@ -326,6 +338,7 @@ const styles = StyleSheet.create({
   rowDivider: {
     height: 1,
     backgroundColor: colors.border,
-    marginLeft: 42,
+    marginLeft: spacing.lg + 54,
+    marginRight: spacing.lg,
   },
 });

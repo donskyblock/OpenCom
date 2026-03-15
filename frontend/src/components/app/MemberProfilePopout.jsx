@@ -1,3 +1,5 @@
+import { SafeAvatar } from "../ui/SafeAvatar";
+
 export function MemberProfilePopout({
   memberProfileCard,
   memberProfilePopoutRef,
@@ -53,21 +55,18 @@ export function MemberProfilePopout({
             }}
           />
           <div className="popout-content">
-            <div className="avatar popout-avatar">
-              {memberProfileCard.pfpUrl ? (
-                <img
-                  src={profileImageUrl(memberProfileCard.pfpUrl)}
-                  alt="Profile avatar"
-                  className="avatar-image"
-                />
-              ) : (
-                getInitials(
-                  memberProfileCard.displayName ||
-                    memberProfileCard.username ||
-                    "User",
-                )
-              )}
-            </div>
+            <SafeAvatar
+              src={profileImageUrl(memberProfileCard.pfpUrl)}
+              alt="Profile avatar"
+              name={
+                memberProfileCard.displayName ||
+                memberProfileCard.username ||
+                "User"
+              }
+              seed={memberProfileCard.id || memberProfileCard.username}
+              className="avatar popout-avatar"
+              imgClassName="avatar-image"
+            />
             <h4>
               {memberProfileCard.displayName || memberProfileCard.username}
             </h4>

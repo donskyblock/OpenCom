@@ -1,5 +1,6 @@
+import { useEffect, useState } from "react";
 import { Image, StyleSheet, Text, View } from "react-native";
-import { colors } from "../theme";
+import { colors, shadows } from "../theme";
 
 type AvatarProps = {
   username?: string | null;
@@ -39,18 +40,32 @@ export function Avatar({
   status,
   showStatus = false,
 }: AvatarProps) {
+  const [imageFailed, setImageFailed] = useState(false);
   const badgeSize = Math.max(10, Math.round(size * 0.28));
   const badgeOffset = Math.round(badgeSize * 0.1);
   const borderRadius = size / 2;
   const badgeColor = status ? (STATUS_COLORS[status] ?? STATUS_COLORS.offline) : STATUS_COLORS.offline;
 
+  useEffect(() => {
+    setImageFailed(false);
+  }, [pfpUrl]);
+
   return (
     <View style={{ width: size, height: size }}>
-      {pfpUrl ? (
+      {pfpUrl && !imageFailed ? (
         <Image
           source={{ uri: pfpUrl }}
-          style={[styles.image, { width: size, height: size, borderRadius }]}
+          style={[
+            styles.image,
+            {
+              width: size,
+              height: size,
+              borderRadius,
+              borderWidth: 1,
+            },
+          ]}
           resizeMode="cover"
+          onError={() => setImageFailed(true)}
         />
       ) : (
         <View
@@ -61,6 +76,7 @@ export function Avatar({
               height: size,
               borderRadius,
               backgroundColor: hashColor(username),
+              borderWidth: 1,
             },
           ]}
         >
@@ -99,10 +115,14 @@ export function Avatar({
 const styles = StyleSheet.create({
   image: {
     backgroundColor: colors.elev,
+    borderColor: colors.border,
+    ...shadows.card,
   },
   placeholder: {
     justifyContent: "center",
     alignItems: "center",
+    borderColor: colors.border,
+    ...shadows.card,
   },
   initial: {
     color: "#fff",

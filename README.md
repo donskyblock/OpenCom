@@ -1,176 +1,107 @@
+
 # OpenCom
 
-Open-source Discord-like platform.
+An open source communication platform
 
-## Documentation
+## Info:
 
-- Comprehensive platform functionality and API surface:
-  - `docs/PLATFORM_GUIDE.md`
-- Setup and operations:
-  - `docs/SETUP_GUIDE.md`
-  - `docs/VOICE_DEBUGGING.md`
-  - `scripts/README.md`
-- Component-specific docs:
-  - `frontend/README.md`
-  - `backend/README.md`
-  - `client/README.md`
+- This is a README rewrite as my prior one was written by AI and im not particualrly proud of that, so we ball ig. Please notify / tell me of any misisng bits and I will get to them anyways we ball ig.
 
-## Monorepo layout
-- `backend/`: Core + Server Node services.
-- `frontend/`: React web client.
-- `scripts/`: grouped helpers (`dev/`, `env/`, `ops/`, `docs/`).
+- This is gonna be as comprehensive as I can write it easily, but please note there may or may not be some difficulties due ot my admitadly lack of skill at README's [:sob:]
 
-See `scripts/README.md` for the script catalog.
+- Anyways for the people who are about to read my extravaganzer of a readme Good luck kind soul :pray:
 
-## Planned deployment URLs
-- Frontend app: `https://opencom.donskyblock.xyz`
-- API/Core: `https://openapi.donskyblock.xyz`
+## Feature List:
 
-## Backend database setup
-Fastest fully-inclusive setup (env + local MariaDB provisioning via sudo + migrations):
-```bash
-./scripts/dev/setup-database.sh --init-env --provision-local-db
-```
+**[NOTE IF ITS MISSING SOMETHING PLEASE JUST OPEN A ISSUE AND IT WILL BE FIXED]**
 
-Docker-based setup (env + docker infra + migrations):
-```bash
-./scripts/dev/setup-database.sh --init-env --with-docker
-```
+**OpenCom Core**
 
-If env already exists and DB is ready:
-```bash
-./scripts/dev/setup-database.sh
-```
+- Account Management Endpoints
 
-## Run Full Stack In Docker
-From repository root:
-```bash
-docker compose up -d --build
-```
+- Private DMS
 
-Compose reads:
-- `backend/.env` and `backend/.env.docker`
-- `frontend/.env` and `frontend/.env.docker`
+- Main gateway handelling 
 
-## Create a server with explicit owner username
-Use the helper script when you want to assign ownership to a specific existing user:
-```bash
-./scripts/ops/create-server.sh --name "My Server" --base-url "https://node.provider.tld" --owner-username "alice"
-```
+- Boost Handelling
+
+- Invite Service
+
+- The officail account / messaging service stuff
+
+**OpenCom Node**
+
+- **Official Node**
+  - Server handelling for non self hosted
+  - Server handelling in general
+  - All features included in self hosted
+  - running the official server admin panel [I think may be wrong tho, this codebase is massive lmfao]
+
+- **Self Hosted**
+  - Server Creation hosted purely by user
+  - Channels / Categories [similar to discord]
+  - Voice Calls / Channels
+  - Roles
+  - Fully functional guild stuff
+
+**OpenCom Frontend**
+
+**[NOTE IF YOU ARE USING OPENCOM AS IN THE MAIN PLATFORM THIS IS NOT SELF HOSTED]**
+
+- Fully inclusive frontend [ig this is obvious but like we ball ig]
+
+- DM's 
+
+- Server interaction layer
+
+- I'm negl i have no idea how to explain the frontend but the gist is here so enjoy ig as said im bad at this
 
 
-## Update + backup/restore scripts
-Run a full Docker rolling update flow (build -> migrate -> restart core/node/frontend with health checks):
-```bash
-./scripts/ops/update-opencom.sh
-```
 
-Useful options:
-```bash
-./scripts/ops/update-opencom.sh --pull --backup
-./scripts/ops/update-opencom.sh --skip-build
-```
+## Project Roadmap
 
-Create a portable backup bundle (DB + env config snapshots):
-```bash
-./scripts/ops/migrate-portability.sh export backups/opencom-backup.tar.gz
-```
+**TODO LIST**
+ 
+- [x] Finish Mobile APP [maybe this is a 50/50]
 
-Restore from a portable backup bundle:
-```bash
-./scripts/ops/migrate-portability.sh import backups/opencom-backup.tar.gz --force
-```
+- [x] Add more callbacks to the github in the frontend
 
-Create an automatic backup now (backs up all configured `*_DATABASE_URL` values and keeps latest 56 by default):
-```bash
-./scripts/ops/auto-backup.sh
-```
+- [x] Overall improvemnets to the platform
 
-Install a cron job to run backups every 6 hours:
-```bash
-./scripts/ops/backup-cron.sh install
-./scripts/ops/backup-cron.sh status
-```
+- [x] Make the actual day to day running of OpenCom easier for both self hosted and core
 
-## Frontend quickstart
-```bash
-cd frontend
-npm install
-npm run dev
-```
+- [x] Improve Client handelling
 
-See `frontend/README.md` for full documentation, custom CSS theming, and API integration details.
+- [ ] Make .deb Package actually have the icon [for some reason it dosent]
 
-## Voice diagnostics
-Use the dedicated debugging guide for SFU/mediasoup troubleshooting and log flags:
+- [x] Overall improve everything else [more just small improvements to small for individual mentions]
 
-- `docs/VOICE_DEBUGGING.md`
 
-Quick commands:
-```bash
-cd backend
-npm run dev:voice-debug
+## Hosting A server node
 
-cd ../frontend
-npm run dev:voice-debug
-```
+Im assuming this is what most of you are here for so here it goes.
 
-## Run services
-From repository root:
-```bash
-./start.sh
-```
+- simply its going to scripts/ops and running ./create-server.sh and following through the args in that
 
-This also serves the admin dashboard at `http://localhost:5173/admin.html` when frontend is running.
+- then once having setup the node running ./start-server.sh {server-name}
 
-Or explicitly:
-```bash
-./scripts/dev/start.sh all
-```
+- In an ideal world this should just be this simple if its not please open a issue or pull request and i'll get to fixing it
 
-## Configure direct WebSocket hosting (frontend via nginx, WS direct)
-If your frontend is proxied by nginx but websocket is exposed directly (for example on `ws.opencom.online:9443`), run:
 
-```bash
-./scripts/ops/configure-ws.sh --domain ws.opencom.online --ip 37.114.58.186
-```
+## Support the project
 
-> Do **not** pass `--backend-env /tmp/...` and `--frontend-env /tmp/...` unless you intentionally want a dry-run-like temp output.
-> To apply real config, run it against defaults (`backend/.env` and `frontend/.env`) by omitting those flags.
+**[NOTE THIS PURELY OPTIONAL ANYTHING DONE WILL BE A MASSIVE HELP IN THE DAY TO DAY RUNNING AND DEVELOPMENT OF THIS]**
 
-Generate a self-signed certificate/key pair for `wss://` testing (writes `fullchain.pem` + `privkey.pem`):
+The sole and only way to really support OpenCom is through the boost subscription service offered within the application, this is designed to help fund the platform as I have done it to make it as fully functioanl without boost whilst also making it worth it to those looking to support :). 
 
-```bash
-./scripts/ops/configure-ws.sh --domain ws.opencom.online --ip 37.114.58.186 --generate-self-signed-cert
-```
 
-Use `--cert-dir <path>` to change output location and `--force-cert-overwrite` to replace existing files.
+## Actually running the project
 
-> Self-signed certificates are for diagnostics only; browsers will still show trust errors unless you install the CA/cert.
+**[THIS IS DESIGNED FOR IF YOU ACTUALLY HAVE IT ALREADY SETUP IN A ENV]**
 
-Generate a trusted Let's Encrypt certificate for `wss://` (no browser warnings) and auto-wire backend TLS env vars:
+- Cd into the dir
 
-```bash
-./scripts/ops/configure-ws.sh --domain ws.opencom.online --generate-letsencrypt-cert --letsencrypt-email admin@opencom.online
-```
+- Run ./start.sh [ or docker-compose up / docker compose up (if thats working)]
 
-> By default this uses `certbot --standalone`, so port **80** for that domain must be free/reachable during issuance.
-> If nginx already uses `:80`, use webroot mode instead:
-> `./scripts/ops/configure-ws.sh --domain ws.opencom.online --generate-letsencrypt-cert --letsencrypt-email admin@opencom.online --letsencrypt-webroot /var/www/certbot`
-> The script now performs a preflight HTTP probe for `/.well-known/acme-challenge/...` and fails fast with nginx guidance if the webroot is not being served.
-> Cert files are expected at `/etc/letsencrypt/live/<domain>/fullchain.pem` and `privkey.pem`, and are written to `CORE_GATEWAY_TLS_CERT_FILE` / `CORE_GATEWAY_TLS_KEY_FILE` in `backend/.env`.
+- In either case ensure it runs correctly 
 
-Minimal nginx example for webroot challenge path:
-
-```nginx
-location ^~ /.well-known/acme-challenge/ {
-    root /var/www/certbot;
-    default_type text/plain;
-}
-```
-
-Force plain `ws://` if your WS endpoint does not use TLS:
-
-```bash
-./scripts/ops/configure-ws.sh --ip 37.114.58.186 --direct-ip --insecure
-```

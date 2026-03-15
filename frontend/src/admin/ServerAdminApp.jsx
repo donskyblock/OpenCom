@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { SafeAvatar } from "../components/ui/SafeAvatar";
 
 const CORE_API = import.meta.env.VITE_CORE_API_URL || "https://api.opencom.online";
 
@@ -566,11 +567,19 @@ export function ServerAdminApp() {
                             return (
                               <article key={member.id} className="server-admin-member-card">
                                 <div className="server-admin-member-head">
-                                  {member.pfp_url ? (
-                                    <img src={member.pfp_url} alt={member.username} />
-                                  ) : (
-                                    <div className="server-admin-member-fallback">{member.username?.[0]?.toUpperCase() || "?"}</div>
-                                  )}
+                                  <SafeAvatar
+                                    src={member.pfp_url}
+                                    alt={member.username}
+                                    name={member.username}
+                                    seed={member.id}
+                                    className="server-admin-member-fallback"
+                                    imgStyle={{
+                                      width: "100%",
+                                      height: "100%",
+                                      objectFit: "cover",
+                                      display: "block",
+                                    }}
+                                  />
                                   <div>
                                     <strong>{member.username}</strong>
                                     <p>{member.id}</p>

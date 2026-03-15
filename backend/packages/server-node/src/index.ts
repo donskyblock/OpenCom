@@ -90,7 +90,7 @@ await guildStateRoutes(app);
 await emoteRoutes(app);
 
 await channelRoutes(app, gw.broadcastGuild);
-await messageRoutes(app, gw.broadcastToChannel, gw.broadcastMention);
+await messageRoutes(app, gw.broadcastToChannel, gw.broadcastMention, gw.broadcastChannelEvent);
 
 await roleRoutes(app, gw.broadcastGuild);
 await overwriteRoutes(app, gw.broadcastGuild);

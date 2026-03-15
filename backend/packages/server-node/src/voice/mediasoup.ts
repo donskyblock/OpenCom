@@ -22,6 +22,8 @@ type Peer = {
   consumers: Map<string, mediasoup.types.Consumer>;
 };
 
+type ProducerSource = "microphone" | "camera" | "screen";
+
 const rooms = new Map<RoomKey, Room>();
 
 let worker: mediasoup.types.Worker | null = null;
@@ -114,6 +116,32 @@ function maybeCloseRoom(roomKey: RoomKey, room: Room) {
   if (room.peers.size !== 0) return;
   try { room.router.close(); } catch {}
   rooms.delete(roomKey);
+}
+
+function normalizeProducerSource(
+  kind: "audio" | "video",
+  rawSource?: unknown,
+): ProducerSource {
+  if (kind === "audio") return "microphone";
+  return rawSource === "screen" ? "screen" : "camera";
+}
+
+function getProducerSource(
+  producer: mediasoup.types.Producer,
+  fallbackKind: "audio" | "video" = producer.kind,
+): ProducerSource {
+  return normalizeProducerSource(
+    fallbackKind,
+    (producer.appData as { source?: unknown } | undefined)?.source,
+  );
+}
+
+function findProducerInRoom(room: Room, producerId: string) {
+  for (const [userId, peer] of room.peers) {
+    const producer = peer.producers.get(producerId);
+    if (producer) return { userId, producer };
+  }
+  return null;
 }
 
 async function getOrCreateRoom(guildId: string, channelId: string) {
@@ -273,7 +301,16 @@ export async function restartIce(
   return { transportId, iceParameters };
 }
 
-export async function produce(guildId: string, channelId: string, userId: string, transportId: string, kind: "audio" | "video", rtpParameters: any, sessionId?: string) {
+export async function produce(
+  guildId: string,
+  channelId: string,
+  userId: string,
+  transportId: string,
+  kind: "audio" | "video",
+  rtpParameters: any,
+  source?: string,
+  sessionId?: string,
+) {
   const { peer } = await getPeerForSession(
     guildId,
     channelId,
@@ -283,7 +320,12 @@ export async function produce(guildId: string, channelId: string, userId: string
   const transport = peer.transports.get(transportId);
   if (!transport) throw new Error("TRANSPORT_NOT_FOUND");
 
-  const producer = await transport.produce({ kind, rtpParameters });
+  const normalizedSource = normalizeProducerSource(kind, source);
+  const producer = await transport.produce({
+    kind,
+    rtpParameters,
+    appData: { source: normalizedSource },
+  });
   peer.producers.set(producer.id, producer);
   producer.on("transportclose", () => {
     peer.producers.delete(producer.id);
@@ -292,7 +334,7 @@ export async function produce(guildId: string, channelId: string, userId: string
     peer.producers.delete(producer.id);
   });
 
-  return { producerId: producer.id };
+  return { producerId: producer.id, source: normalizedSource };
 }
 
 export async function consume(
@@ -305,6 +347,8 @@ export async function consume(
   sessionId?: string,
 ) {
   const room = await getOrCreateRoom(guildId, channelId);
+  const producerEntry = findProducerInRoom(room, producerId);
+  if (!producerEntry) throw new Error("PRODUCER_NOT_FOUND");
   const { peer } = await getPeerForSession(
     guildId,
     channelId,
@@ -339,16 +383,27 @@ export async function consume(
     id: consumer.id,
     producerId,
     kind: consumer.kind,
-    rtpParameters: consumer.rtpParameters
+    rtpParameters: consumer.rtpParameters,
+    source: getProducerSource(producerEntry.producer, consumer.kind),
   };
 }
 
 export function listProducers(guildId: string, channelId: string) {
   const room = rooms.get(key(guildId, channelId));
   if (!room) return [];
-  const producers: { producerId: string; userId: string }[] = [];
+  const producers: {
+    producerId: string;
+    userId: string;
+    source: ProducerSource;
+  }[] = [];
   for (const [uid, peer] of room.peers) {
-    for (const pid of peer.producers.keys()) producers.push({ producerId: pid, userId: uid });
+    for (const [pid, producer] of peer.producers.entries()) {
+      producers.push({
+        producerId: pid,
+        userId: uid,
+        source: getProducerSource(producer),
+      });
+    }
   }
   return producers;
 }

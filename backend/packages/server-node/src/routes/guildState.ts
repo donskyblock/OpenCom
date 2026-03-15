@@ -4,6 +4,7 @@ import { q } from "../db.js";
 import { requireGuildMember } from "../auth/requireGuildMember.js";
 import { resolveChannelPermissions } from "../permissions/resolve.js";
 import { Perm, has } from "../permissions/bits.js";
+import { resolveCoreUserProfiles } from "../userDirectory.js";
 
 export async function guildStateRoutes(app: FastifyInstance) {
   app.get("/v1/guilds/:guildId/state", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
@@ -86,6 +87,10 @@ export async function guildStateRoutes(app: FastifyInstance) {
       { guildId }
     );
     const voiceStates = voiceStatesRaw.filter((state) => visibleChannelSet.has(state.channel_id));
+    const userProfiles = await resolveCoreUserProfiles([
+      ...members.map((member) => member.user_id),
+      ...voiceStates.map((state) => state.user_id)
+    ]);
     const roleIdsByUser = new Map<string, string[]>();
     for (const row of memberRoleRows) {
       if (!roleIdsByUser.has(row.user_id)) roleIdsByUser.set(row.user_id, []);
@@ -99,8 +104,9 @@ export async function guildStateRoutes(app: FastifyInstance) {
       overwrites: overwrites.filter((overwrite) => visibleChannelSet.has(overwrite.channel_id)),
       members: members.map((member) => ({
         id: member.user_id,
-        username: member.nick || member.user_id,
-        pfp_url: null,
+        username: userProfiles.get(member.user_id)?.username || member.user_id,
+        displayName: member.nick || userProfiles.get(member.user_id)?.displayName || null,
+        pfp_url: userProfiles.get(member.user_id)?.pfpUrl ?? null,
         status: "online",
         roleIds: roleIdsByUser.get(member.user_id) || []
       })),
@@ -115,6 +121,8 @@ export async function guildStateRoutes(app: FastifyInstance) {
       })),
       voiceStates: voiceStates.map((vs) => ({
         userId: vs.user_id,
+        username: userProfiles.get(vs.user_id)?.username || vs.user_id,
+        pfp_url: userProfiles.get(vs.user_id)?.pfpUrl ?? null,
         channelId: vs.channel_id,
         muted: !!vs.muted,
         deafened: !!vs.deafened,

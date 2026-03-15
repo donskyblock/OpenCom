@@ -6,11 +6,32 @@ import { requireGuildMember } from "../auth/requireGuildMember.js";
 import { requireManageChannels } from "../permissions/hierarchy.js";
 import { resolveChannelPermissions } from "../permissions/resolve.js";
 import { Perm, has } from "../permissions/bits.js";
+import { resolveCoreUserProfiles } from "../userDirectory.js";
 
 export async function channelRoutes(
   app: FastifyInstance,
   broadcastGuild: (guildId: string, t: string, d: any) => void
 ) {
+  async function buildVoiceStatePayload(
+    guildId: string,
+    userId: string,
+    channelId: string | null,
+    muted: boolean,
+    deafened: boolean
+  ) {
+    const profiles = await resolveCoreUserProfiles([userId]);
+    const profile = profiles.get(userId);
+    return {
+      guildId,
+      userId,
+      channelId,
+      muted,
+      deafened,
+      username: profile?.username || userId,
+      pfp_url: profile?.pfpUrl ?? null
+    };
+  }
+
   // List channels for a guild (requires membership)
   app.get("/v1/guilds/:guildId/channels", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
     const { guildId } = z.object({ guildId: z.string().min(3) }).parse(req.params);
@@ -300,7 +321,11 @@ export async function channelRoutes(
       { guildId, channelId, userId }
     );
 
-    broadcastGuild(guildId, "VOICE_STATE_UPDATE", { guildId, userId, channelId, muted: false, deafened: false });
+    broadcastGuild(
+      guildId,
+      "VOICE_STATE_UPDATE",
+      await buildVoiceStatePayload(guildId, userId, channelId, false, false)
+    );
     return rep.send({ ok: true });
   });
 
@@ -321,7 +346,11 @@ export async function channelRoutes(
       { userId, channelId }
     );
 
-    broadcastGuild(guildId, "VOICE_STATE_REMOVE", { guildId, userId, channelId });
+    broadcastGuild(
+      guildId,
+      "VOICE_STATE_UPDATE",
+      await buildVoiceStatePayload(guildId, userId, null, false, false)
+    );
     return rep.send({ ok: true });
   });
 
@@ -355,7 +384,11 @@ export async function channelRoutes(
       { userId, channelId }
     ))[0];
 
-    broadcastGuild(guildId, "VOICE_STATE_UPDATE", { guildId, userId, channelId, ...updated });
+    broadcastGuild(
+      guildId,
+      "VOICE_STATE_UPDATE",
+      await buildVoiceStatePayload(guildId, userId, channelId, !!updated?.muted, !!updated?.deafened)
+    );
     return rep.send({ ok: true });
   });
 
@@ -417,7 +450,11 @@ export async function channelRoutes(
       { guildId, channelId, memberId }
     ))[0];
 
-    broadcastGuild(guildId, "VOICE_STATE_UPDATE", { guildId, userId: memberId, channelId, ...updated });
+    broadcastGuild(
+      guildId,
+      "VOICE_STATE_UPDATE",
+      await buildVoiceStatePayload(guildId, memberId, channelId, !!updated?.muted, !!updated?.deafened)
+    );
     return rep.send({ ok: true, userId: memberId, channelId, muted: !!updated?.muted, deafened: !!updated?.deafened });
   });
 
@@ -459,7 +496,11 @@ export async function channelRoutes(
       { guildId, channelId, memberId }
     );
 
-    broadcastGuild(guildId, "VOICE_STATE_REMOVE", { guildId, userId: memberId, channelId });
+    broadcastGuild(
+      guildId,
+      "VOICE_STATE_UPDATE",
+      await buildVoiceStatePayload(guildId, memberId, null, false, false)
+    );
     return rep.send({ ok: true, userId: memberId, channelId });
   });
 }

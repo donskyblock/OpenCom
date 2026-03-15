@@ -389,9 +389,26 @@ export async function inviteRoutes(app: FastifyInstance) {
           },
           body: "{}"
         });
+        const joinPayload = await joinRes.json().catch(() => ({} as { joined?: boolean }));
         if (!joinRes.ok) {
           input.log.warn({ serverId: inv.server_id, userId: input.userId, status: joinRes.status }, "Invite join: failed to add user to node guild");
+          return { status: 200, body: { ok: true, serverId: inv.server_id, serverName: inv.server_name } };
         }
+        if (joinPayload.joined === false) {
+          return { status: 200, body: { ok: true, serverId: inv.server_id, serverName: inv.server_name } };
+        }
+
+        const joinedUserRows = await q<{ username: string; display_name: string | null }>(
+          `SELECT username, display_name
+           FROM users
+           WHERE id=:userId
+           LIMIT 1`,
+          { userId: input.userId }
+        );
+        const joinedUserName =
+          joinedUserRows[0]?.display_name?.trim() ||
+          joinedUserRows[0]?.username?.trim() ||
+          input.userId;
 
         try {
           const channelsRes = await fetch(`${baseUrl}/v1/guilds/${defaultGuildId}/channels`, {
@@ -408,11 +425,11 @@ export async function inviteRoutes(app: FastifyInstance) {
                   Authorization: `Bearer ${joinToken}`
                 },
                 body: JSON.stringify({
-                  content: `${input.userId} joined via invite ${inv.code}`,
+                  content: `${joinedUserName} joined via invite ${inv.code}`,
                   embeds: [
                     {
                       title: "Member Joined",
-                      description: `${input.userId} accepted an invite.`,
+                      description: `${joinedUserName} accepted an invite.`,
                       footer: { text: `Invite code: ${inv.code}` }
                     }
                   ]

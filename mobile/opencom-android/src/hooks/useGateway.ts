@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef } from "react";
-import type { GatewayEvent, NodeGatewayEvent } from "../types";
+import type {
+  ChannelMessage,
+  DmMessageApi,
+  GatewayEvent,
+  NodeGatewayEvent,
+} from "../types";
 
 // ─── URL helpers ─────────────────────────────────────────────────────────────
 
@@ -18,7 +23,7 @@ export function httpToNodeGatewayWs(serverBaseUrl: string): string {
   try {
     const parsed = new URL(serverBaseUrl.replace(/\/$/, ""));
     parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
-    parsed.pathname = "/v1/gateway/ws";
+    parsed.pathname = "/gateway";
     return parsed.toString();
   } catch {
     return "";
@@ -40,9 +45,93 @@ type UseCoreGatewayOptions = {
 type UseNodeGatewayOptions = {
   wsUrl: string;
   membershipToken: string | null;
+  guildId?: string | null;
+  channelId?: string | null;
   onEvent: NodeGatewayEventHandler;
   enabled?: boolean;
 };
+
+function isDispatchMessage(msg: { op: unknown; t?: string }) {
+  return msg.op === "DISPATCH" || msg.op === 0;
+}
+
+function isHelloMessage(msg: { op: unknown }) {
+  return msg.op === "HELLO" || msg.op === 10;
+}
+
+function normalizeChannelMessage(raw: any): ChannelMessage {
+  const attachments = Array.isArray(raw?.attachments)
+    ? raw.attachments.map((attachment: any) => ({
+        id: String(attachment?.id ?? ""),
+        filename:
+          attachment?.filename ??
+          attachment?.fileName ??
+          attachment?.name ??
+          "attachment",
+        fileName:
+          attachment?.fileName ??
+          attachment?.filename ??
+          attachment?.name ??
+          "attachment",
+        url: String(attachment?.url ?? ""),
+        mimeType: attachment?.mimeType ?? attachment?.contentType ?? null,
+        contentType: attachment?.contentType ?? attachment?.mimeType ?? null,
+        size: attachment?.size ?? attachment?.sizeBytes ?? null,
+        sizeBytes: attachment?.sizeBytes ?? attachment?.size ?? null,
+      }))
+    : [];
+
+  return {
+    id: String(raw?.id ?? ""),
+    author_id: String(raw?.author_id ?? raw?.authorId ?? ""),
+    username: raw?.username ?? raw?.authorName ?? undefined,
+    pfp_url: raw?.pfp_url ?? raw?.author_avatar_url ?? raw?.authorAvatarUrl ?? null,
+    content: String(raw?.content ?? ""),
+    created_at: String(raw?.created_at ?? raw?.createdAt ?? new Date().toISOString()),
+    edited: Boolean(raw?.edited),
+    attachments,
+    reply_to_id: raw?.reply_to_id ?? raw?.replyToId ?? null,
+    reply_to_content: raw?.reply_to_content ?? raw?.replyToContent ?? null,
+    reply_to_author: raw?.reply_to_author ?? raw?.replyToAuthor ?? null,
+  };
+}
+
+function normalizeDmMessage(raw: any): DmMessageApi {
+  const attachments = Array.isArray(raw?.attachments)
+    ? raw.attachments.map((attachment: any) => ({
+        id: String(attachment?.id ?? ""),
+        filename:
+          attachment?.filename ??
+          attachment?.fileName ??
+          attachment?.name ??
+          "attachment",
+        fileName:
+          attachment?.fileName ??
+          attachment?.filename ??
+          attachment?.name ??
+          "attachment",
+        url: String(attachment?.url ?? ""),
+        mimeType: attachment?.mimeType ?? attachment?.contentType ?? null,
+        contentType: attachment?.contentType ?? attachment?.mimeType ?? null,
+        size: attachment?.size ?? attachment?.sizeBytes ?? null,
+        sizeBytes: attachment?.sizeBytes ?? attachment?.size ?? null,
+      }))
+    : [];
+
+  return {
+    id: String(raw?.id ?? ""),
+    authorId: String(raw?.authorId ?? raw?.author_id ?? ""),
+    author: String(raw?.author ?? raw?.username ?? raw?.authorName ?? ""),
+    pfp_url: raw?.pfp_url ?? raw?.pfpUrl ?? null,
+    content: String(raw?.content ?? ""),
+    createdAt: String(raw?.createdAt ?? raw?.created_at ?? new Date().toISOString()),
+    edited: Boolean(raw?.edited),
+    attachments,
+    replyToId: raw?.replyToId ?? raw?.reply_to_id ?? null,
+    replyToContent: raw?.replyToContent ?? raw?.reply_to_content ?? null,
+    replyToAuthor: raw?.replyToAuthor ?? raw?.reply_to_author ?? null,
+  };
+}
 
 // ─── Core gateway hook ───────────────────────────────────────────────────────
 // Connects to the main platform gateway for real-time DMs, presence and calls.
@@ -93,32 +182,31 @@ export function useCoreGateway({
     wsRef.current = ws;
 
     ws.onopen = () => {
-      // Identify
-      ws.send(JSON.stringify({ op: 1, d: { token: accessToken } }));
+      ws.send(JSON.stringify({ op: "IDENTIFY", d: { accessToken } }));
     };
 
     ws.onmessage = (e) => {
-      let msg: { op: number; t?: string; d?: any };
+      let msg: { op: unknown; t?: string; d?: any };
       try {
         msg = JSON.parse(typeof e.data === "string" ? e.data : "{}");
       } catch {
         return;
       }
 
-      if (msg.op === 10) {
-        // HELLO – start heartbeat
-        const interval: number = msg.d?.heartbeatInterval ?? 30_000;
+      if (isHelloMessage(msg)) {
+        const interval: number =
+          msg.d?.heartbeat_interval ?? msg.d?.heartbeatInterval ?? 30_000;
         if (heartbeatRef.current) clearInterval(heartbeatRef.current);
         heartbeatRef.current = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ op: 2 }));
+            ws.send(JSON.stringify({ op: "HEARTBEAT" }));
           }
         }, interval);
         attemptRef.current = 0;
         return;
       }
 
-      if (msg.op === 0 && msg.t) {
+      if (isDispatchMessage(msg) && msg.t) {
         const d = msg.d ?? {};
         switch (msg.t) {
           case "SELF_STATUS":
@@ -142,11 +230,29 @@ export function useCoreGateway({
               onEventRef.current({
                 type: "DM_NEW_MESSAGE",
                 threadId: d.threadId,
-                message: d.message,
+                message: normalizeDmMessage(d.message),
+              });
+            }
+            break;
+          case "SOCIAL_DM_MESSAGE_CREATE":
+            if (d.threadId && d.message) {
+              onEventRef.current({
+                type: "DM_NEW_MESSAGE",
+                threadId: d.threadId,
+                message: normalizeDmMessage(d.message),
               });
             }
             break;
           case "DM_MESSAGE_DELETED":
+            if (d.threadId && d.messageId) {
+              onEventRef.current({
+                type: "DM_MESSAGE_DELETED",
+                threadId: d.threadId,
+                messageId: d.messageId,
+              });
+            }
+            break;
+          case "SOCIAL_DM_MESSAGE_DELETE":
             if (d.threadId && d.messageId) {
               onEventRef.current({
                 type: "DM_MESSAGE_DELETED",
@@ -161,6 +267,7 @@ export function useCoreGateway({
             }
             break;
           case "CALL_INCOMING":
+          case "PRIVATE_CALL_CREATE":
             onEventRef.current({
               type: "CALL_INCOMING",
               callId: d.callId ?? "",
@@ -173,6 +280,7 @@ export function useCoreGateway({
             });
             break;
           case "CALL_ENDED":
+          case "PRIVATE_CALL_ENDED":
             if (d.callId) {
               onEventRef.current({ type: "CALL_ENDED", callId: d.callId });
             }
@@ -230,6 +338,8 @@ export function useCoreGateway({
 export function useNodeGateway({
   wsUrl,
   membershipToken,
+  guildId,
+  channelId,
   onEvent,
   enabled = true,
 }: UseNodeGatewayOptions): void {
@@ -273,32 +383,53 @@ export function useNodeGateway({
     wsRef.current = ws;
 
     ws.onopen = () => {
-      // Identify with membership token (op 0 for node gateway)
-      ws.send(JSON.stringify({ op: 0, d: { membershipToken } }));
+      ws.send(JSON.stringify({ op: "IDENTIFY", d: { membershipToken } }));
     };
 
     ws.onmessage = (e) => {
-      let msg: { op: number; t?: string; d?: any };
+      let msg: { op: unknown; t?: string; d?: any };
       try {
         msg = JSON.parse(typeof e.data === "string" ? e.data : "{}");
       } catch {
         return;
       }
 
-      if (msg.op === 10) {
-        // HELLO
-        const interval: number = msg.d?.heartbeatInterval ?? 30_000;
+      if (isHelloMessage(msg)) {
+        const interval: number =
+          msg.d?.heartbeat_interval ?? msg.d?.heartbeatInterval ?? 30_000;
         if (heartbeatRef.current) clearInterval(heartbeatRef.current);
         heartbeatRef.current = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ op: 2 }));
+            ws.send(JSON.stringify({ op: "HEARTBEAT" }));
           }
         }, interval);
         attemptRef.current = 0;
         return;
       }
 
-      if (msg.op === 0 && msg.t) {
+      if (msg.op === "READY") {
+        if (guildId) {
+          ws.send(
+            JSON.stringify({
+              op: "DISPATCH",
+              t: "SUBSCRIBE_GUILD",
+              d: { guildId },
+            }),
+          );
+        }
+        if (channelId) {
+          ws.send(
+            JSON.stringify({
+              op: "DISPATCH",
+              t: "SUBSCRIBE_CHANNEL",
+              d: { channelId },
+            }),
+          );
+        }
+        return;
+      }
+
+      if (isDispatchMessage(msg) && msg.t) {
         const d = msg.d ?? {};
         switch (msg.t) {
           case "MESSAGE_CREATE":
@@ -306,7 +437,7 @@ export function useNodeGateway({
               onEventRef.current({
                 type: "MESSAGE_CREATE",
                 channelId: d.channelId,
-                message: d.message,
+                message: normalizeChannelMessage(d.message),
               });
             }
             break;
@@ -338,23 +469,20 @@ export function useNodeGateway({
               channelId: d.channelId ?? null,
               muted: d.muted ?? false,
               deafened: d.deafened ?? false,
-            });
-            break;
-          case "VOICE_JOIN":
-            onEventRef.current({
-              type: "VOICE_JOIN",
-              userId: d.userId ?? "",
               username: d.username ?? "",
-              guildId: d.guildId ?? "",
-              channelId: d.channelId ?? "",
+              pfp_url: d.pfp_url ?? null,
             });
             break;
-          case "VOICE_LEAVE":
+          case "VOICE_STATE_REMOVE":
             onEventRef.current({
-              type: "VOICE_LEAVE",
+              type: "VOICE_STATE_UPDATE",
               userId: d.userId ?? "",
               guildId: d.guildId ?? "",
-              channelId: d.channelId ?? "",
+              channelId: null,
+              muted: false,
+              deafened: false,
+              username: d.username ?? "",
+              pfp_url: d.pfp_url ?? null,
             });
             break;
           case "VOICE_SPEAKING":
@@ -382,7 +510,7 @@ export function useNodeGateway({
       wsRef.current = null;
       scheduleReconnect();
     };
-  }, [wsUrl, membershipToken, cleanup, scheduleReconnect]);
+  }, [wsUrl, membershipToken, guildId, channelId, cleanup, scheduleReconnect]);
 
   useEffect(() => {
     disposedRef.current = false;
@@ -393,5 +521,5 @@ export function useNodeGateway({
       disposedRef.current = true;
       cleanup();
     };
-  }, [enabled, wsUrl, membershipToken]); // eslint-disable-line
+  }, [enabled, wsUrl, membershipToken, guildId, channelId]); // eslint-disable-line
 }
