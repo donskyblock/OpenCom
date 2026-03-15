@@ -80,9 +80,12 @@ export type GuildState = {
 export type MessageAttachment = {
   id: string;
   filename: string;
+  fileName?: string;
   url: string;
   mimeType?: string | null;
+  contentType?: string | null;
   size?: number | null;
+  sizeBytes?: number | null;
 };
 
 export type ChannelMessage = {
@@ -330,6 +333,8 @@ export type NodeGatewayVoiceStateUpdate = {
   channelId: string | null;
   muted: boolean;
   deafened: boolean;
+  username?: string;
+  pfp_url?: string | null;
 };
 
 export type NodeGatewayVoiceJoin = {

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Image, StyleSheet, Text, View } from "react-native";
 import { colors, shadows } from "../theme";
 
@@ -39,14 +40,19 @@ export function Avatar({
   status,
   showStatus = false,
 }: AvatarProps) {
+  const [imageFailed, setImageFailed] = useState(false);
   const badgeSize = Math.max(10, Math.round(size * 0.28));
   const badgeOffset = Math.round(badgeSize * 0.1);
   const borderRadius = size / 2;
   const badgeColor = status ? (STATUS_COLORS[status] ?? STATUS_COLORS.offline) : STATUS_COLORS.offline;
 
+  useEffect(() => {
+    setImageFailed(false);
+  }, [pfpUrl]);
+
   return (
     <View style={{ width: size, height: size }}>
-      {pfpUrl ? (
+      {pfpUrl && !imageFailed ? (
         <Image
           source={{ uri: pfpUrl }}
           style={[
@@ -59,6 +65,7 @@ export function Avatar({
             },
           ]}
           resizeMode="cover"
+          onError={() => setImageFailed(true)}
         />
       ) : (
         <View

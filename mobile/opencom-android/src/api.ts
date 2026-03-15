@@ -501,7 +501,7 @@ export function createApiClient(input: {
     getServerPins(server: CoreServer, channelId: string) {
       return nodeRequest<{ pins: PinnedMessage[] }>(
         server,
-        `/v1/channels/${encodeURIComponent(channelId)}/pinned`,
+        `/v1/channels/${encodeURIComponent(channelId)}/pins`,
       );
     },
 
@@ -509,7 +509,7 @@ export function createApiClient(input: {
       return nodeRequest<{ ok: boolean }>(
         server,
         `/v1/channels/${encodeURIComponent(channelId)}/pins/${encodeURIComponent(messageId)}`,
-        { method: "POST" },
+        { method: "PUT" },
       );
     },
 

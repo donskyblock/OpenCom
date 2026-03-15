@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { SafeAvatar } from "./ui/SafeAvatar";
 
 export function MessageView({ 
   messages = [], 
@@ -78,33 +79,25 @@ export function MessageView({
 
         {messageGroups.map((group, idx) => (
           <div key={idx} style={{ display: "flex", gap: "12px" }}>
-            {group.pfpUrl ? (
-              <img
-                src={group.pfpUrl}
-                alt={group.author}
-                style={{
-                  width: "36px",
-                  height: "36px",
-                  borderRadius: "50%",
-                  objectFit: "cover",
-                  flexShrink: 0
-                }}
-              />
-            ) : (
-              <div style={{
+            <SafeAvatar
+              src={group.pfpUrl}
+              alt={group.author}
+              name={group.author}
+              seed={group.authorId}
+              style={{
                 width: "36px",
                 height: "36px",
                 borderRadius: "50%",
-                background: `hsl(${Math.abs(group.authorId.charCodeAt(0) * 7) % 360}, 70%, 60%)`,
-                display: "grid",
-                placeItems: "center",
+                flexShrink: 0,
                 fontSize: "14px",
-                fontWeight: "bold",
-                flexShrink: 0
-              }}>
-                {group.author?.substring(0, 1).toUpperCase()}
-              </div>
-            )}
+              }}
+              imgStyle={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                display: "block",
+              }}
+            />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: "13px", marginBottom: "2px" }}>
                 <strong>{group.author}</strong>

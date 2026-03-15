@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { SafeAvatar } from "../ui/SafeAvatar";
 
 function formatDuration(totalSeconds = 0) {
   const mins = Math.floor(Number(totalSeconds || 0) / 60);
@@ -83,13 +84,13 @@ function ParticipantCard({ participant, compact = false }) {
             </span>
           </>
         ) : (
-          <div className="voice-call-participant-avatar">
-            {participant.pfpUrl ? (
-              <img src={participant.pfpUrl} alt={participant.username} />
-            ) : (
-              <span>{getInitials(participant.username)}</span>
-            )}
-          </div>
+          <SafeAvatar
+            src={participant.pfpUrl}
+            alt={participant.username}
+            name={participant.username}
+            seed={participant.userId || participant.username}
+            className="voice-call-participant-avatar"
+          />
         )}
       </div>
       <div className="voice-call-participant-meta">
@@ -144,7 +145,13 @@ function ScreenShareTile({
         <span>Tap to focus</span>
       </div>
       <div className="voice-call-share-owner" aria-hidden="true">
-        {ownerPfp ? <img src={ownerPfp} alt="" /> : <span>{getInitials(ownerName)}</span>}
+        <SafeAvatar
+          src={ownerPfp}
+          alt={ownerName || "Screen share owner"}
+          name={ownerName}
+          seed={ownerName}
+          style={{ width: "100%", height: "100%", borderRadius: "50%" }}
+        />
       </div>
     </button>
   );

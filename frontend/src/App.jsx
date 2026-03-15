@@ -41,6 +41,7 @@ import { AppearanceSettingsSection } from "./components/settings/AppearanceSetti
 import { VoiceSettingsSection } from "./components/settings/VoiceSettingsSection";
 import { BillingSettingsSection } from "./components/settings/BillingSettingsSection";
 import { SecuritySettingsSection } from "./components/settings/SecuritySettingsSection";
+import { SafeAvatar } from "./components/ui/SafeAvatar";
 import { DOWNLOAD_TARGETS, getPreferredDownloadTarget } from "./lib/downloads";
 import { uploadFileInChunks } from "./utils/chunkedUploads";
 import {
@@ -10973,19 +10974,15 @@ export function App() {
     if (type === "avatar") {
       const avatar = profileImageUrl(viewerProfile.pfpUrl || "");
       return (
-        <div className="full-profile-avatar-element">
-          {avatar ? (
-            <img
-              src={avatar}
-              alt="Avatar"
-              className="full-profile-avatar-image"
-            />
-          ) : (
-            getInitials(
-              viewerProfile.displayName || viewerProfile.username || "U",
-            )
-          )}
-        </div>
+        <SafeAvatar
+          src={avatar}
+          alt="Avatar"
+          name={viewerProfile.displayName || viewerProfile.username || "U"}
+          seed={viewerProfile.id || viewerProfile.username}
+          className="full-profile-avatar-element"
+          imgClassName="full-profile-avatar-image"
+          maxLetters={2}
+        />
       );
     }
     if (type === "name") {
@@ -12053,21 +12050,16 @@ export function App() {
                                           }
                                         >
                                           <div className="voice-channel-member-main">
-                                            <div
-                                              className={`avatar member-avatar vc-avatar ${speaking ? "speaking" : ""}`}
-                                            >
-                                              {member.pfp_url ? (
-                                                <img
-                                                  src={profileImageUrl(
-                                                    member.pfp_url,
-                                                  )}
-                                                  alt={member.username}
-                                                  className="avatar-image"
-                                                />
-                                              ) : (
-                                                getInitials(member.username)
+                                            <SafeAvatar
+                                              src={profileImageUrl(
+                                                member.pfp_url,
                                               )}
-                                            </div>
+                                              alt={member.username}
+                                              name={member.username}
+                                              seed={member.userId}
+                                              className={`avatar member-avatar vc-avatar ${speaking ? "speaking" : ""}`}
+                                              imgClassName="avatar-image"
+                                            />
                                             <span className="voice-channel-member-name">
                                               {member.username}
                                             </span>
@@ -12586,16 +12578,14 @@ export function App() {
                           </div>
                         )}
                         <article className="msg grouped-msg">
-                          <div className="msg-avatar">
-                            {group.pfpUrl ? (
-                              <img
-                                src={profileImageUrl(group.pfpUrl)}
-                                alt={group.author}
-                              />
-                            ) : (
-                              getInitials(group.author || "User")
-                            )}
-                          </div>
+                          <SafeAvatar
+                            src={profileImageUrl(group.pfpUrl)}
+                            alt={group.author}
+                            name={group.author || "User"}
+                            seed={group.authorId}
+                            className="msg-avatar"
+                            maxLetters={2}
+                          />
                           <div className="msg-body">
                             <strong className="msg-author">
                               <button
@@ -13353,16 +13343,14 @@ export function App() {
                         </div>
                       )}
                       <article className="msg dm-msg grouped-msg">
-                        <div className="msg-avatar">
-                          {group.pfpUrl ? (
-                            <img
-                              src={profileImageUrl(group.pfpUrl)}
-                              alt={group.author}
-                            />
-                          ) : (
-                            getInitials(group.author)
-                          )}
-                        </div>
+                        <SafeAvatar
+                          src={profileImageUrl(group.pfpUrl)}
+                          alt={group.author}
+                          name={group.author}
+                          seed={group.authorId}
+                          className="msg-avatar"
+                          maxLetters={2}
+                        />
                         <div className="msg-body">
                           <strong className="msg-author">
                             <span className="dm-author-row">

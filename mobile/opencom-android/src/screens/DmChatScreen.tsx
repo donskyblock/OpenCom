@@ -179,7 +179,7 @@ function MessageItem({
             {message.attachments.map((a) => (
               <View key={a.id} style={styles.attachmentChip}>
                 <Text style={styles.attachmentName} numberOfLines={1}>
-                  📎 {a.filename}
+                  📎 {a.fileName ?? a.filename ?? "attachment"}
                 </Text>
               </View>
             ))}
@@ -257,7 +257,7 @@ export function DmChatScreen({
       const oldest = messages[0];
       const data = await api.getDmMessages(thread.id, {
         limit: PAGE_SIZE,
-        before: oldest.id,
+        before: oldest.createdAt,
       });
       const older = (data.messages ?? []).slice().reverse() as DmMessageApi[];
       setMessages((prev) => [...older, ...prev]);

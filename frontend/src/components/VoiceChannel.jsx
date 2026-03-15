@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { SafeAvatar } from "./ui/SafeAvatar";
 
 export function VoiceChannel({ 
   channelId, 
@@ -67,30 +68,24 @@ export function VoiceChannel({
               alignItems: "center",
               gap: "6px"
             }}>
-              {member.pfp_url ? (
-                <img
-                  src={member.pfp_url}
-                  alt={member.username}
-                  style={{
-                    width: "40px",
-                    height: "40px",
-                    borderRadius: "50%",
-                    objectFit: "cover"
-                  }}
-                />
-              ) : (
-                <div style={{
+              <SafeAvatar
+                src={member.pfp_url}
+                alt={member.username}
+                name={member.username}
+                seed={member.id}
+                style={{
                   width: "40px",
                   height: "40px",
                   borderRadius: "50%",
-                  background: `hsl(${Math.abs(member.id.charCodeAt(0) * 7) % 360}, 70%, 60%)`,
-                  display: "grid",
-                  placeItems: "center",
-                  fontWeight: "bold"
-                }}>
-                  {member.username?.substring(0, 1).toUpperCase()}
-                </div>
-              )}
+                  fontWeight: "bold",
+                }}
+                imgStyle={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  display: "block",
+                }}
+              />
               <div>
                 {member.username}
                 {member.muted && <span> 🔇</span>}

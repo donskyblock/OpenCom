@@ -22,6 +22,7 @@ import {
   getMediasoupDiagnostics,
 } from "./voice/mediasoup.js";
 import { createLogger, sanitizeErrorMessage } from "./logger.js";
+import { resolveCoreUserProfiles } from "./userDirectory.js";
 
 const logger = createLogger("gateway:voice");
 
@@ -119,6 +120,8 @@ export function attachNodeGateway(app: FastifyInstance) {
   }
 
   async function emitVoiceState(guildId: string, userId: string) {
+    const profiles = await resolveCoreUserProfiles([userId]);
+    const profile = profiles.get(userId);
     const rows = await q<any>(
       `SELECT guild_id, channel_id, user_id, muted, deafened, updated_at
        FROM voice_states
@@ -127,7 +130,15 @@ export function attachNodeGateway(app: FastifyInstance) {
     );
 
     if (!rows.length) {
-      broadcastGuild(guildId, "VOICE_STATE_UPDATE", { guildId, userId, channelId: null, muted: false, deafened: false });
+      broadcastGuild(guildId, "VOICE_STATE_UPDATE", {
+        guildId,
+        userId,
+        channelId: null,
+        muted: false,
+        deafened: false,
+        username: profile?.username || userId,
+        pfp_url: profile?.pfpUrl ?? null
+      });
       return;
     }
 
@@ -138,7 +149,9 @@ export function attachNodeGateway(app: FastifyInstance) {
       userId: r.user_id,
       muted: !!r.muted,
       deafened: !!r.deafened,
-      updatedAt: new Date(r.updated_at).toISOString()
+      updatedAt: new Date(r.updated_at).toISOString(),
+      username: profile?.username || r.user_id,
+      pfp_url: profile?.pfpUrl ?? null
     });
   }
 
@@ -764,11 +777,15 @@ export function attachNodeGateway(app: FastifyInstance) {
     });
   });
 
-  function broadcastToChannel(channelId: string, payload: any) {
+  function broadcastChannelEvent(channelId: string, eventType: string, payload: any) {
     for (const c of conns) {
       if (!c.channels.has(channelId)) continue;
-      sendDispatch(c, "MESSAGE_CREATE", payload);
+      sendDispatch(c, eventType, payload);
     }
+  }
+
+  function broadcastToChannel(channelId: string, payload: any) {
+    broadcastChannelEvent(channelId, "MESSAGE_CREATE", payload);
   }
 
   function broadcastMention(userIds: string[], payload: any) {
@@ -780,5 +797,5 @@ export function attachNodeGateway(app: FastifyInstance) {
     }
   }
 
-  return { broadcastToChannel, broadcastGuild, broadcastMention };
+  return { broadcastToChannel, broadcastChannelEvent, broadcastGuild, broadcastMention };
 }

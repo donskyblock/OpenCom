@@ -61,10 +61,10 @@ An open source communication platform
 ## Project Roadmap
 
 **TODO LIST**
+ 
+- [x] Finish Mobile APP [maybe this is a 50/50]
 
-- [ ] Finish Mobile APP
-
-- [ ] Add more callbacks to the github in the frontend
+- [x] Add more callbacks to the github in the frontend
 
 - [x] Overall improvemnets to the platform
 

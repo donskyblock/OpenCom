@@ -121,6 +121,8 @@ function MemberRow({
   const displayName = member.displayName ?? member.username;
   const statusLabel =
     customStatus ?? (status && status !== "offline" ? status : null);
+  const showUsername =
+    !!member.displayName && member.displayName !== member.username;
 
   return (
     <Pressable
@@ -153,6 +155,11 @@ function MemberRow({
             {isMe ? <Text style={styles.meTag}> (you)</Text> : null}
           </Text>
         </View>
+        {showUsername ? (
+          <Text style={styles.memberHandle} numberOfLines={1}>
+            @{member.username}
+          </Text>
+        ) : null}
         {statusLabel ? (
           <Text style={styles.memberStatus} numberOfLines={1}>
             {statusLabel}
@@ -507,6 +514,10 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: "600",
     flex: 1,
+  },
+  memberHandle: {
+    ...typography.caption,
+    color: colors.textDim,
   },
   meTag: {
     ...typography.caption,

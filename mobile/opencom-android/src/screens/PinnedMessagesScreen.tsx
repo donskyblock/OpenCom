@@ -103,7 +103,7 @@ function PinCard({
           {pin.attachments.map((a) => (
             <View key={a.id} style={styles.attachmentChip}>
               <Text style={styles.attachmentName} numberOfLines={1}>
-                📎 {a.filename}
+                📎 {a.fileName ?? a.filename ?? "attachment"}
               </Text>
             </View>
           ))}

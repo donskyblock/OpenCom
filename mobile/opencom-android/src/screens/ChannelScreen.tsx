@@ -282,9 +282,9 @@ function VoiceMembersPanel({ voiceStates }: { voiceStates: VoiceState[] }) {
                 status="online"
                 showStatus={false}
               />
-              <Text style={voiceStyles.spotlightName} numberOfLines={1}>
-                {vs.username ?? vs.userId}
-              </Text>
+                <Text style={voiceStyles.spotlightName} numberOfLines={1}>
+                  {vs.username ?? vs.userId}
+                </Text>
               <Text style={voiceStyles.spotlightState}>
                 {vs.speaking
                   ? "Speaking"
@@ -530,12 +530,12 @@ function MessageItem({
           {message.attachments && message.attachments.length > 0 && (
             <View style={styles.attachments}>
               {message.attachments.map((a) => (
-                <View key={a.id} style={styles.attachmentChip}>
-                  <Text style={styles.attachmentName} numberOfLines={1}>
-                    📎 {a.filename}
-                  </Text>
-                </View>
-              ))}
+            <View key={a.id} style={styles.attachmentChip}>
+              <Text style={styles.attachmentName} numberOfLines={1}>
+                    📎 {a.fileName ?? a.filename ?? "attachment"}
+              </Text>
+            </View>
+          ))}
             </View>
           )}
         </View>
@@ -600,7 +600,7 @@ export function ChannelScreen({
       const oldest = messages[0];
       const data = await api.listMessages(server, channel.id, {
         limit: PAGE_SIZE,
-        before: oldest.id,
+        before: oldest.created_at,
       });
       const older = (data.messages ?? []).slice().reverse();
       setMessages((prev) => [...older, ...prev]);
@@ -647,7 +647,9 @@ export function ChannelScreen({
   useNodeGateway({
     wsUrl: nodeGatewayWs,
     membershipToken: server.membershipToken,
-    enabled: !isVoice,
+    guildId: guild.id,
+    channelId: channel.id,
+    enabled: true,
     onEvent: useCallback(
       (event) => {
         if (event.type === "MESSAGE_CREATE" && event.channelId === channel.id) {
@@ -679,12 +681,16 @@ export function ChannelScreen({
             if (event.channelId === channel.id) {
               // upsert
               const idx = prev.findIndex((v) => v.userId === event.userId);
+              const existing = idx >= 0 ? prev[idx] : null;
               const next = {
                 userId: event.userId,
+                username: event.username || existing?.username,
+                pfp_url: event.pfp_url ?? existing?.pfp_url ?? null,
                 channelId: event.channelId ?? channel.id,
                 guildId: event.guildId,
                 muted: event.muted,
                 deafened: event.deafened,
+                speaking: existing?.speaking ?? false,
               };
               if (idx >= 0) {
                 const updated = [...prev];
