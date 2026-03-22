@@ -17,7 +17,8 @@ const boolFlag = z.preprocess(
 );
 
 const Env = z.object({
-  CORE_PORT: z.coerce.number().default(3001),
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  CORE_PORT: z.preprocess((value) => value ?? process.env.PORT, z.coerce.number().default(3000)),
   CORE_HOST: z.string().default("127.0.0.1"),
   /** Host for WebSocket gateway only. Use 0.0.0.0 so it's reachable externally; main API stays on CORE_HOST. */
   CORE_GATEWAY_HOST: z.string().default("0.0.0.0"),
@@ -27,7 +28,11 @@ const Env = z.object({
   CORE_GATEWAY_TLS_CERT_FILE: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
   /** Optional TLS key file for native wss listener. */
   CORE_GATEWAY_TLS_KEY_FILE: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
-  CORE_DATABASE_URL: z.string().min(1),
+  DB_HOST: z.string().min(1),
+  DB_PORT: z.coerce.number().int().min(1).max(65535).default(3306),
+  DB_USER: z.string().min(1),
+  DB_PASSWORD: z.string(),
+  DB_NAME: z.string().min(1),
   CORE_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("warn"),
   CORE_LOG_DIR: z.string().default("./logs"),
   CORE_LOG_TO_FILE: boolFlag.default(true),

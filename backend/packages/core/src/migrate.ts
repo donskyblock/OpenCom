@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { q, pool } from "./db.js";
+import { env } from "./env.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,7 +13,7 @@ async function assertExpectedDatabase(expectedDatabase: string) {
 
   if (currentDatabase !== expectedDatabase) {
     throw new Error(
-      `Refusing to run core migrations against ${currentDatabase ?? "<none>"}; expected ${expectedDatabase}. Check CORE_DATABASE_URL.`,
+      `Refusing to run core migrations against ${currentDatabase ?? "<none>"}; expected ${expectedDatabase}. Check DB_NAME/DB_HOST settings.`,
     );
   }
 }
@@ -81,7 +82,7 @@ function splitSqlStatements(sql: string): string[] {
 }
 
 async function main() {
-  await assertExpectedDatabase("ods_core");
+  await assertExpectedDatabase(env.DB_NAME);
   await q(`CREATE TABLE IF NOT EXISTS schema_migrations (id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci PRIMARY KEY, ran_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci`);
 
   const sqlDir = path.join(__dirname, "sql");

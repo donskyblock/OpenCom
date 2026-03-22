@@ -10,16 +10,26 @@ dotenv.config({
   path: path.resolve(process.cwd(), "../../.env"),
 });
 
-const dbUrl = process.env.CORE_DATABASE_URL || process.env.DATABASE_URL;
+const dbConfig = {
+  host: process.env.DB_HOST,
+  port: Number(process.env.DB_PORT || 3306),
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD ?? "",
+  database: process.env.DB_NAME,
+};
 
-if (!dbUrl) {
-  console.error("❌ No CORE_DATABASE_URL or DATABASE_URL found in backend/.env");
+const missingDbVars = Object.entries(dbConfig)
+  .filter(([_, value]) => value === undefined || value === "")
+  .map(([key]) => key.toUpperCase());
+
+if (missingDbVars.length) {
+  console.error(`❌ Missing required DB variables in backend/.env: ${missingDbVars.join(", ")}`);
   process.exit(1);
 }
 
 (async () => {
   try {
-    const connection = await mysql.createConnection(dbUrl);
+    const connection = await mysql.createConnection(dbConfig);
 
     console.log("Connected. Wiping Stripe subscription data...");
 

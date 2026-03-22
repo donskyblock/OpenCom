@@ -8,6 +8,7 @@ import { env } from "./env.js";
 import { beginTrackedRequest, recordTrackedRequest } from "./adminStats.js";
 import fs from "node:fs";
 import path from "node:path";
+import { pool } from "./db.js";
 
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // 25MB for raw image uploads
 const MAX_MULTIPART_BYTES = Math.max(
@@ -73,7 +74,15 @@ export function buildHttp() {
   });
 
   // Note: refresh tokens use separate secret manually (not via plugin)
-  app.get("/health", async () => ({ ok: true }));
+  app.get("/health", async (req, rep) => {
+    try {
+      await pool.query("SELECT 1");
+      return { status: "ok", db: "connected" };
+    } catch (error) {
+      req.log.error({ err: error }, "Health check DB query failed");
+      return rep.code(503).send({ status: "error", db: "disconnected" });
+    }
+  });
 
   return app;
 }

@@ -8,7 +8,7 @@ print_usage() {
   cat <<USAGE
 Usage: ./scripts/ops/start-server.sh [server-id]
 
-Starts a single OpenCom server instance (Node service).
+Starts or restarts a single OpenCom server-node instance under PM2.
 If no server-id is provided, defaults to 'default-server'.
 
 Examples:
@@ -34,9 +34,24 @@ load_backend_env() {
 }
 
 start_server() {
-  echo "[start] Server Node: $SERVER_ID"
+  local app_name="opencom-node-${SERVER_ID}"
+  echo "[start] Server Node via PM2: $SERVER_ID (${app_name})"
   pushd "$ROOT_DIR/backend" >/dev/null
-  npm run dev:node
+  if ! command -v pm2 >/dev/null 2>&1; then
+    echo "[err] pm2 is not installed. Install it first (for example: npm i -g pm2)."
+    exit 1
+  fi
+  if [[ ! -f "packages/server-node/dist/index.js" ]]; then
+    echo "[err] Build artifacts not found. Run: npm run build"
+    exit 1
+  fi
+  if pm2 describe "$app_name" >/dev/null 2>&1; then
+    pm2 restart "$app_name" --update-env
+  else
+    pm2 start packages/server-node/dist/index.js --name "$app_name" --update-env
+  fi
+  pm2 status "$app_name"
+  popd >/dev/null
 }
 
 case "${1:-}" in
