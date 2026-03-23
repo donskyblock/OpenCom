@@ -28,7 +28,8 @@ import {
   requestHasPanelPassword,
 } from "../platformStaff.js";
 import { getAdminStatsSnapshot } from "../adminStats.js";
-import { saveProfileImageFromBuffer } from "../storage.js";
+import { deleteProfileImage, saveProfileImageFromBuffer } from "../storage.js";
+import { isS3StorageEnabled, uploadFileToObjectStorage } from "../objectStorage.js";
 import { sendAccountBanEmail } from "../mail.js";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -915,6 +916,19 @@ export async function adminRoutes(app: FastifyInstance, broadcastToUser?: Broadc
     const buffer = await data.toBuffer();
     const saved = saveProfileImageFromBuffer(env.PROFILE_IMAGE_STORAGE_DIR, actorId, "asset", buffer, mime);
     if (!saved) return rep.code(500).send({ error: "SAVE_FAILED" });
+    if (isS3StorageEnabled()) {
+      try {
+        await uploadFileToObjectStorage(
+          "profiles",
+          saved,
+          path.join(env.PROFILE_IMAGE_STORAGE_DIR, saved),
+          mime,
+        );
+      } catch {
+        deleteProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, saved);
+        return rep.code(500).send({ error: "SAVE_FAILED" });
+      }
+    }
 
     return {
       imageUrl: `${env.PROFILE_IMAGE_BASE_URL}/${saved}`,

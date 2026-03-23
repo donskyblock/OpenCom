@@ -9,6 +9,7 @@
     "dev:voice-debug": "DEBUG_HTTP=1 DEBUG_VOICE=1 LOG_LEVEL=debug tsx watch src/index.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.940.0",
     "@fastify/cors": "^10.0.0",
     "@fastify/multipart": "^9.0.1",
     "@fastify/rate-limit": "^10.0.0",

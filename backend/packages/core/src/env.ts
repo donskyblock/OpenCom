@@ -57,6 +57,17 @@ const Env = z.object({
   ATTACHMENT_BOOST_MAX_BYTES: z.coerce.number().int().min(1024).default(100 * 1024 * 1024),
   ATTACHMENT_TTL_DAYS: z.coerce.number().int().min(1).default(365),
   ATTACHMENT_STORAGE_DIR: z.string().default("./data/attachments"),
+  STORAGE_PROVIDER: z.enum(["local", "s3"]).default("local"),
+  CORE_S3_BUCKET: z.preprocess(
+    (value) => value ?? process.env.S3_BUCKET,
+    z.preprocess(emptyToUndefined, z.string().min(1).optional())
+  ),
+  S3_REGION: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  S3_ENDPOINT: z.preprocess(emptyToUndefined, z.string().url().optional()),
+  S3_ACCESS_KEY_ID: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  S3_SECRET_ACCESS_KEY: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+  S3_FORCE_PATH_STYLE: boolFlag.default(false),
+  S3_KEY_PREFIX: z.preprocess(emptyToUndefined, z.string().optional()),
 
   // Official server node (one server per user hosted by the platform)
   OFFICIAL_NODE_BASE_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
@@ -101,3 +112,12 @@ const Env = z.object({
 });
 
 export const env = Env.parse(process.env);
+
+if (env.STORAGE_PROVIDER === "s3") {
+  if (!env.CORE_S3_BUCKET) {
+    throw new Error("CORE_S3_BUCKET (or S3_BUCKET) is required when STORAGE_PROVIDER=s3");
+  }
+  if (!env.S3_REGION) {
+    throw new Error("S3_REGION is required when STORAGE_PROVIDER=s3");
+  }
+}

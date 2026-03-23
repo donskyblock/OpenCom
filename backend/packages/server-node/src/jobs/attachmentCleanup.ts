@@ -1,7 +1,7 @@
-import fs from "node:fs";
 import { q } from "../db.js";
 import { env } from "../env.js";
 import { buildPath, unlinkIfExists } from "../storage/fsStore.js";
+import { deleteObjectFromStorage, isS3StorageEnabled } from "../objectStorage.js";
 
 export async function runAttachmentCleanupOnce() {
   const expired = await q<{ id: string; object_key: string }>(
@@ -15,6 +15,9 @@ export async function runAttachmentCleanupOnce() {
   for (const a of expired) {
     const absPath = buildPath(env.ATTACHMENT_STORAGE_DIR, [a.object_key]);
     unlinkIfExists(absPath);
+    if (isS3StorageEnabled()) {
+      await deleteObjectFromStorage("attachments", a.object_key);
+    }
     await q(`DELETE FROM attachments WHERE id=:id`, { id: a.id });
   }
 

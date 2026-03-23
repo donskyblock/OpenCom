@@ -9,6 +9,12 @@ import { resolveChannelPermissions } from "../permissions/resolve.js";
 import { Perm, has } from "../permissions/bits.js";
 import { ensureDir, safeName, buildPath, randomId, streamToFile, unlinkIfExists } from "../storage/fsStore.js";
 import {
+  deleteObjectFromStorage,
+  getObjectStreamFromStorage,
+  isS3StorageEnabled,
+  uploadFileToObjectStorage,
+} from "../objectStorage.js";
+import {
   appendUploadChunk,
   createUploadSession,
   DEFAULT_UPLOAD_CHUNK_BYTES,
@@ -51,6 +57,11 @@ export async function attachmentRoutes(app: FastifyInstance) {
       tier: isBoostUser ? "boost" : "default",
       maxUploadBytes: isBoostUser ? env.ATTACHMENT_BOOST_MAX_BYTES : env.ATTACHMENT_MAX_BYTES
     };
+  }
+
+  async function uploadAttachmentObject(objectKey: string, absPath: string, contentType: string) {
+    if (!isS3StorageEnabled()) return;
+    await uploadFileToObjectStorage("attachments", objectKey, absPath, contentType || "application/octet-stream");
   }
 
   app.post("/v1/attachments/uploads/init", { preHandler: [app.authenticate] } as any, async (req: any, rep) => {
@@ -192,6 +203,13 @@ export async function attachmentRoutes(app: FastifyInstance) {
     }
     if (!finalized) return rep.code(404).send({ error: "UPLOAD_NOT_FOUND" });
 
+    const finalizedAbsPath = buildPath(env.ATTACHMENT_STORAGE_DIR, [finalized.finalObjectKey]);
+    try {
+      await uploadAttachmentObject(finalized.finalObjectKey, finalizedAbsPath, finalized.contentType);
+    } catch {
+      return rep.code(500).send({ error: "UPLOAD_FAILED" });
+    }
+
     const expiresAt = new Date(Date.now() + env.ATTACHMENT_TTL_DAYS * 24 * 60 * 60 * 1000);
     try {
       await q(
@@ -213,6 +231,7 @@ export async function attachmentRoutes(app: FastifyInstance) {
         }
       );
     } catch (error) {
+      await deleteObjectFromStorage("attachments", finalized.finalObjectKey);
       unlinkIfExists(buildPath(env.ATTACHMENT_STORAGE_DIR, [finalized.finalObjectKey]));
       throw error;
     }
@@ -317,24 +336,37 @@ export async function attachmentRoutes(app: FastifyInstance) {
       return rep.code(500).send({ error: "UPLOAD_FAILED" });
     }
 
-    await q(
-      `INSERT INTO attachments
-        (id,guild_id,channel_id,message_id,uploader_id,object_key,file_name,content_type,size_bytes,expires_at)
-       VALUES
-        (:id,:guildId,:channelId,:messageId,:uploaderId,:objectKey,:fileName,:contentType,:sizeBytes,:expiresAt)`,
-      {
-        id: attachmentId,
-        guildId: parsed.guildId,
-        channelId: parsed.channelId,
-        messageId: parsed.messageId ?? null,
-        uploaderId,
-        objectKey: relPath, // disk path relative to storage root
-        fileName: originalName,
-        contentType,
-        sizeBytes,
-        expiresAt: toMariaTimestamp(expiresAt)
-      }
-    );
+    try {
+      await uploadAttachmentObject(relPath, absPath, contentType);
+    } catch {
+      unlinkIfExists(absPath);
+      return rep.code(500).send({ error: "UPLOAD_FAILED" });
+    }
+
+    try {
+      await q(
+        `INSERT INTO attachments
+          (id,guild_id,channel_id,message_id,uploader_id,object_key,file_name,content_type,size_bytes,expires_at)
+         VALUES
+          (:id,:guildId,:channelId,:messageId,:uploaderId,:objectKey,:fileName,:contentType,:sizeBytes,:expiresAt)`,
+        {
+          id: attachmentId,
+          guildId: parsed.guildId,
+          channelId: parsed.channelId,
+          messageId: parsed.messageId ?? null,
+          uploaderId,
+          objectKey: relPath, // storage key relative to attachment namespace
+          fileName: originalName,
+          contentType,
+          sizeBytes,
+          expiresAt: toMariaTimestamp(expiresAt)
+        }
+      );
+    } catch (error) {
+      await deleteObjectFromStorage("attachments", relPath);
+      unlinkIfExists(absPath);
+      throw error;
+    }
 
     const publicUrl = `${env.PUBLIC_BASE_URL}/v1/attachments/${attachmentId}`;
 
@@ -374,11 +406,17 @@ export async function attachmentRoutes(app: FastifyInstance) {
     });
     if (!has(perms, Perm.VIEW_CHANNEL)) return rep.code(403).send({ error: "MISSING_PERMS" });
 
-    const absPath = buildPath(env.ATTACHMENT_STORAGE_DIR, [a.object_key]);
-    if (!fs.existsSync(absPath)) return rep.code(404).send({ error: "FILE_MISSING" });
-
     rep.header("Content-Type", a.content_type);
     rep.header("Content-Disposition", `inline; filename="${a.file_name}"`);
+
+    if (isS3StorageEnabled()) {
+      const objectStream = await getObjectStreamFromStorage("attachments", a.object_key);
+      if (!objectStream) return rep.code(404).send({ error: "FILE_MISSING" });
+      return rep.send(objectStream);
+    }
+
+    const absPath = buildPath(env.ATTACHMENT_STORAGE_DIR, [a.object_key]);
+    if (!fs.existsSync(absPath)) return rep.code(404).send({ error: "FILE_MISSING" });
     return rep.send(fs.createReadStream(absPath));
   });
 }

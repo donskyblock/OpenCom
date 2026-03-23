@@ -18,6 +18,12 @@ import {
   getUploadSession
 } from "../uploadSessions.js";
 import { sendMobilePushToUser } from "../pushNotifications.js";
+import {
+  deleteObjectFromStorage,
+  getObjectStreamFromStorage,
+  isS3StorageEnabled,
+  uploadFileToObjectStorage,
+} from "../objectStorage.js";
 
 const AddFriend = z.object({ username: z.string().min(2).max(32) });
 const OpenDm = z.object({ friendId: z.string().min(3) });
@@ -191,6 +197,13 @@ export async function socialRoutes(
   broadcastCallSignal?: (targetUserId: string, signal: any) => Promise<void>,
   broadcastToUser?: (targetUserId: string, t: string, d: any) => Promise<void>
 ) {
+  const socialDmRootDir = path.resolve(env.ATTACHMENT_STORAGE_DIR, "social-dms");
+
+  async function uploadSocialAttachmentObject(objectKey: string, absPath: string, contentType: string) {
+    if (!isS3StorageEnabled()) return;
+    await uploadFileToObjectStorage("social-dms", objectKey, absPath, contentType || "application/octet-stream");
+  }
+
   async function getDmMessageAttachmentsByMessageIds(messageIds: string[]) {
     if (!messageIds.length) return new Map<string, any[]>();
     const params: Record<string, any> = {};
@@ -614,7 +627,7 @@ export async function socialRoutes(
     const originalName = safeAttachmentFileName(body.fileName);
     const contentType = String(body.contentType || "application/octet-stream").slice(0, 255);
 
-    const rootDir = path.resolve(env.ATTACHMENT_STORAGE_DIR, "social-dms");
+    const rootDir = socialDmRootDir;
     const threadDir = path.resolve(rootDir, threadId);
     ensureDir(rootDir);
     ensureDir(threadDir);
@@ -663,7 +676,7 @@ export async function socialRoutes(
     }).parse(req.params);
     const { offset } = z.object({ offset: z.coerce.number().int().min(0) }).parse(req.query || {});
 
-    const session = getUploadSession(path.resolve(env.ATTACHMENT_STORAGE_DIR, "social-dms"), uploadId);
+    const session = getUploadSession(socialDmRootDir, uploadId);
     if (!session) return rep.code(404).send({ error: "UPLOAD_NOT_FOUND" });
     if (String(session.context.threadId || "") !== threadId) return rep.code(404).send({ error: "UPLOAD_NOT_FOUND" });
     if (String(session.context.uploaderUserId || "") !== userId) return rep.code(403).send({ error: "BAD_UPLOADER" });
@@ -674,7 +687,7 @@ export async function socialRoutes(
     }
 
     try {
-      const result = await appendUploadChunk(path.resolve(env.ATTACHMENT_STORAGE_DIR, "social-dms"), uploadId, stream, offset);
+      const result = await appendUploadChunk(socialDmRootDir, uploadId, stream, offset);
       if (result.error === "NOT_FOUND") return rep.code(404).send({ error: "UPLOAD_NOT_FOUND" });
       if (result.error === "OFFSET_MISMATCH") {
         return rep.code(409).send({
@@ -692,7 +705,7 @@ export async function socialRoutes(
         complete: result.complete
       });
     } catch (error: any) {
-      destroyUploadSession(path.resolve(env.ATTACHMENT_STORAGE_DIR, "social-dms"), uploadId);
+      destroyUploadSession(socialDmRootDir, uploadId);
       if (String(error?.message || "") === "CHUNK_TOO_LARGE") {
         return rep.code(413).send({ error: "CHUNK_TOO_LARGE", chunkSizeBytes: session.chunkSizeBytes });
       }
@@ -710,7 +723,7 @@ export async function socialRoutes(
       uploadId: z.string().min(8)
     }).parse(req.params);
 
-    const rootDir = path.resolve(env.ATTACHMENT_STORAGE_DIR, "social-dms");
+    const rootDir = socialDmRootDir;
     const session = getUploadSession(rootDir, uploadId);
     if (!session) return rep.code(404).send({ error: "UPLOAD_NOT_FOUND" });
     if (String(session.context.threadId || "") !== threadId) return rep.code(404).send({ error: "UPLOAD_NOT_FOUND" });
@@ -731,6 +744,13 @@ export async function socialRoutes(
     }
     if (!finalized) return rep.code(404).send({ error: "UPLOAD_NOT_FOUND" });
 
+    const finalizedAbsPath = path.resolve(rootDir, finalized.finalObjectKey);
+    try {
+      await uploadSocialAttachmentObject(finalized.finalObjectKey, finalizedAbsPath, finalized.contentType);
+    } catch {
+      return rep.code(500).send({ error: "UPLOAD_FAILED" });
+    }
+
     const expiresAt = new Date(Date.now() + (env.ATTACHMENT_TTL_DAYS * 24 * 60 * 60 * 1000));
     try {
       await q(
@@ -750,6 +770,7 @@ export async function socialRoutes(
         }
       );
     } catch (error) {
+      await deleteObjectFromStorage("social-dms", finalized.finalObjectKey);
       try { fs.unlinkSync(path.resolve(rootDir, finalized.finalObjectKey)); } catch {}
       throw error;
     }
@@ -773,7 +794,7 @@ export async function socialRoutes(
       uploadId: z.string().min(8)
     }).parse(req.params);
 
-    const rootDir = path.resolve(env.ATTACHMENT_STORAGE_DIR, "social-dms");
+    const rootDir = socialDmRootDir;
     const session = getUploadSession(rootDir, uploadId);
     if (!session) return rep.send({ ok: true });
     if (String(session.context.threadId || "") !== threadId) return rep.send({ ok: true });
@@ -807,7 +828,7 @@ export async function socialRoutes(
     const contentType = String(filePart.mimetype || "application/octet-stream").slice(0, 255);
     const expiresAt = new Date(Date.now() + (env.ATTACHMENT_TTL_DAYS * 24 * 60 * 60 * 1000));
 
-    const rootDir = path.resolve(env.ATTACHMENT_STORAGE_DIR, "social-dms");
+    const rootDir = socialDmRootDir;
     const threadDir = path.resolve(rootDir, threadId);
     ensureDir(rootDir);
     ensureDir(threadDir);
@@ -829,22 +850,35 @@ export async function socialRoutes(
       return rep.code(500).send({ error: "UPLOAD_FAILED" });
     }
 
-    await q(
-      `INSERT INTO social_dm_attachments
-        (id,thread_id,message_id,uploader_user_id,object_key,file_name,content_type,size_bytes,expires_at)
-       VALUES
-        (:id,:threadId,NULL,:uploaderUserId,:objectKey,:fileName,:contentType,:sizeBytes,:expiresAt)`,
-      {
-        id: attachmentId,
-        threadId,
-        uploaderUserId: userId,
-        objectKey: relPath,
-        fileName: originalName,
-        contentType,
-        sizeBytes,
-        expiresAt: toMariaTimestamp(expiresAt)
-      }
-    );
+    try {
+      await uploadSocialAttachmentObject(relPath, absPath, contentType);
+    } catch {
+      try { fs.unlinkSync(absPath); } catch {}
+      return rep.code(500).send({ error: "UPLOAD_FAILED" });
+    }
+
+    try {
+      await q(
+        `INSERT INTO social_dm_attachments
+          (id,thread_id,message_id,uploader_user_id,object_key,file_name,content_type,size_bytes,expires_at)
+         VALUES
+          (:id,:threadId,NULL,:uploaderUserId,:objectKey,:fileName,:contentType,:sizeBytes,:expiresAt)`,
+        {
+          id: attachmentId,
+          threadId,
+          uploaderUserId: userId,
+          objectKey: relPath,
+          fileName: originalName,
+          contentType,
+          sizeBytes,
+          expiresAt: toMariaTimestamp(expiresAt)
+        }
+      );
+    } catch (error) {
+      await deleteObjectFromStorage("social-dms", relPath);
+      try { fs.unlinkSync(absPath); } catch {}
+      throw error;
+    }
 
     return rep.send({
       attachmentId,
@@ -884,13 +918,19 @@ export async function socialRoutes(
     const attachment = rows[0];
     if (new Date(attachment.expires_at).getTime() < Date.now()) return rep.code(410).send({ error: "EXPIRED" });
 
-    const rootDir = path.resolve(env.ATTACHMENT_STORAGE_DIR, "social-dms");
+    rep.header("Content-Type", attachment.content_type || "application/octet-stream");
+    rep.header("Content-Disposition", `inline; filename="${attachment.file_name || "attachment"}"`);
+
+    if (isS3StorageEnabled()) {
+      const objectStream = await getObjectStreamFromStorage("social-dms", attachment.object_key);
+      if (!objectStream) return rep.code(404).send({ error: "FILE_MISSING" });
+      return rep.send(objectStream);
+    }
+
+    const rootDir = socialDmRootDir;
     const absPath = path.resolve(rootDir, attachment.object_key);
     if (!absPath.startsWith(rootDir + path.sep)) return rep.code(400).send({ error: "BAD_FILE_PATH" });
     if (!fs.existsSync(absPath)) return rep.code(404).send({ error: "FILE_MISSING" });
-
-    rep.header("Content-Type", attachment.content_type || "application/octet-stream");
-    rep.header("Content-Disposition", `inline; filename="${attachment.file_name || "attachment"}"`);
     return rep.send(fs.createReadStream(absPath));
   });
 

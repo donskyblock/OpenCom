@@ -9,6 +9,12 @@ import { buildOfficialBadgeDetail, isOfficialAccountName, isOfficialBadgeId } fr
 import { isReservedUsername, isUsernameTaken, normalizeUsername } from "../usernames.js";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  deleteObjectFromStorage,
+  getObjectStreamFromStorage,
+  isS3StorageEnabled,
+  uploadFileToObjectStorage,
+} from "../objectStorage.js";
 
 function isValidImageReference(value: string) {
   const trimmed = String(value || "").trim();
@@ -292,6 +298,37 @@ const MIME_ALIASES: Record<string, string> = {
 };
 
 export async function profileRoutes(app: FastifyInstance) {
+  const mediaMimeByExt: Record<string, string> = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".bmp": "image/bmp",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4",
+  };
+
+  function mimeFromStoredPath(relPath: string) {
+    const ext = path.extname(String(relPath || "")).toLowerCase();
+    return mediaMimeByExt[ext] ?? "application/octet-stream";
+  }
+
+  async function uploadProfileObjectIfNeeded(relPath: string, explicitMimeType?: string) {
+    if (!isS3StorageEnabled()) return;
+    const absPath = path.join(env.PROFILE_IMAGE_STORAGE_DIR, relPath);
+    await uploadFileToObjectStorage("profiles", relPath, absPath, explicitMimeType || mimeFromStoredPath(relPath));
+  }
+
+  async function deleteProfileObjectEverywhere(relPath: string | null) {
+    if (!relPath) return;
+    deleteProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, relPath);
+    await deleteObjectFromStorage("profiles", relPath);
+  }
+
   // Serve stored profile images: raw file stream
   app.get("/v1/profile-images/users/:userId/:filename", async (req: any, rep) => {
     const { userId, filename } = z.object({
@@ -309,27 +346,19 @@ export async function profileRoutes(app: FastifyInstance) {
       return rep.code(403).send({ error: "FORBIDDEN" });
     }
 
+    const contentType = mimeFromStoredPath(relPath);
+    rep.header("Content-Type", contentType);
+    rep.header("Cache-Control", "public, max-age=31536000, immutable");
+
+    if (isS3StorageEnabled()) {
+      const objectStream = await getObjectStreamFromStorage("profiles", relPath);
+      if (objectStream) return rep.send(objectStream);
+    }
+
     if (!fs.existsSync(filepath)) {
       return rep.code(404).send({ error: "NOT_FOUND" });
     }
 
-    const ext = path.extname(filename).toLowerCase();
-    const mime: Record<string, string> = {
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".png": "image/png",
-      ".gif": "image/gif",
-      ".webp": "image/webp",
-      ".svg": "image/svg+xml",
-      ".bmp": "image/bmp",
-      ".mp3": "audio/mpeg",
-      ".wav": "audio/wav",
-      ".ogg": "audio/ogg",
-      ".m4a": "audio/mp4"
-    };
-    const contentType = mime[ext] ?? "application/octet-stream";
-    rep.header("Content-Type", contentType);
-    rep.header("Cache-Control", "public, max-age=31536000, immutable");
     return rep.send(fs.createReadStream(filepath));
   });
 
@@ -374,7 +403,13 @@ export async function profileRoutes(app: FastifyInstance) {
     const oldRel = relPathFromStoredUrl(currentUrl ?? null);
     const saved = saveProfileImageFromBuffer(env.PROFILE_IMAGE_STORAGE_DIR, userId, imageType, buffer, mime);
     if (!saved) return rep.code(500).send({ error: "SAVE_FAILED" });
-    if (oldRel) deleteProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, oldRel);
+    try {
+      await uploadProfileObjectIfNeeded(saved, mime);
+    } catch {
+      deleteProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, saved);
+      return rep.code(500).send({ error: "SAVE_FAILED" });
+    }
+    await deleteProfileObjectEverywhere(oldRel);
     const url = `${env.PROFILE_IMAGE_BASE_URL}/${saved}`;
     await q(
       `UPDATE users SET ${imageType === "pfp" ? "pfp_url" : "banner_url"} = :url WHERE id=:userId`,
@@ -404,6 +439,12 @@ export async function profileRoutes(app: FastifyInstance) {
     const buffer = await data.toBuffer();
     const saved = saveProfileImageFromBuffer(env.PROFILE_IMAGE_STORAGE_DIR, userId, "asset", buffer, mime);
     if (!saved) return rep.code(500).send({ error: "SAVE_FAILED" });
+    try {
+      await uploadProfileObjectIfNeeded(saved, mime);
+    } catch {
+      deleteProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, saved);
+      return rep.code(500).send({ error: "SAVE_FAILED" });
+    }
     return rep.send({ imageUrl: `${env.PROFILE_IMAGE_BASE_URL}/${saved}` });
   });
 
@@ -428,6 +469,12 @@ export async function profileRoutes(app: FastifyInstance) {
     const buffer = await data.toBuffer();
     const saved = saveProfileImageFromBuffer(env.PROFILE_IMAGE_STORAGE_DIR, userId, "asset", buffer, resolvedMime);
     if (!saved) return rep.code(500).send({ error: "SAVE_FAILED" });
+    try {
+      await uploadProfileObjectIfNeeded(saved, resolvedMime);
+    } catch {
+      deleteProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, saved);
+      return rep.code(500).send({ error: "SAVE_FAILED" });
+    }
     return rep.send({ mediaUrl: `${env.PROFILE_IMAGE_BASE_URL}/${saved}` });
   });
 
@@ -594,14 +641,20 @@ export async function profileRoutes(app: FastifyInstance) {
       if (body.pfpUrl === null) {
         // Explicitly removing pfp
         const oldRel = relPathFromStoredUrl(pfpUrl);
-        if (oldRel) deleteProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, oldRel);
+        await deleteProfileObjectEverywhere(oldRel);
         pfpUrl = null;
       } else if (body.pfpUrl.startsWith("data:image/")) {
         // Base64 image upload
         const saved = saveProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, userId, "pfp", body.pfpUrl);
         if (saved) {
+          try {
+            await uploadProfileObjectIfNeeded(saved);
+          } catch {
+            deleteProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, saved);
+            return rep.code(500).send({ error: "SAVE_FAILED", field: "pfpUrl" });
+          }
           const oldRel = relPathFromStoredUrl(pfpUrl);
-          if (oldRel) deleteProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, oldRel);
+          await deleteProfileObjectEverywhere(oldRel);
           pfpUrl = `${env.PROFILE_IMAGE_BASE_URL}/${saved}`;
         } else {
           return rep.code(400).send({ error: "INVALID_IMAGE", field: "pfpUrl" });
@@ -618,14 +671,20 @@ export async function profileRoutes(app: FastifyInstance) {
       if (body.bannerUrl === null) {
         // Explicitly removing banner
         const oldRel = relPathFromStoredUrl(bannerUrl);
-        if (oldRel) deleteProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, oldRel);
+        await deleteProfileObjectEverywhere(oldRel);
         bannerUrl = null;
       } else if (body.bannerUrl.startsWith("data:image/")) {
         // Base64 image upload
         const saved = saveProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, userId, "banner", body.bannerUrl);
         if (saved) {
+          try {
+            await uploadProfileObjectIfNeeded(saved);
+          } catch {
+            deleteProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, saved);
+            return rep.code(500).send({ error: "SAVE_FAILED", field: "bannerUrl" });
+          }
           const oldRel = relPathFromStoredUrl(bannerUrl);
-          if (oldRel) deleteProfileImage(env.PROFILE_IMAGE_STORAGE_DIR, oldRel);
+          await deleteProfileObjectEverywhere(oldRel);
           bannerUrl = `${env.PROFILE_IMAGE_BASE_URL}/${saved}`;
         } else {
           return rep.code(400).send({ error: "INVALID_IMAGE", field: "bannerUrl" });
