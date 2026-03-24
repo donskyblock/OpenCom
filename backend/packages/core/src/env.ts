@@ -60,6 +60,18 @@ const Env = z.object({
   CORE_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("warn"),
   CORE_LOG_DIR: z.string().default("./logs"),
   CORE_LOG_TO_FILE: boolFlag.default(true),
+  DEPLOYMENT_PROVIDER: z.preprocess(emptyToUndefined, z.string().optional()),
+  DEPLOYMENT_COMPUTE_CLASS: z.preprocess(emptyToUndefined, z.string().optional()),
+  DEPLOYMENT_REGION: z.preprocess(
+    (value) =>
+      value ??
+      process.env.AWS_REGION ??
+      process.env.AWS_DEFAULT_REGION ??
+      process.env.S3_REGION,
+    z.preprocess(emptyToUndefined, z.string().optional())
+  ),
+  DEPLOYMENT_STACK_NAME: z.preprocess(emptyToUndefined, z.string().optional()),
+  DEPLOYMENT_OS_NAME: z.preprocess(emptyToUndefined, z.string().optional()),
   CORE_JWT_ACCESS_SECRET: z.string().min(16),
   CORE_JWT_REFRESH_SECRET: z.string().min(16),
 

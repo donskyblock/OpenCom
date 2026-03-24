@@ -263,6 +263,21 @@ function formatAdminDateTime(value = "") {
   return date.toLocaleString();
 }
 
+function formatCompactCount(value = 0) {
+  return new Intl.NumberFormat(undefined, {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(Number(value || 0));
+}
+
+function maskEmail(value = "") {
+  const trimmed = String(value || "").trim();
+  const [name = "", domain = ""] = trimmed.split("@");
+  if (!name || !domain) return trimmed || "this admin account";
+  const visible = name.slice(0, 2);
+  return `${visible}${"*".repeat(Math.max(1, name.length - visible.length))}@${domain}`;
+}
+
 function formatAdminDurationMs(value = 0) {
   const numeric = Number(value || 0);
   if (!Number.isFinite(numeric) || numeric <= 0) return "0s";
@@ -343,8 +358,10 @@ export function AdminApp() {
   const [refreshToken, setRefreshToken] = useState(localStorage.getItem(PANEL_REFRESH_TOKEN_KEY) || "");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [loginChallenge, setLoginChallenge] = useState(null);
   const [loginTotpToken, setLoginTotpToken] = useState("");
   const [loginRecoveryCode, setLoginRecoveryCode] = useState("");
+  const [loginVerificationMethod, setLoginVerificationMethod] = useState("totp");
   const [loginBusy, setLoginBusy] = useState(false);
   const [setupState, setSetupState] = useState(null);
   const [setupTotpToken, setSetupTotpToken] = useState("");
@@ -625,6 +642,8 @@ export function AdminApp() {
     setToken("");
     setRefreshToken("");
     setAdminStatus(null);
+    setLoginChallenge(null);
+    setLoginVerificationMethod("totp");
     setSetupState(null);
     setSetupTotpToken("");
     setLoginPassword("");
@@ -713,13 +732,13 @@ export function AdminApp() {
         body: JSON.stringify({
           email: loginEmail.trim(),
           password: loginPassword,
-          totpToken: loginTotpToken.trim() || undefined,
-          recoveryCode: loginRecoveryCode.trim() || undefined,
         }),
       });
 
       if (data?.next === "setup_2fa") {
         setSetupState(data);
+        setLoginChallenge(null);
+        setLoginVerificationMethod("totp");
         setSetupTotpToken("");
         setFreshRecoveryCodes([]);
         setLoginTotpToken("");
@@ -728,10 +747,30 @@ export function AdminApp() {
         return;
       }
 
+      if (data?.next === "verify_2fa" && data?.loginToken) {
+        setLoginChallenge({
+          loginToken: data.loginToken,
+          loginExpiresAt: data.loginExpiresAt || "",
+          admin: data.admin || {
+            email: loginEmail.trim(),
+            username: "",
+          },
+        });
+        setSetupState(null);
+        setLoginPassword("");
+        setLoginTotpToken("");
+        setLoginRecoveryCode("");
+        setLoginVerificationMethod("totp");
+        showStatus("Password accepted. Verify the sign-in with your authenticator or recovery code.", "info");
+        return;
+      }
+
       if (data?.next === "complete" && data?.accessToken) {
         setToken(data.accessToken);
         setRefreshToken(data.refreshToken || "");
         setAdminStatus(data.admin || null);
+        setLoginChallenge(null);
+        setLoginVerificationMethod("totp");
         setSetupState(null);
         setFreshRecoveryCodes([]);
         setLoginPassword("");
@@ -744,6 +783,63 @@ export function AdminApp() {
       throw new Error("Unexpected login response.");
     } catch (error) {
       showStatus(error.message || "Admin login failed.", "error");
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+
+  async function submitPanelLoginVerification() {
+    if (!loginChallenge?.loginToken) {
+      showStatus("Start with your email and password first.", "info");
+      return;
+    }
+
+    if (loginVerificationMethod === "totp" && !/^\d{6}$/.test(loginTotpToken.trim())) {
+      showStatus("Enter the 6-digit code from your authenticator app.", "info");
+      return;
+    }
+
+    if (loginVerificationMethod === "recovery" && !loginRecoveryCode.trim()) {
+      showStatus("Enter one of your saved recovery codes.", "info");
+      return;
+    }
+
+    setLoginBusy(true);
+    try {
+      const data = await panelAuthApi("/v1/panel/auth/login/verify", {
+        method: "POST",
+        body: JSON.stringify({
+          loginToken: loginChallenge.loginToken,
+          totpToken: loginVerificationMethod === "totp" ? loginTotpToken.trim() : undefined,
+          recoveryCode:
+            loginVerificationMethod === "recovery"
+              ? loginRecoveryCode.trim() || undefined
+              : undefined,
+        }),
+      });
+
+      if (data?.next === "complete" && data?.accessToken) {
+        setToken(data.accessToken);
+        setRefreshToken(data.refreshToken || "");
+        setAdminStatus(data.admin || null);
+        setLoginChallenge(null);
+        setLoginVerificationMethod("totp");
+        setSetupState(null);
+        setFreshRecoveryCodes([]);
+        setLoginTotpToken("");
+        setLoginRecoveryCode("");
+        showStatus(
+          data.usedRecoveryCode
+            ? `Recovery code accepted. ${data.recoveryCodesRemaining || 0} recovery codes remaining.`
+            : "Admin login successful.",
+          "success",
+        );
+        return;
+      }
+
+      throw new Error("Unexpected login verification response.");
+    } catch (error) {
+      showStatus(error.message || "2FA verification failed.", "error");
     } finally {
       setLoginBusy(false);
     }
@@ -774,6 +870,8 @@ export function AdminApp() {
         setRefreshToken(data.refreshToken || "");
         setAdminStatus(data.admin || null);
         setFreshRecoveryCodes(Array.isArray(data.recoveryCodes) ? data.recoveryCodes : []);
+        setLoginChallenge(null);
+        setLoginVerificationMethod("totp");
         setSetupState(null);
         setSetupTotpToken("");
         setLoginPassword("");
@@ -2109,17 +2207,106 @@ export function AdminApp() {
 
   const isOwner = adminStatus?.isPlatformOwner === true;
   const tabs = [
-    { id: "overview", label: "Dashboard", group: "Core" },
-    { id: "users", label: "Users & moderation", group: "Core" },
-    canManageStaff ? { id: "staff-accounts", label: "Panel accounts", group: "Staff" } : null,
-    canManageStaff ? { id: "staff-permissions", label: "Staff permissions", group: "Staff" } : null,
-    canManageSupport ? { id: "staff-scheduling", label: "Scheduling", group: "Staff" } : null,
-    canManageSupport ? { id: "staff-support", label: "Support queue", group: "Staff" } : null,
-    canSendOfficialMessages ? { id: "official", label: "Official messages", group: "Comms" } : null,
-    canManageBadges ? { id: "badges", label: "Badges", group: "Growth" } : null,
-    canManageBoosts ? { id: "boost", label: "Boost grants", group: "Growth" } : null,
-    canManageBlogs ? { id: "blogs", label: "Blogs", group: "Content" } : null,
-    canManageOperations ? { id: "operations", label: "Operations", group: "System" } : null,
+    {
+      id: "overview",
+      label: "Dashboard",
+      group: "Mission control",
+      description: "Live graphs for service health, capacity, support pressure, and platform growth.",
+    },
+    {
+      id: "users",
+      label: "Users & moderation",
+      group: "Core ops",
+      description: "Search accounts, inspect status, and jump into the actions your role allows.",
+    },
+    canManageStaff
+      ? {
+          id: "staff-accounts",
+          label: "Panel accounts",
+          group: "Staff ops",
+          description: "Dedicated staff logins, titles, and account security posture.",
+        }
+      : null,
+    canManageStaff
+      ? {
+          id: "staff-permissions",
+          label: "Staff permissions",
+          group: "Staff ops",
+          description: "Templates, permission scopes, and assignment management.",
+        }
+      : null,
+    canManageSupport
+      ? {
+          id: "staff-scheduling",
+          label: "Scheduling",
+          group: "Staff ops",
+          description: "Plan queue coverage across support, moderation, and on-call work.",
+        }
+      : null,
+    canManageSupport
+      ? {
+          id: "staff-support",
+          label: "Support queue",
+          group: "Staff ops",
+          description: "Triage tickets, assign ownership, and reply in-thread.",
+          count:
+            adminOverview.supportTicketsOpen > 0
+              ? formatCompactCount(adminOverview.supportTicketsOpen)
+              : null,
+        }
+      : null,
+    canSendOfficialMessages
+      ? {
+          id: "official",
+          label: "Official messages",
+          group: "Comms",
+          description: "Broadcast messages and control welcome-message automation.",
+        }
+      : null,
+    canManageBadges
+      ? {
+          id: "badges",
+          label: "Badges",
+          group: "Growth",
+          description: "Create badge definitions and manage user badge assignments.",
+          count:
+            adminOverview.badgeDefinitionsCount > 0
+              ? formatCompactCount(adminOverview.badgeDefinitionsCount)
+              : null,
+        }
+      : null,
+    canManageBoosts
+      ? {
+          id: "boost",
+          label: "Boost grants",
+          group: "Growth",
+          description: "Handle manual grants and trial windows for Boost access.",
+          count:
+            adminOverview.activeBoostGrants > 0
+              ? formatCompactCount(adminOverview.activeBoostGrants)
+              : null,
+        }
+      : null,
+    canManageBlogs
+      ? {
+          id: "blogs",
+          label: "Blogs",
+          group: "Content",
+          description: "Draft, review, publish, and maintain platform updates.",
+          count:
+            adminOverview.publishedBlogsCount > 0
+              ? formatCompactCount(adminOverview.publishedBlogsCount)
+              : null,
+        }
+      : null,
+    canManageOperations
+      ? {
+          id: "operations",
+          label: "Operations",
+          group: "System",
+          description: "Restart and update the panel runtime with audit visibility.",
+        }
+      : null,
   ].filter(Boolean);
   const groupedTabs = tabs.reduce((acc, entry) => {
     const group = entry.group || "Other";
@@ -2167,115 +2354,252 @@ export function AdminApp() {
         : adminStatus?.platformRole === "staff"
           ? "Staff"
           : "Viewer";
+  const activeTabConfig =
+    tabs.find((item) => item.id === tab) ||
+    tabs[0] || {
+      group: "Mission control",
+      label: "Dashboard",
+      description: "Live platform controls.",
+    };
   const shellSearchPlaceholder = isStaffSupportTab
     ? "Search support tickets by reference, subject, user, or email..."
     : tab === "users"
       ? "Search users by username or email..."
       : "Quick search";
+  const loginStage = setupState ? "setup" : loginChallenge ? "verify" : "credentials";
+  const loginChallengeAdminEmail =
+    loginChallenge?.admin?.email || loginEmail.trim() || "admin@example.com";
 
   if (!isPanelUnlocked) {
     return (
       <div className="admin-unlock">
-        <div className="admin-unlock-card">
-          <h1>OpenCom Staff Panel</h1>
-          <p className="admin-unlock-desc">
-            Sign in with your dedicated panel-admin account.
-          </p>
+        <div className="admin-auth-shell">
+          <section className="admin-auth-hero">
+            <p className="admin-eyebrow">OpenCom staff panel</p>
+            <h1>Cleaner admin flow. Better signal. Safer access.</h1>
+            <p className="admin-unlock-desc">
+              Dedicated staff accounts now move through a more logical login
+              flow, and the dashboard leads with graphs and operational signals
+              instead of a wall of generic cards.
+            </p>
 
-          {!setupState ? (
-            <>
-              <label>
-                Admin email
-                <input
-                  type="email"
-                  placeholder="admin@example.com"
-                  value={loginEmail}
-                  onChange={(event) => setLoginEmail(event.target.value)}
-                  autoComplete="username"
-                />
-              </label>
-              <label>
-                Password
-                <input
-                  type="password"
-                  placeholder="Your admin password"
-                  value={loginPassword}
-                  onChange={(event) => setLoginPassword(event.target.value)}
-                  autoComplete="current-password"
-                />
-              </label>
-              <label>
-                Authenticator code
-                <input
-                  type="text"
-                  placeholder="123456"
-                  value={loginTotpToken}
-                  onChange={(event) =>
-                    setLoginTotpToken(event.target.value.replace(/\D/g, "").slice(0, 6))
-                  }
-                />
-              </label>
-              <label>
-                Recovery code (optional)
-                <input
-                  type="text"
-                  placeholder="ABCD-1234"
-                  value={loginRecoveryCode}
-                  onChange={(event) => setLoginRecoveryCode(event.target.value.toUpperCase())}
-                />
-              </label>
-              <button type="button" disabled={loginBusy} onClick={submitPanelLogin}>
-                {loginBusy ? "Signing in..." : "Sign in"}
-              </button>
-            </>
-          ) : (
-            <>
-              <p className="admin-unlock-desc">
-                First login detected. Add this account to your authenticator app,
-                then verify with a 6-digit code.
-              </p>
-              <label>
-                Manual setup key
-                <input type="text" readOnly value={setupState.totpSecret || ""} />
-              </label>
-              <label>
-                Authenticator URI
-                <textarea
-                  readOnly
-                  value={setupState.otpauthUri || ""}
-                  rows={3}
-                  className="admin-official-textarea"
-                />
-              </label>
-              <label>
-                6-digit authenticator code
-                <input
-                  type="text"
-                  placeholder="123456"
-                  value={setupTotpToken}
-                  onChange={(event) =>
-                    setSetupTotpToken(event.target.value.replace(/\D/g, "").slice(0, 6))
-                  }
-                />
-              </label>
-              <div className="admin-badge-actions">
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={() => {
-                    setSetupState(null);
-                    setSetupTotpToken("");
-                  }}
-                >
-                  Cancel
+            <div className="admin-auth-feature-grid">
+              <article className="admin-auth-feature">
+                <span>Step-based login</span>
+                <strong>Credentials and 2FA are separate.</strong>
+                <small>Less clutter during sign-in and a clearer recovery path.</small>
+              </article>
+              <article className="admin-auth-feature">
+                <span>Operational graphs</span>
+                <strong>Health, capacity, and support pressure are visual first.</strong>
+                <small>Faster scanning for runtime issues, storage growth, and queue load.</small>
+              </article>
+              <article className="admin-auth-feature">
+                <span>Dedicated staff control</span>
+                <strong>Security, support, content, and growth stay in one place.</strong>
+                <small>Navigation is grouped around how the panel is actually used.</small>
+              </article>
+            </div>
+          </section>
+
+          <section className="admin-unlock-card admin-auth-card">
+            <div className="admin-auth-stage">
+              <span className={loginStage === "credentials" ? "active" : ""}>Credentials</span>
+              <span className={loginStage === "verify" ? "active" : ""}>2FA check</span>
+              <span className={loginStage === "setup" ? "active" : ""}>Authenticator setup</span>
+            </div>
+
+            {loginStage === "credentials" && (
+              <form
+                className="admin-auth-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  submitPanelLogin();
+                }}
+              >
+                <div className="admin-auth-form-head">
+                  <h2>Sign in to the control panel</h2>
+                  <p className="admin-unlock-desc">
+                    Start with the email and password for your dedicated panel-admin account.
+                  </p>
+                </div>
+
+                <label>
+                  Admin email
+                  <input
+                    type="email"
+                    placeholder="admin@example.com"
+                    value={loginEmail}
+                    onChange={(event) => setLoginEmail(event.target.value)}
+                    autoComplete="username"
+                  />
+                </label>
+                <label>
+                  Password
+                  <input
+                    type="password"
+                    placeholder="Your admin password"
+                    value={loginPassword}
+                    onChange={(event) => setLoginPassword(event.target.value)}
+                    autoComplete="current-password"
+                  />
+                </label>
+
+                <button type="submit" disabled={loginBusy}>
+                  {loginBusy ? "Checking credentials..." : "Continue to verification"}
                 </button>
-                <button type="button" disabled={setupBusy} onClick={completePanel2faSetup}>
-                  {setupBusy ? "Verifying..." : "Verify and continue"}
-                </button>
-              </div>
-            </>
-          )}
-          <p className="admin-status-msg">{status}</p>
+              </form>
+            )}
+
+            {loginStage === "verify" && (
+              <form
+                className="admin-auth-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  submitPanelLoginVerification();
+                }}
+              >
+                <div className="admin-auth-form-head">
+                  <h2>Verify your second factor</h2>
+                  <p className="admin-unlock-desc">
+                    Credentials accepted for <strong>{maskEmail(loginChallengeAdminEmail)}</strong>.
+                    Finish the sign-in with your authenticator app or a saved recovery code.
+                  </p>
+                </div>
+
+                <div className="admin-auth-meta">
+                  <span>Account: {loginChallenge?.admin?.username || "Staff admin"}</span>
+                  <span>
+                    Expires: {loginChallenge?.loginExpiresAt ? formatAdminDateTime(loginChallenge.loginExpiresAt) : "Soon"}
+                  </span>
+                </div>
+
+                <div className="admin-auth-method-toggle">
+                  <button
+                    type="button"
+                    className={loginVerificationMethod === "totp" ? "active" : ""}
+                    onClick={() => setLoginVerificationMethod("totp")}
+                  >
+                    Authenticator code
+                  </button>
+                  <button
+                    type="button"
+                    className={loginVerificationMethod === "recovery" ? "active" : ""}
+                    onClick={() => setLoginVerificationMethod("recovery")}
+                  >
+                    Recovery code
+                  </button>
+                </div>
+
+                {loginVerificationMethod === "totp" ? (
+                  <label>
+                    6-digit authenticator code
+                    <input
+                      type="text"
+                      placeholder="123456"
+                      value={loginTotpToken}
+                      onChange={(event) =>
+                        setLoginTotpToken(event.target.value.replace(/\D/g, "").slice(0, 6))
+                      }
+                      inputMode="numeric"
+                    />
+                  </label>
+                ) : (
+                  <label>
+                    Recovery code
+                    <input
+                      type="text"
+                      placeholder="ABCD-1234"
+                      value={loginRecoveryCode}
+                      onChange={(event) => setLoginRecoveryCode(event.target.value.toUpperCase())}
+                    />
+                  </label>
+                )}
+
+                <div className="admin-badge-actions">
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => {
+                      setLoginChallenge(null);
+                      setLoginVerificationMethod("totp");
+                      setLoginTotpToken("");
+                      setLoginRecoveryCode("");
+                    }}
+                  >
+                    Back
+                  </button>
+                  <button type="submit" disabled={loginBusy}>
+                    {loginBusy ? "Verifying..." : "Finish sign-in"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {loginStage === "setup" && (
+              <form
+                className="admin-auth-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  completePanel2faSetup();
+                }}
+              >
+                <div className="admin-auth-form-head">
+                  <h2>Set up your authenticator</h2>
+                  <p className="admin-unlock-desc">
+                    First login detected. Add this account to your authenticator app,
+                    then confirm it with a 6-digit code.
+                  </p>
+                </div>
+
+                <label>
+                  Manual setup key
+                  <input type="text" readOnly value={setupState?.totpSecret || ""} />
+                </label>
+                <label>
+                  Authenticator URI
+                  <textarea
+                    readOnly
+                    value={setupState?.otpauthUri || ""}
+                    rows={3}
+                    className="admin-official-textarea"
+                  />
+                </label>
+                <label>
+                  6-digit authenticator code
+                  <input
+                    type="text"
+                    placeholder="123456"
+                    value={setupTotpToken}
+                    onChange={(event) =>
+                      setSetupTotpToken(event.target.value.replace(/\D/g, "").slice(0, 6))
+                    }
+                    inputMode="numeric"
+                  />
+                </label>
+
+                <div className="admin-badge-actions">
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => {
+                      setSetupState(null);
+                      setSetupTotpToken("");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={setupBusy}>
+                    {setupBusy ? "Verifying..." : "Verify and continue"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {status ? (
+              <p className={`admin-status-msg admin-status-msg-${statusType}`}>{status}</p>
+            ) : null}
+          </section>
         </div>
       </div>
     );
@@ -2295,7 +2619,7 @@ export function AdminApp() {
         <div className="admin-sidebar-user">
           <strong>{adminStatus?.username || "Panel User"}</strong>
           <span>{adminStatus?.email || "No email loaded"}</span>
-          <small>{roleLabel}</small>
+          <small>{roleLabel} access</small>
         </div>
 
         <nav className="admin-sidebar-nav">
@@ -2309,7 +2633,11 @@ export function AdminApp() {
                   className={tab === entry.id ? "active" : ""}
                   onClick={() => setTab(entry.id)}
                 >
-                  {entry.label}
+                  <span className="admin-nav-button-copy">
+                    <strong>{entry.label}</strong>
+                    <small>{entry.description}</small>
+                  </span>
+                  {entry.count ? <span className="admin-nav-button-badge">{entry.count}</span> : null}
                 </button>
               ))}
             </div>
@@ -2328,41 +2656,45 @@ export function AdminApp() {
 
       <div className="admin-workspace">
         <header className="admin-workspace-topbar">
-          <div className="admin-workspace-search">
-            <input
-              placeholder={shellSearchPlaceholder}
-              value={shellSearch}
-              onChange={(e) => setShellSearch(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && runGlobalSearch()}
-            />
-            <button type="button" onClick={runGlobalSearch}>
-              Search
-            </button>
+          <div className="admin-workspace-topbar-copy">
+            <span className="admin-workspace-kicker">{activeTabConfig.group}</span>
+            <h1>{activeTabConfig.label}</h1>
+            <p>{activeTabConfig.description}</p>
           </div>
-          <div className="admin-workspace-metrics">
-            <span>{adminOverview.supportTicketsOpen || 0} open tickets</span>
-            <span>{adminOverview.staffAssignmentsCount || 0} staff assignments</span>
-            <span>{adminOverview.activeBoostGrants || 0} active boosts</span>
+          <div className="admin-workspace-topbar-tools">
+            <div className="admin-workspace-search">
+              <input
+                placeholder={shellSearchPlaceholder}
+                value={shellSearch}
+                onChange={(e) => setShellSearch(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && runGlobalSearch()}
+              />
+              <button type="button" onClick={runGlobalSearch}>
+                Search
+              </button>
+            </div>
+            <div className="admin-workspace-metrics">
+              <span>{roleLabel}</span>
+              <span>{adminOverview.supportTicketsOpen || 0} open tickets</span>
+              <span>{adminOverview.staffAssignmentsCount || 0} staff assignments</span>
+              <span>{adminOverview.activeBoostGrants || 0} active boosts</span>
+            </div>
           </div>
         </header>
 
         <div className="admin-content">
         {freshRecoveryCodes.length > 0 && (
           <section className="admin-section">
-            <div className="admin-card admin-card-accent">
-              <h3>Save Your Recovery Codes</h3>
+            <div className="admin-card admin-card-accent admin-recovery-callout">
+              <h3>Save your recovery codes</h3>
               <p className="admin-hint">
-                These are shown once. Store them safely before closing this panel.
+                These are shown once after authenticator setup. Store them before closing this panel.
               </p>
-              <code
-                style={{
-                  display: "block",
-                  whiteSpace: "pre-wrap",
-                  marginBottom: "var(--space-sm)",
-                }}
-              >
-                {freshRecoveryCodes.map((code) => `${code}\n`).join("")}
-              </code>
+              <div className="admin-recovery-code-list">
+                {freshRecoveryCodes.map((code) => (
+                  <code key={code}>{code}</code>
+                ))}
+              </div>
               <button type="button" onClick={() => setFreshRecoveryCodes([])}>
                 I saved these codes
               </button>

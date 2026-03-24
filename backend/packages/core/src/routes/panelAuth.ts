@@ -19,6 +19,7 @@ import { env } from "../env.js";
 
 const PANEL_ACCESS_TOKEN_TTL = "8h";
 const PANEL_REFRESH_TOKEN_TTL_MS = 45 * 24 * 60 * 60 * 1000;
+const PANEL_LOGIN_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 const PANEL_SETUP_TOKEN_TTL_MS = 15 * 60 * 1000;
 const PANEL_RECOVERY_CODE_COUNT = 10;
 
@@ -36,6 +37,12 @@ const PanelSetupCompleteBody = z.object({
 
 const PanelRefreshBody = z.object({
   refreshToken: z.string().trim().min(16).max(300),
+});
+
+const PanelLoginVerifyBody = z.object({
+  loginToken: z.string().trim().min(16).max(300),
+  totpToken: z.string().trim().optional(),
+  recoveryCode: z.string().trim().optional(),
 });
 
 const PanelLogoutBody = z.object({
@@ -61,6 +68,13 @@ type PanelSetupTokenRow = {
   expires_at: string;
   consumed_at: string | null;
   disabled_at: string | null;
+};
+
+type PanelLoginChallengeRow = {
+  id: number;
+  admin_id: string;
+  expires_at: string;
+  consumed_at: string | null;
 };
 
 function randomToken() {
@@ -133,6 +147,129 @@ async function issuePanelSession(app: FastifyInstance, adminId: string) {
   return { accessToken, refreshToken };
 }
 
+async function issuePanelLoginChallenge(adminId: string) {
+  const loginToken = randomToken();
+  const tokenHash = sha256Hex(loginToken);
+  const expiresAtMs = Date.now() + PANEL_LOGIN_CHALLENGE_TTL_MS;
+  const expiresAt = toSqlTimestamp(expiresAtMs);
+
+  await q(
+    `UPDATE panel_admin_login_challenges
+     SET consumed_at=COALESCE(consumed_at, NOW())
+     WHERE admin_id=:adminId
+       AND consumed_at IS NULL`,
+    { adminId },
+  );
+
+  await q(
+    `INSERT INTO panel_admin_login_challenges (admin_id,token_hash,expires_at)
+     VALUES (:adminId,:tokenHash,:expiresAt)`,
+    { adminId, tokenHash, expiresAt },
+  );
+
+  return {
+    loginToken,
+    loginExpiresAt: new Date(expiresAtMs).toISOString(),
+  };
+}
+
+function panelRequiresTwoFactorSetup(admin: PanelAdminAuthRow) {
+  return (
+    !admin.two_factor_enabled ||
+    Boolean(admin.force_two_factor_setup) ||
+    !admin.totp_secret_encrypted
+  );
+}
+
+async function verifyPanelTwoFactor(
+  admin: PanelAdminAuthRow,
+  input: { totpToken?: string; recoveryCode?: string },
+) {
+  if (!admin.two_factor_enabled || !admin.totp_secret_encrypted) {
+    throw new Error("TWO_FACTOR_NOT_CONFIGURED");
+  }
+
+  const submittedTotp = String(input.totpToken || "").trim();
+  const submittedRecoveryCode = String(input.recoveryCode || "").trim();
+  if (!submittedTotp && !submittedRecoveryCode) {
+    throw new Error("TWO_FACTOR_REQUIRED");
+  }
+
+  let usedRecoveryCode = false;
+  if (submittedRecoveryCode) {
+    const recoveryCodeHash = hashRecoveryCode(submittedRecoveryCode);
+    const rows = await q<{ id: number }>(
+      `SELECT id
+         FROM panel_admin_recovery_codes
+        WHERE admin_id=:adminId
+          AND code_hash=:codeHash
+          AND used_at IS NULL
+        LIMIT 1`,
+      { adminId: admin.id, codeHash: recoveryCodeHash },
+    );
+
+    if (!rows.length) {
+      throw new Error("INVALID_TWO_FACTOR_TOKEN");
+    }
+
+    await q(
+      `UPDATE panel_admin_recovery_codes
+       SET used_at=NOW()
+       WHERE id=:id`,
+      { id: rows[0].id },
+    );
+    usedRecoveryCode = true;
+  } else {
+    let decryptedSecret = "";
+    try {
+      decryptedSecret = decryptTotpSecret(admin.totp_secret_encrypted || "");
+    } catch {
+      throw new Error("TWO_FACTOR_NOT_CONFIGURED");
+    }
+
+    if (!verifyTotpToken(decryptedSecret, submittedTotp)) {
+      throw new Error("INVALID_TWO_FACTOR_TOKEN");
+    }
+  }
+
+  const remainingRows = await q<{ count: number }>(
+    `SELECT COUNT(*) AS count
+       FROM panel_admin_recovery_codes
+      WHERE admin_id=:adminId
+        AND used_at IS NULL`,
+    { adminId: admin.id },
+  );
+
+  return {
+    usedRecoveryCode,
+    recoveryCodesRemaining: Number(remainingRows[0]?.count || 0),
+  };
+}
+
+async function buildCompletedPanelLogin(
+  app: FastifyInstance,
+  admin: PanelAdminAuthRow,
+  input: { totpToken?: string; recoveryCode?: string },
+) {
+  const twoFactorResult = await verifyPanelTwoFactor(admin, input);
+  const tokens = await issuePanelSession(app, admin.id);
+  await q(`UPDATE panel_admin_users SET last_login_at=NOW() WHERE id=:adminId`, {
+    adminId: admin.id,
+  });
+
+  const status = await buildPanelStatus(admin.id);
+  if (!status) {
+    throw new Error("UNAUTHORIZED");
+  }
+
+  return {
+    next: "complete",
+    ...tokens,
+    admin: status,
+    ...twoFactorResult,
+  };
+}
+
 export async function panelAuthRoutes(app: FastifyInstance) {
   app.decorate("authenticatePanelAdmin", async function (request: any, reply: any) {
     try {
@@ -174,12 +311,7 @@ export async function panelAuthRoutes(app: FastifyInstance) {
     const passwordOk = await verifyPassword(admin.password_hash, body.password);
     if (!passwordOk) return rep.code(401).send({ error: "INVALID_CREDENTIALS" });
 
-    const requiresSetup =
-      !admin.two_factor_enabled ||
-      Boolean(admin.force_two_factor_setup) ||
-      !admin.totp_secret_encrypted;
-
-    if (requiresSetup) {
+    if (panelRequiresTwoFactorSetup(admin)) {
       const setupToken = randomToken();
       const setupTokenHash = sha256Hex(setupToken);
       const secret = generateTotpSecret();
@@ -221,72 +353,71 @@ export async function panelAuthRoutes(app: FastifyInstance) {
       });
     }
 
-    const submittedTotp = String(body.totpToken || "").trim();
-    const submittedRecoveryCode = String(body.recoveryCode || "").trim();
-    if (!submittedTotp && !submittedRecoveryCode) {
-      return rep.code(401).send({ error: "TWO_FACTOR_REQUIRED" });
-    }
-
-    let usedRecoveryCode = false;
-    if (submittedRecoveryCode) {
-      const recoveryCodeHash = hashRecoveryCode(submittedRecoveryCode);
-      const rows = await q<{ id: number }>(
-        `SELECT id
-           FROM panel_admin_recovery_codes
-          WHERE admin_id=:adminId
-            AND code_hash=:codeHash
-            AND used_at IS NULL
-          LIMIT 1`,
-        { adminId: admin.id, codeHash: recoveryCodeHash },
-      );
-
-      if (!rows.length) {
-        return rep.code(401).send({ error: "INVALID_TWO_FACTOR_TOKEN" });
-      }
-
-      await q(
-        `UPDATE panel_admin_recovery_codes
-         SET used_at=NOW()
-         WHERE id=:id`,
-        { id: rows[0].id },
-      );
-      usedRecoveryCode = true;
-    } else {
-      let decryptedSecret = "";
+    if (body.totpToken || body.recoveryCode) {
       try {
-        decryptedSecret = decryptTotpSecret(admin.totp_secret_encrypted || "");
-      } catch {
-        return rep.code(401).send({ error: "TWO_FACTOR_NOT_CONFIGURED" });
-      }
-
-      if (!verifyTotpToken(decryptedSecret, submittedTotp)) {
-        return rep.code(401).send({ error: "INVALID_TWO_FACTOR_TOKEN" });
+        const result = await buildCompletedPanelLogin(app, admin, body);
+        return rep.send(result);
+      } catch (error) {
+        const code = String((error as Error)?.message || "INVALID_TWO_FACTOR_TOKEN");
+        return rep.code(code === "ACCOUNT_DISABLED" ? 403 : 401).send({ error: code });
       }
     }
-
-    const tokens = await issuePanelSession(app, admin.id);
-    await q(`UPDATE panel_admin_users SET last_login_at=NOW() WHERE id=:adminId`, {
-      adminId: admin.id,
-    });
-
-    const status = await buildPanelStatus(admin.id);
-    if (!status) return rep.code(401).send({ error: "UNAUTHORIZED" });
-
-    const remainingRows = await q<{ count: number }>(
-      `SELECT COUNT(*) AS count
-         FROM panel_admin_recovery_codes
-        WHERE admin_id=:adminId
-          AND used_at IS NULL`,
-      { adminId: admin.id },
-    );
 
     return rep.send({
-      next: "complete",
-      ...tokens,
-      admin: status,
-      usedRecoveryCode,
-      recoveryCodesRemaining: Number(remainingRows[0]?.count || 0),
+      next: "verify_2fa",
+      ...(await issuePanelLoginChallenge(admin.id)),
+      admin: {
+        email: admin.email,
+        username: admin.username,
+      },
     });
+  });
+
+  app.post("/v1/panel/auth/login/verify", async (req, rep) => {
+    const body = parseBody(PanelLoginVerifyBody, req.body);
+    const tokenHash = sha256Hex(body.loginToken);
+
+    const rows = await q<PanelLoginChallengeRow>(
+      `SELECT id,admin_id,expires_at,consumed_at
+         FROM panel_admin_login_challenges
+        WHERE token_hash=:tokenHash
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      { tokenHash },
+    );
+
+    if (!rows.length) {
+      return rep.code(401).send({ error: "INVALID_LOGIN_TOKEN" });
+    }
+
+    const challenge = rows[0];
+    if (challenge.consumed_at) {
+      return rep.code(401).send({ error: "LOGIN_TOKEN_USED" });
+    }
+    if (new Date(challenge.expires_at).getTime() < Date.now()) {
+      return rep.code(401).send({ error: "LOGIN_TOKEN_EXPIRED" });
+    }
+
+    const admin = await getPanelAdminById(challenge.admin_id);
+    if (!admin) return rep.code(401).send({ error: "UNAUTHORIZED" });
+    if (admin.disabled_at) return rep.code(403).send({ error: "ACCOUNT_DISABLED" });
+    if (panelRequiresTwoFactorSetup(admin)) {
+      return rep.code(401).send({ error: "TWO_FACTOR_NOT_CONFIGURED" });
+    }
+
+    try {
+      const result = await buildCompletedPanelLogin(app, admin, body);
+      await q(
+        `UPDATE panel_admin_login_challenges
+         SET consumed_at=NOW()
+         WHERE id=:id`,
+        { id: challenge.id },
+      );
+      return rep.send(result);
+    } catch (error) {
+      const code = String((error as Error)?.message || "INVALID_TWO_FACTOR_TOKEN");
+      return rep.code(code === "ACCOUNT_DISABLED" ? 403 : 401).send({ error: code });
+    }
   });
 
   app.post("/v1/panel/auth/setup/complete", async (req, rep) => {
