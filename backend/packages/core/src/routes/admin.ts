@@ -37,7 +37,6 @@ import { isS3StorageEnabled, uploadFileToObjectStorage } from "../objectStorage.
 import {
   appendUploadChunk,
   createUploadSession,
-  DEFAULT_UPLOAD_CHUNK_BYTES,
   destroyUploadSession,
   finalizeUploadSession,
   getUploadSession,
@@ -82,6 +81,8 @@ const CLIENT_EXT_TO_MIME: Record<string, string> = {
   ".tar":  "application/x-tar",
   ".gz":   "application/gzip",
 };
+
+const CLIENT_UPLOAD_CHUNK_BYTES = 512 * 1024;
 
 const EXT_TO_PLATFORM: Record<string, ClientPlatform> = {
   ".exe":  "windows",
@@ -1096,7 +1097,7 @@ export async function adminRoutes(app: FastifyInstance, broadcastToUser?: Broadc
       expectedSizeBytes: sizeBytes,
       maxBytes: env.CLIENT_UPLOAD_MAX_BYTES,
       finalObjectKey: storageTarget.filePath,
-      chunkSizeBytes: DEFAULT_UPLOAD_CHUNK_BYTES,
+      chunkSizeBytes: CLIENT_UPLOAD_CHUNK_BYTES,
       context: {
         actorId,
         channel,
