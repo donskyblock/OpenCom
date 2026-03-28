@@ -1258,16 +1258,48 @@ export function App() {
 
   useEffect(() => {
     if (typeof AbortController === "undefined") return undefined;
-    const controller = new AbortController();
-    fetchDownloadTargets(CORE_API, { signal: controller.signal }).then(
-      (targets) => {
-        if (!controller.signal.aborted) {
-          setDownloadTargets(targets);
-        }
-      },
-    );
-    return () => controller.abort();
-  }, []);
+
+    let disposed = false;
+    let controller = new AbortController();
+
+    const refreshTargets = () => {
+      controller.abort();
+      controller = new AbortController();
+      fetchDownloadTargets(CORE_API, { signal: controller.signal }).then(
+        (targets) => {
+          if (!disposed && !controller.signal.aborted) {
+            setDownloadTargets(targets);
+          }
+        },
+      );
+    };
+
+    refreshTargets();
+
+    if (routePath !== APP_ROUTE_HOME) {
+      return () => {
+        disposed = true;
+        controller.abort();
+      };
+    }
+
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      refreshTargets();
+    };
+
+    const intervalId = window.setInterval(refreshTargets, 60_000);
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+
+    return () => {
+      disposed = true;
+      controller.abort();
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+    };
+  }, [routePath]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

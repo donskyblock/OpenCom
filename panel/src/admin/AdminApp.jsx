@@ -294,6 +294,17 @@ function formatFileSize(value = 0) {
   return `${size.toFixed(precision)} ${units[unitIndex]}`;
 }
 
+function mergeActiveClientBuilds(current = [], incomingBuild) {
+  if (!incomingBuild?.id) return Array.isArray(current) ? current : [];
+  const next = Array.isArray(current)
+    ? current.filter((build) => String(build?.type || "") !== String(incomingBuild.type || ""))
+    : [];
+  next.unshift(incomingBuild);
+  return next.sort((left, right) =>
+    String(left?.type || "").localeCompare(String(right?.type || "")),
+  );
+}
+
 function maskEmail(value = "") {
   const trimmed = String(value || "").trim();
   const [name = "", domain = ""] = trimmed.split("@");
@@ -1082,6 +1093,9 @@ export function AdminApp() {
         file: null,
       });
       setClientUploadInputKey((current) => current + 1);
+      if (uploadedChannel === clientReleaseChannel && data?.client) {
+        setClientBuilds((current) => mergeActiveClientBuilds(current, data.client));
+      }
       await loadClientBuilds(uploadedChannel, { silent: true });
       showStatus(
         `Uploaded ${data?.client?.fileName || "client build"} for ${uploadedChannel}.`,
@@ -1100,6 +1114,24 @@ export function AdminApp() {
       loadClientBuilds(clientReleaseChannel, { silent: true }),
     ]);
     showStatus("Operations workspace refreshed.", "success");
+  }
+
+  async function copyClientBuildLink(href) {
+    const nextHref = String(href || "").trim();
+    if (!nextHref) {
+      showStatus("No download link is available for that build yet.", "error");
+      return;
+    }
+    if (!navigator?.clipboard?.writeText) {
+      showStatus("Clipboard access is unavailable in this browser.", "error");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(nextHref);
+      showStatus("Client build link copied.", "success");
+    } catch (error) {
+      showStatus(error?.message || "Failed to copy client build link.", "error");
+    }
   }
 
   async function triggerPanelOperation(action) {
@@ -4505,7 +4537,7 @@ export function AdminApp() {
                         <th>File</th>
                         <th>Size</th>
                         <th>Published</th>
-                        <th>Download</th>
+                        <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -4518,14 +4550,23 @@ export function AdminApp() {
                           <td>{formatAdminDateTime(build.publishedAt)}</td>
                           <td>
                             {build.downloadUrl ? (
-                              <a
-                                href={build.downloadUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="admin-link-out"
-                              >
-                                Open
-                              </a>
+                              <div className="admin-badge-actions">
+                                <a
+                                  href={build.downloadUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="admin-link-out"
+                                >
+                                  Open
+                                </a>
+                                <button
+                                  type="button"
+                                  className="ghost"
+                                  onClick={() => copyClientBuildLink(build.downloadUrl)}
+                                >
+                                  Copy link
+                                </button>
+                              </div>
                             ) : (
                               <span className="text-dim">Unavailable</span>
                             )}

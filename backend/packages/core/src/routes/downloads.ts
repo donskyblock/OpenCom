@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { env } from "../env.js";
 import { q } from "../db.js";
+import { getObjectStreamFromStorage, isS3StorageEnabled } from "../objectStorage.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -168,11 +169,8 @@ function pickPreferredDesktopArtifact(platform = "", artifacts: ReturnType<typeo
 }
 
 function serializeClientRow(row: ClientRow, origin = "") {
-  // Prefer an explicit CDN override stored on the row, then fall back to
-  // constructing the URL from the base URL env var.
-  const downloadUrl =
-    row.download_url ||
-    `${String(env.PROFILE_IMAGE_BASE_URL || "").replace(/\/$/, "")}/${row.file_path}`;
+  const downloadPath = `/v1/client/builds/${encodeURIComponent(row.id)}/download`;
+  const downloadUrl = row.download_url || (origin ? `${origin}${downloadPath}` : downloadPath);
 
   return {
     id:           row.id,
@@ -308,6 +306,56 @@ export async function downloadRoutes(app: FastifyInstance) {
       channel,
       builds:  rows.map((row) => serializeClientRow(row, origin)),
     };
+  });
+
+  app.get("/v1/client/builds/:clientId/download", async (req: any, rep) => {
+    const { clientId } = z
+      .object({ clientId: z.string().min(1).max(64) })
+      .parse(req.params);
+
+    const rows = await q<ClientRow>(
+      `SELECT id, type, version, channel, file_path, file_name, mime_type,
+              file_size, checksum_sha256, release_notes, download_url, created_at
+         FROM client
+        WHERE id = :clientId
+        LIMIT 1`,
+      { clientId },
+    );
+    if (!rows.length) {
+      return rep.code(404).send({ error: "NOT_FOUND" });
+    }
+
+    const row = rows[0];
+    const relPath = String(row.file_path || "").trim().replace(/^\/+/, "");
+    if (!relPath || relPath.includes("..")) {
+      return rep.code(404).send({ error: "NOT_FOUND" });
+    }
+
+    rep.header("Content-Type", String(row.mime_type || "application/octet-stream"));
+    if (Number.isFinite(Number(row.file_size)) && Number(row.file_size) > 0) {
+      rep.header("Content-Length", String(Number(row.file_size)));
+    }
+    rep.header("Cache-Control", "public, max-age=600");
+    rep.header(
+      "Content-Disposition",
+      `attachment; filename="${String(row.file_name || "OpenCom.bin").replace(/"/g, "")}"`,
+    );
+
+    if (isS3StorageEnabled()) {
+      const objectStream = await getObjectStreamFromStorage("clients", relPath);
+      if (objectStream) return rep.send(objectStream);
+    }
+
+    const absolutePath = path.resolve(env.PROFILE_IMAGE_STORAGE_DIR, relPath);
+    const rootDir = path.resolve(env.PROFILE_IMAGE_STORAGE_DIR);
+    if (!absolutePath.startsWith(rootDir + path.sep) && absolutePath !== rootDir) {
+      return rep.code(403).send({ error: "FORBIDDEN" });
+    }
+    if (!fs.existsSync(absolutePath)) {
+      return rep.code(404).send({ error: "NOT_FOUND" });
+    }
+
+    return rep.send(fs.createReadStream(absolutePath));
   });
 
   // ── Static file download (unchanged) ────────────────────────────────────────
