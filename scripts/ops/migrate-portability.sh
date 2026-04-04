@@ -212,6 +212,7 @@ run_mysqldump() {
     --user="$DB_USER" \
     --single-transaction \
     --skip-lock-tables \
+    --set-gtid-purged=OFF \
     --quick \
     --routines \
     --events \
