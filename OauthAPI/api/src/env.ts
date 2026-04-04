@@ -53,5 +53,10 @@ const Env = z.object({
     z.string().min(1).default("127.0.0.1")
     ),
   INTERNAL_STATS_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  DB_HOST: z.string().min(1),
+  DB_PORT: z.coerce.number().int().min(1).max(65535).default(3306),
+  DB_USER: z.string().min(1),
+  DB_PASSWORD: z.string(),
+  DB_NAME: z.string().min(1),
 })
 export const env = Env.parse(process.env);
