@@ -78,6 +78,12 @@ PY
 }
 
 parse_mysql_url_to_globals() {
+  DB_USER=""
+  DB_PASS=""
+  DB_HOST="127.0.0.1"
+  DB_PORT="3306"
+  DB_NAME=""
+
   local kv
   while read -r kv; do
     case "$kv" in
@@ -88,6 +94,75 @@ parse_mysql_url_to_globals() {
       DB=*) DB_NAME="${kv#DB=}" ;;
     esac
   done < <(parse_mysql_url "$1")
+}
+
+build_mysql_url_from_parts() {
+  python3 - "$1" "$2" "$3" "$4" "$5" <<'PY'
+import sys
+from urllib.parse import quote
+
+user, password, host, port, database = sys.argv[1:6]
+auth = quote(user, safe="")
+if password:
+    auth += ":" + quote(password, safe="")
+
+print(f"mysql://{auth}@{host}:{port}/{quote(database, safe='')}")
+PY
+}
+
+resolve_database_url() {
+  local var_name="$1"
+
+  case "$var_name" in
+    CORE_DATABASE_URL)
+      if [[ -n "${CORE_DATABASE_URL:-}" ]]; then
+        printf '%s\n' "$CORE_DATABASE_URL"
+        return 0
+      fi
+
+      if [[ -n "${DB_HOST:-}" && -n "${DB_USER:-}" && -n "${DB_NAME:-}" ]]; then
+        build_mysql_url_from_parts \
+          "${DB_USER:-}" \
+          "${DB_PASSWORD:-}" \
+          "${DB_HOST:-127.0.0.1}" \
+          "${DB_PORT:-3306}" \
+          "${DB_NAME:-}"
+        return 0
+      fi
+      ;;
+    *)
+      if [[ -n "${!var_name:-}" ]]; then
+        printf '%s\n' "${!var_name}"
+        return 0
+      fi
+      ;;
+  esac
+
+  return 1
+}
+
+collect_database_targets() {
+  local -a targets=()
+  local -A seen=()
+  local var url
+
+  if url="$(resolve_database_url CORE_DATABASE_URL 2>/dev/null)" && [[ "$url" == mysql* || "$url" == mariadb* ]]; then
+    targets+=("CORE_DATABASE_URL")
+    seen["CORE_DATABASE_URL"]=1
+  fi
+
+  while read -r var; do
+    [[ -n "$var" ]] || continue
+    [[ -n "${seen[$var]:-}" ]] && continue
+
+    url="$(resolve_database_url "$var" 2>/dev/null || true)"
+    [[ "$url" == mysql* || "$url" == mariadb* ]] || continue
+
+    targets+=("$var")
+    seen["$var"]=1
+  done < <(compgen -v | grep 'DATABASE_URL$' || true)
+
+  printf '%s\n' "${targets[@]}"
 }
 
 # ------------------------
@@ -113,9 +188,10 @@ fetch_latest_from_s3() {
     exit 1
   }
 
-  local tmp
-  tmp="$(mktemp --suffix=.tar.gz)"
-  register_tmp_dir "$(dirname "$tmp")"
+  local tmp_dir tmp
+  tmp_dir="$(mktemp -d)"
+  register_tmp_dir "$tmp_dir"
+  tmp="$tmp_dir/latest-backup.tar.gz"
 
   aws s3 cp "s3://$S3_BUCKET/$S3_PREFIX/$latest" "$tmp"
 
@@ -129,16 +205,18 @@ fetch_latest_from_s3() {
 run_mysqldump() {
   parse_mysql_url_to_globals "$1"
 
-  mysqldump \
+  # RDS/Aurora-style users typically lack global lock/tablespace privileges.
+  MYSQL_PWD="$DB_PASS" mysqldump \
     --host="$DB_HOST" \
     --port="$DB_PORT" \
     --user="$DB_USER" \
-    --password="$DB_PASS" \
     --single-transaction \
+    --skip-lock-tables \
     --quick \
     --routines \
     --events \
     --triggers \
+    --no-tablespaces \
     "$DB_NAME"
 }
 
@@ -151,10 +229,13 @@ export_bundle() {
   mkdir -p "$tmp/databases" "$tmp/config"
 
   local found=0
+  local var url
+  local -a database_targets=()
+  mapfile -t database_targets < <(collect_database_targets)
 
-  for var in $(compgen -v | grep DATABASE_URL || true); do
-    local url="${!var:-}"
-    [[ "$url" == mysql* ]] || continue
+  for var in "${database_targets[@]}"; do
+    url="$(resolve_database_url "$var" || true)"
+    [[ "$url" == mysql* || "$url" == mariadb* ]] || continue
 
     log "Exporting $var..."
     run_mysqldump "$url" > "$tmp/databases/${var}.sql"
@@ -163,7 +244,7 @@ export_bundle() {
   done
 
   [[ "$found" -eq 1 ]] || {
-    err "No DATABASE_URL variables found"
+    err "No MySQL database settings found in backend/.env or the current environment"
     exit 1
   }
 
@@ -182,7 +263,7 @@ export_bundle() {
 drop_and_create_db() {
   parse_mysql_url_to_globals "$1"
 
-  mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" <<SQL
+  MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" <<SQL
 DROP DATABASE IF EXISTS \`$DB_NAME\`;
 CREATE DATABASE \`$DB_NAME\`;
 SQL
@@ -191,11 +272,10 @@ SQL
 import_sql() {
   parse_mysql_url_to_globals "$1"
 
-  mysql \
+  MYSQL_PWD="$DB_PASS" mysql \
     -h "$DB_HOST" \
     -P "$DB_PORT" \
     -u "$DB_USER" \
-    -p"$DB_PASS" \
     "$DB_NAME"
 }
 
@@ -223,7 +303,8 @@ import_bundle() {
   load_env_file "$tmp/config/server-node.env"
 
   while IFS=$'\t' read -r var file; do
-    local url="${!var:-}"
+    local url
+    url="$(resolve_database_url "$var" || true)"
     [[ -n "$url" ]] || {
       err "$var not set"
       exit 1
