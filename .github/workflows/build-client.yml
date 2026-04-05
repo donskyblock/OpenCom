@@ -1,5 +1,4 @@
 name: Build OpenCom Desktop Client
-
 on:
   workflow_dispatch:
   push:
@@ -7,7 +6,6 @@ on:
       - "client/**"
       - "frontend/**"
       - ".github/workflows/build-client.yml"
-
 jobs:
   build:
     strategy:
@@ -16,57 +14,81 @@ jobs:
           - os: windows-latest
             build_script: npm run build:stage:win
             artifact_glob: frontend/OpenCom.exe
-
           - os: ubuntu-latest
             build_script: npm run build:stage:linux
             artifact_glob: |
               frontend/OpenCom.deb
               frontend/OpenCom.tar.gz
-
     runs-on: ${{ matrix.os }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive # ensures any submodules are fetched
+          submodules: recursive
 
-      # ✅ Use Node.js 22 explicitly
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: "npm"
-          cache-dependency-path: client/package-lock.json # point to correct lockfile
+          cache-dependency-path: client/package-lock.json
 
-      # ✅ Install frontend deps FIRST
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
 
-      # ✅ Install client deps
       - name: Install client dependencies
         working-directory: client
         run: npm ci
 
-      # ✅ Verify your security override
+      # 🔍 DEBUG: Show exactly what npm ci installed for minimatch
+      - name: Debug minimatch installation
+        working-directory: client
+        run: |
+          echo "=== node_modules/minimatch exists? ==="
+          ls node_modules/minimatch/ || echo "❌ MISSING node_modules/minimatch"
+
+          echo "=== node_modules/minimatch/package.json ==="
+          cat node_modules/minimatch/package.json || echo "❌ no package.json"
+
+          echo "=== node_modules/minimatch/dist exists? ==="
+          ls node_modules/minimatch/dist/ || echo "❌ MISSING dist/"
+
+          echo "=== node_modules/minimatch/dist/commonjs exists? ==="
+          ls node_modules/minimatch/dist/commonjs/ || echo "❌ MISSING dist/commonjs/"
+
+          echo "=== node_modules/minimatch/index.js ==="
+          cat node_modules/minimatch/index.js || echo "❌ no index.js"
+
+          echo "=== nested: @electron/asar has its own minimatch? ==="
+          ls node_modules/@electron/asar/node_modules/minimatch/ || echo "not nested (expected)"
+
+          echo "=== vendor/minimatch/dist exists? ==="
+          ls vendor/minimatch/dist/ || echo "❌ MISSING vendor/minimatch/dist"
+
+          echo "=== vendor/minimatch/dist/commonjs exists? ==="
+          ls vendor/minimatch/dist/commonjs/ || echo "❌ MISSING vendor/minimatch/dist/commonjs"
+
+          echo "=== npm ls minimatch ==="
+          npm ls minimatch || true
+
+          echo "=== node -e require minimatch ==="
+          node -e "require('minimatch'); console.log('✅ minimatch loads OK')" || echo "❌ minimatch failed to load"
+
       - name: Verify minimatch security override
         working-directory: client
         run: npm run check:minimatch
 
-      # ✅ Linux build deps
       - name: Install Linux build dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y rpm tar gzip
 
-      # ✅ Build and stage desktop client artifacts
       - name: Build and stage desktop client artifacts
         working-directory: client
         run: ${{ matrix.build_script }}
 
-      # ✅ Upload artifacts
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
