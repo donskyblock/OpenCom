@@ -10,7 +10,6 @@
   "main": "src/main.js",
   "type": "module",
   "scripts": {
-    "postinstall": "node scripts/ensure-vendored-minimatch-deps.mjs",
     "sync:web": "node scripts/sync-frontend.mjs",
     "start": "npm run sync:web && electron .",
     "start:remote": "electron .",
@@ -21,7 +20,6 @@
     "stage:aur": "node scripts/stage-aur.mjs",
     "build:stage:linux": "node scripts/build-and-stage.mjs linux",
     "build:stage:win": "node scripts/build-and-stage.mjs win",
-    "check:minimatch": "node scripts/check-minimatch.mjs",
     "audit:runtime": "npm audit --omit=dev",
     "audit:all": "npm audit"
   },
@@ -30,10 +28,8 @@
   },
   "devDependencies": {
     "electron": "40.4.1",
-    "electron-builder": "26.8.1"
-  },
-  "overrides": {
-    "minimatch": "file:vendor/minimatch"
+    "electron-builder": "26.8.1",
+    "minimatch": "^10.2.1"
   },
   "build": {
     "appId": "online.opencom.client",
