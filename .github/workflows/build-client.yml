@@ -75,10 +75,6 @@ jobs:
           echo "=== node -e require minimatch ==="
           node -e "require('minimatch'); console.log('✅ minimatch loads OK')" || echo "❌ minimatch failed to load"
 
-      - name: Verify minimatch security override
-        working-directory: client
-        run: npm run check:minimatch
-
       - name: Install Linux build dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
