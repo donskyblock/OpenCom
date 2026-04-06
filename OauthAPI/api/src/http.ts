@@ -3,13 +3,13 @@ import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { ZodError } from "zod";
 // Utilities
-import { env } from "./env"; 
+import { env } from "./env.js";
 
 
 // Routes
-import { HealthRoutes } from "./routes/health";
-import { StatsRoutes } from "./routes/stats";
-import { OauthRoutes } from "./routes/OauthApp";
+import { HealthRoutes } from "./routes/health.js";
+import { StatsRoutes } from "./routes/stats.js";
+import { OauthRoutes } from "./routes/OauthApp.js";
 
 export function buildHttp() {
   const app = Fastify({

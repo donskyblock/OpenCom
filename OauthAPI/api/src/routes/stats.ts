@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { q } from "../db"
+import { q } from "../db.js"
 
 function toSqlTimestamp(msFromEpoch: number): string {
   return new Date(msFromEpoch).toISOString().slice(0, 19).replace("T", " ");

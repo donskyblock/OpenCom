@@ -1,9 +1,9 @@
 import { FastifyInstance } from "fastify";
-import { q } from "../db";
-import { parseBody, parseBodyRaw } from "../validation";
+import { q } from "../db.js";
+import { parseBody, parseBodyRaw } from "../validation.js";
 import { z } from "zod";
 import crypto from "crypto";
-import { env } from "../env";
+import { env } from "../env.js";
 
 const AppRegistration = z.object({
   app_id: z.string().trim().email(),
