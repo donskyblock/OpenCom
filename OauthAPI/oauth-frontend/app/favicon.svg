@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="opencom-favicon-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7aa2ff" />
+      <stop offset="100%" stop-color="#4d6dff" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="18" fill="#0d1730" />
+  <rect x="7" y="7" width="50" height="50" rx="16" fill="url(#opencom-favicon-gradient)" />
+  <circle cx="32" cy="32" r="12" fill="#0d1730" />
+  <circle cx="32" cy="32" r="7" fill="#dfe7ff" />
+</svg>
