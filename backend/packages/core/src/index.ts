@@ -23,6 +23,7 @@ import { FavouriteGifRoutes } from "./routes/FavouriteGifs.js";
 import { klipyRoutes } from "./routes/klipy.js";
 import { emoteRoutes } from "./routes/emotes.js";
 import { supportRoutes } from "./routes/support.js";
+import { OauthIntergrationRoutes } from "./routes/OauthIntergration.js";
 import { coreEnvFilePath, env } from "./env.js";
 import { makeRedis } from "./redis.js";
 import { presenceUpsert } from "./presence.js";
@@ -156,6 +157,7 @@ async function start() {
   await klipyRoutes(app);
   await CallRoutes(app, gw.broadcastToUser);
   await FavouriteGifRoutes(app);
+  await OauthIntergrationRoutes(app);
 
   await app.listen({ port: env.CORE_PORT, host: env.CORE_HOST });
 }

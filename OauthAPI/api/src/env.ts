@@ -58,5 +58,13 @@ const Env = z.object({
   DB_USER: z.string().min(1),
   DB_PASSWORD: z.string(),
   DB_NAME: z.string().min(1),
-})
+  CORE_API_URL: z.preprocess(
+    (value) => emptyToUndefined(value) ?? "https://api.opencom.online",
+    z.string().url(),
+  ),
+  OAUTH_PUBLIC_URL: z.preprocess(
+    (value) => emptyToUndefined(value) ?? emptyToUndefined(process.env.CORE_API_URL) ?? "https://api.opencom.online",
+    z.string().url(),
+  ),
+});
 export const env = Env.parse(process.env);
