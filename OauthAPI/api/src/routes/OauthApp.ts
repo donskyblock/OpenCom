@@ -109,6 +109,11 @@ async function requireAppAccess(secret: string, app_id: string) {
   return ok && data.success === true && data.allowed === true;
 }
 
+async function ensureAppAccess(secret: string, app_id: string) {
+  const { ok, data } = await fetchCoreJson("/v1/create", { secret, app_id });
+  return ok && data.success === true && data.allowed === true;
+}
+
 export function OauthRoutes(app: FastifyInstance) {
   async function createAppHandler(req: any, rep: any) {
     const body = parseBody(AppRegistration, req.body);
@@ -118,7 +123,7 @@ export function OauthRoutes(app: FastifyInstance) {
     const secret_code = body.secret_code;
     const user_id = body.user_id;
 
-    const allowed = await requireAppAccess(secret_code, app_id);
+    const allowed = await ensureAppAccess(secret_code, app_id);
     if (!allowed)
       return rep
         .status(401)
