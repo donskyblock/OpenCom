@@ -162,7 +162,7 @@ Useful variants:
 - If `npm install` fails with `403`, your environment or registry policy is blocking package access.
 - If backend setup refuses to continue, check that your Node.js version is at least 22.
 - If the server node cannot verify memberships, ensure `NODE_SERVER_ID` matches the server IDs issued by Core.
-- If voice does not connect externally, configure the mediasoup announced IP in `backend/.env`.
+- If voice does not connect externally, configure the mediasoup announced address in `backend/node.env` or `backend/media.env`, depending on which service hosts voice.
 - If local services are healthy but the app behaves oddly, `./scripts/dev/reconfigure.sh --yes` is the fastest clean reset.
 
 ## Deploying

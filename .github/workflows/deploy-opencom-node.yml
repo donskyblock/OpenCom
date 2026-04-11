@@ -1,0 +1,55 @@
+name: Deploy OpenCom Node
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_instances:
+        description: "Cloud Run minimum instances"
+        required: false
+        default: "0"
+        type: string
+      max_instances:
+        description: "Cloud Run maximum instances"
+        required: false
+        default: "3"
+        type: string
+      concurrency:
+        description: "Requests per instance"
+        required: false
+        default: "80"
+        type: string
+      cpu:
+        description: "CPU per instance"
+        required: false
+        default: "1"
+        type: string
+      memory:
+        description: "Memory per instance"
+        required: false
+        default: "1Gi"
+        type: string
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy-backend-cloud-run.yml
+    with:
+      service: node
+      cloud_run_service: ${{ vars.OPENCOM_NODE_SERVICE != '' && vars.OPENCOM_NODE_SERVICE || 'opencom-node' }}
+      image_name: opencom-node
+      project_id: ${{ vars.GCP_PROJECT_ID }}
+      region: ${{ vars.GCP_REGION }}
+      artifact_registry_region: ${{ vars.GCP_ARTIFACT_REGISTRY_REGION }}
+      artifact_registry_repository: ${{ vars.GCP_ARTIFACT_REGISTRY_REPOSITORY != '' && vars.GCP_ARTIFACT_REGISTRY_REPOSITORY || 'opencom' }}
+      min_instances: ${{ inputs.min_instances }}
+      max_instances: ${{ inputs.max_instances }}
+      concurrency: ${{ inputs.concurrency }}
+      cpu: ${{ inputs.cpu }}
+      memory: ${{ inputs.memory }}
+      runtime_service_account: ${{ vars.OPENCOM_NODE_RUNTIME_SERVICE_ACCOUNT }}
+      cloudsql_instances: ${{ vars.OPENCOM_NODE_CLOUDSQL_INSTANCES }}
+      vpc_connector: ${{ vars.OPENCOM_NODE_VPC_CONNECTOR }}
+    secrets:
+      workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
+      runtime_env: ${{ secrets.OPENCOM_NODE_ENV }}

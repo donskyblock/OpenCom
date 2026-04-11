@@ -110,7 +110,7 @@ The sole and only way to really support OpenCom is through the boost subscriptio
 
 - If your local config is cooked and you just want to wipe it all and rebuild it cleanly, run `./scripts/dev/reconfigure.sh --yes`
 
-- That will regenerate `backend/.env` + `frontend/.env`, clear local backend runtime state, recreate the local database stack, and rerun migrations
+- That will regenerate local backend/frontend env files, clear local backend runtime state, recreate the local database stack, and rerun migrations
 
 - If you want the optional local object storage too, use `./scripts/dev/reconfigure.sh --yes --with-minio`
 

@@ -3,9 +3,6 @@ x-backend-service: &backend-service
     context: .
     dockerfile: Dockerfile
   image: opencom-backend-local:latest
-  env_file:
-    - .env
-    - .env.docker
   restart: unless-stopped
   working_dir: /app/backend
   init: true
@@ -76,6 +73,9 @@ services:
 
   core:
     <<: *backend-service
+    env_file:
+      - core.env
+      - .env.docker
     depends_on:
       mariadb-core:
         condition: service_healthy
@@ -98,6 +98,9 @@ services:
 
   node:
     <<: *backend-service
+    env_file:
+      - node.env
+      - .env.docker
     depends_on:
       mariadb-node:
         condition: service_healthy

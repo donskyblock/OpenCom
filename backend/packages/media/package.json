@@ -4,12 +4,14 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",
     "@fastify/rate-limit": "^10.0.0",
     "@ods/shared": "0.0.1",
+    "dotenv": "^16.4.5",
     "fastify": "^5.0.0",
     "mediasoup": "^3.12.0",
     "mysql2": "^3.11.0",

@@ -5,6 +5,7 @@ import { config } from "dotenv";
 import { z } from "zod";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const isCloudRun = Boolean(process.env.K_SERVICE || process.env.CLOUD_RUN_JOB || process.env.CLOUD_RUN_EXECUTION);
 
 export const internalStatsEnvFilePath = loadEnv();
 
@@ -49,7 +50,7 @@ const Env = z.object({
     z.coerce.number().int().min(1).max(65535).default(3099),
   ),
   HOST: z.preprocess(
-    (value) => value ?? process.env.HOST,
+    (value) => value ?? process.env.HOST ?? (isCloudRun ? "0.0.0.0" : undefined),
     z.string().min(1).default("127.0.0.1")
     ),
   INTERNAL_STATS_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),

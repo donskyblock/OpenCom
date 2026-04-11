@@ -1,5 +1,13 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { config } from "dotenv";
 import { isIP } from "node:net";
 import { z } from "zod";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const isCloudRun = Boolean(process.env.K_SERVICE || process.env.CLOUD_RUN_JOB || process.env.CLOUD_RUN_EXECUTION);
+export const mediaEnvFilePath = loadMediaEnv();
 
 const emptyToUndefined = (value: unknown) => {
   if (typeof value !== "string") return value;
@@ -19,9 +27,39 @@ const boolFlag = z.preprocess(
   z.boolean(),
 );
 
+function loadMediaEnv() {
+  const candidates = [
+    process.env.MEDIA_ENV_FILE,
+    path.resolve(process.cwd(), "media.env"),
+    path.resolve(process.cwd(), ".env.media"),
+    path.resolve(process.cwd(), ".env"),
+    path.resolve(__dirname, "../../../media.env"),
+    path.resolve(__dirname, "../../../.env.media"),
+    path.resolve(__dirname, "../../../.env"),
+    path.resolve(__dirname, "../../../../../media.env"),
+    path.resolve(__dirname, "../../../../../.env.media"),
+    path.resolve(__dirname, "../../../../../.env"),
+    path.resolve(__dirname, "../media.env"),
+    path.resolve(__dirname, "../../media.env"),
+    path.resolve(__dirname, "../.env"),
+    path.resolve(__dirname, "../../.env"),
+  ];
+
+  for (const candidate of new Set(candidates)) {
+    if (!candidate || !fs.existsSync(candidate)) continue;
+    config({ path: candidate, override: true });
+    return candidate;
+  }
+
+  return null;
+}
+
 const Env = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  MEDIA_PORT: z.coerce.number().default(3003),
+  MEDIA_PORT: z.preprocess(
+    (value) => value ?? process.env.PORT,
+    z.coerce.number().default(3003)
+  ),
   MEDIA_HOST: z.string().default("0.0.0.0"),
   MEDIA_DATABASE_URL: z.preprocess(
     (value) => value ?? process.env.NODE_DATABASE_URL,
@@ -56,7 +94,10 @@ const Env = z.object({
 
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("warn"),
   LOG_DIR: z.string().default("./logs"),
-  LOG_TO_FILE: boolFlag.default(true),
+  LOG_TO_FILE: z.preprocess(
+    (value) => value ?? (isCloudRun ? "0" : undefined),
+    boolFlag.default(true)
+  ),
   DEBUG_HTTP: boolFlag.default(false),
   DEBUG_VOICE: boolFlag.default(false),
 });

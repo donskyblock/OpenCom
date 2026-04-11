@@ -1,12 +1,24 @@
 import { config } from "dotenv";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { previewSmtpEmail, resolveSmtpConfig, sendSmtpEmail, verifySmtpConnection } from "../smtp.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-config({ path: path.resolve(__dirname, "../../../../.env") });
+const envCandidates = [
+  process.env.CORE_ENV_FILE,
+  path.resolve(__dirname, "../../../../core.env"),
+  path.resolve(__dirname, "../../../../.env.core"),
+  path.resolve(__dirname, "../../../../.env"),
+];
+
+for (const candidate of envCandidates) {
+  if (!candidate || !fs.existsSync(candidate)) continue;
+  config({ path: candidate, override: true });
+  break;
+}
 
 function looksLikeEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);

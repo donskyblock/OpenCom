@@ -1,0 +1,201 @@
+name: Deploy Backend Service To Cloud Run
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        required: true
+        type: string
+      cloud_run_service:
+        required: true
+        type: string
+      image_name:
+        required: true
+        type: string
+      project_id:
+        required: true
+        type: string
+      region:
+        required: true
+        type: string
+      artifact_registry_region:
+        required: false
+        type: string
+        default: ""
+      artifact_registry_repository:
+        required: true
+        type: string
+      docker_context:
+        required: false
+        type: string
+        default: backend
+      dockerfile:
+        required: false
+        type: string
+        default: backend/Dockerfile
+      min_instances:
+        required: false
+        type: string
+        default: "0"
+      max_instances:
+        required: false
+        type: string
+        default: "3"
+      concurrency:
+        required: false
+        type: string
+        default: "80"
+      cpu:
+        required: false
+        type: string
+        default: "1"
+      memory:
+        required: false
+        type: string
+        default: "512Mi"
+      timeout:
+        required: false
+        type: string
+        default: "300s"
+      ingress:
+        required: false
+        type: string
+        default: "all"
+      allow_unauthenticated:
+        required: false
+        type: boolean
+        default: true
+      env_vars_update_strategy:
+        required: false
+        type: string
+        default: "merge"
+      runtime_service_account:
+        required: false
+        type: string
+        default: ""
+      cloudsql_instances:
+        required: false
+        type: string
+        default: ""
+      vpc_connector:
+        required: false
+        type: string
+        default: ""
+    secrets:
+      workload_identity_provider:
+        required: false
+      service_account:
+        required: false
+      credentials_json:
+        required: false
+      runtime_env:
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      GAR_REGION: ${{ inputs.artifact_registry_region != '' && inputs.artifact_registry_region || inputs.region }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate with Workload Identity Federation
+        if: ${{ secrets.credentials_json == '' }}
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ inputs.project_id }}
+          workload_identity_provider: ${{ secrets.workload_identity_provider }}
+          service_account: ${{ secrets.service_account }}
+
+      - name: Authenticate with service account JSON
+        if: ${{ secrets.credentials_json != '' }}
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ inputs.project_id }}
+          credentials_json: ${{ secrets.credentials_json }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          version: ">= 363.0.0"
+
+      - name: Configure Artifact Registry auth
+        run: gcloud auth configure-docker "${GAR_REGION}-docker.pkg.dev" --quiet
+
+      - name: Resolve image URI
+        id: image
+        run: |
+          IMAGE_URI="${GAR_REGION}-docker.pkg.dev/${{ inputs.project_id }}/${{ inputs.artifact_registry_repository }}/${{ inputs.image_name }}:${GITHUB_SHA}"
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_URI=${IMAGE_URI}" >> "$GITHUB_ENV"
+
+      - name: Build and push image
+        run: |
+          docker build \
+            --file "${{ inputs.dockerfile }}" \
+            --build-arg "SERVICE=${{ inputs.service }}" \
+            --tag "${IMAGE_URI}" \
+            "${{ inputs.docker_context }}"
+          docker push "${IMAGE_URI}"
+
+      - name: Build deploy flags
+        id: flags
+        shell: bash
+        run: |
+          FLAGS=()
+          FLAGS+=("--min-instances=${{ inputs.min_instances }}")
+          FLAGS+=("--max-instances=${{ inputs.max_instances }}")
+          FLAGS+=("--concurrency=${{ inputs.concurrency }}")
+          FLAGS+=("--cpu=${{ inputs.cpu }}")
+          FLAGS+=("--memory=${{ inputs.memory }}")
+          FLAGS+=("--timeout=${{ inputs.timeout }}")
+          FLAGS+=("--ingress=${{ inputs.ingress }}")
+
+          if [[ "${{ inputs.allow_unauthenticated }}" == "true" ]]; then
+            FLAGS+=("--allow-unauthenticated")
+          else
+            FLAGS+=("--no-allow-unauthenticated")
+          fi
+
+          if [[ -n "${{ inputs.runtime_service_account }}" ]]; then
+            FLAGS+=("--service-account=${{ inputs.runtime_service_account }}")
+          fi
+
+          if [[ -n "${{ inputs.cloudsql_instances }}" ]]; then
+            FLAGS+=("--add-cloudsql-instances=${{ inputs.cloudsql_instances }}")
+          fi
+
+          if [[ -n "${{ inputs.vpc_connector }}" ]]; then
+            FLAGS+=("--vpc-connector=${{ inputs.vpc_connector }}")
+          fi
+
+          printf 'deploy_flags=%s\n' "${FLAGS[*]}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v3
+        with:
+          service: ${{ inputs.cloud_run_service }}
+          project_id: ${{ inputs.project_id }}
+          region: ${{ inputs.region }}
+          image: ${{ steps.image.outputs.image_uri }}
+          env_vars: ${{ secrets.runtime_env }}
+          env_vars_update_strategy: ${{ inputs.env_vars_update_strategy }}
+          flags: ${{ steps.flags.outputs.deploy_flags }}
+
+      - name: Deployment summary
+        run: |
+          {
+            echo "## Cloud Run Deployment"
+            echo ""
+            echo "- Service: \`${{ inputs.cloud_run_service }}\`"
+            echo "- Backend target: \`${{ inputs.service }}\`"
+            echo "- Region: \`${{ inputs.region }}\`"
+            echo "- Image: \`${{ steps.image.outputs.image_uri }}\`"
+            echo "- URL: ${{ steps.deploy.outputs.url }}"
+          } >> "$GITHUB_STEP_SUMMARY"

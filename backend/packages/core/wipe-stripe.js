@@ -1,14 +1,22 @@
 #!/usr/bin/env node
 
 import path from "path";
+import fs from "fs";
 import mysql from "mysql2/promise";
 import dotenv from "dotenv";
 
-// You will run this from: backend/packages/core
-// This resolves to: backend/.env
-dotenv.config({
-  path: path.resolve(process.cwd(), "../../.env"),
-});
+const envCandidates = [
+  process.env.CORE_ENV_FILE,
+  path.resolve(process.cwd(), "../../core.env"),
+  path.resolve(process.cwd(), "../../.env.core"),
+  path.resolve(process.cwd(), "../../.env"),
+];
+
+for (const candidate of envCandidates) {
+  if (!candidate || !fs.existsSync(candidate)) continue;
+  dotenv.config({ path: candidate, override: true });
+  break;
+}
 
 const dbConfig = {
   host: process.env.DB_HOST,
@@ -23,7 +31,7 @@ const missingDbVars = Object.entries(dbConfig)
   .map(([key]) => key.toUpperCase());
 
 if (missingDbVars.length) {
-  console.error(`❌ Missing required DB variables in backend/.env: ${missingDbVars.join(", ")}`);
+  console.error(`❌ Missing required DB variables in core.env/.env.core: ${missingDbVars.join(", ")}`);
   process.exit(1);
 }
 

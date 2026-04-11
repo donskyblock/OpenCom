@@ -5,6 +5,7 @@ import { config } from "dotenv";
 import { z } from "zod";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const isCloudRun = Boolean(process.env.K_SERVICE || process.env.CLOUD_RUN_JOB || process.env.CLOUD_RUN_EXECUTION);
 
 export const coreEnvFilePath = loadCoreEnv();
 
@@ -16,13 +17,25 @@ const emptyToUndefined = (value: unknown) => {
 
 function loadCoreEnv() {
   const candidates = [
+    process.env.CORE_ENV_FILE,
+    // Prefer service-specific env files.
+    path.resolve(process.cwd(), "core.env"),
+    path.resolve(process.cwd(), ".env.core"),
     // Prefer the backend root .env when the process is launched from backend/.
     path.resolve(process.cwd(), ".env"),
+    // Source-tree layout: packages/core/src -> backend/core.env
+    path.resolve(__dirname, "../../../core.env"),
+    path.resolve(__dirname, "../../../.env.core"),
     // Source-tree layout: packages/core/src -> backend/.env
     path.resolve(__dirname, "../../../.env"),
+    // Built layout: packages/core/dist/core/src -> backend/core.env
+    path.resolve(__dirname, "../../../../../core.env"),
+    path.resolve(__dirname, "../../../../../.env.core"),
     // Built layout: packages/core/dist/core/src -> backend/.env
     path.resolve(__dirname, "../../../../../.env"),
     // Package-local fallbacks.
+    path.resolve(__dirname, "../core.env"),
+    path.resolve(__dirname, "../../core.env"),
     path.resolve(__dirname, "../.env"),
     path.resolve(__dirname, "../../.env"),
   ];
@@ -49,7 +62,10 @@ const boolFlag = z.preprocess(
 const Env = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   CORE_PORT: z.preprocess((value) => value ?? process.env.PORT, z.coerce.number().default(3000)),
-  CORE_HOST: z.string().default("127.0.0.1"),
+  CORE_HOST: z.preprocess(
+    (value) => value ?? (isCloudRun ? "0.0.0.0" : undefined),
+    z.string().default("127.0.0.1")
+  ),
   /** Host for WebSocket gateway only. Use 0.0.0.0 so it's reachable externally; main API stays on CORE_HOST. */
   CORE_GATEWAY_HOST: z.string().default("0.0.0.0"),
   /** Port for WebSocket gateway only. Default 9443 to avoid conflicting with nginx/other on 443; point ws.opencom.online to this port or proxy 443→9443. */
@@ -65,7 +81,10 @@ const Env = z.object({
   DB_NAME: z.string().min(1),
   CORE_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("warn"),
   CORE_LOG_DIR: z.string().default("./logs"),
-  CORE_LOG_TO_FILE: boolFlag.default(true),
+  CORE_LOG_TO_FILE: z.preprocess(
+    (value) => value ?? (isCloudRun ? "0" : undefined),
+    boolFlag.default(true)
+  ),
   DEPLOYMENT_PROVIDER: z.preprocess(emptyToUndefined, z.string().optional()),
   DEPLOYMENT_COMPUTE_CLASS: z.preprocess(emptyToUndefined, z.string().optional()),
   DEPLOYMENT_REGION: z.preprocess(

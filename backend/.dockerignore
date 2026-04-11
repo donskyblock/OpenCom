@@ -8,3 +8,9 @@ storage
 packages/*/dist
 packages/*/logs
 .env
+core.env
+node.env
+media.env
+.env.core
+.env.node
+.env.media
