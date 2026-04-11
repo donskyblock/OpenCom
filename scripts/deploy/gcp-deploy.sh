@@ -214,6 +214,20 @@ fi
 require_command gcloud
 require_command docker
 
+ENV_FILE_FOR_DEPLOY="$ENV_FILE"
+TEMP_ENV_FILE=""
+
+if grep -q -E "^[A-Za-z_][A-Za-z0-9_]*=" "$ENV_FILE"; then
+  require_command node
+  TEMP_ENV_FILE="$(mktemp -t opencom-env-XXXXXX.yaml)"
+  node "$ROOT_DIR/scripts/env/convert-env-to-yaml.mjs" "$ENV_FILE" > "$TEMP_ENV_FILE"
+  ENV_FILE_FOR_DEPLOY="$TEMP_ENV_FILE"
+fi
+
+if [[ -n "$TEMP_ENV_FILE" ]]; then
+  trap 'rm -f "$TEMP_ENV_FILE"' EXIT
+fi
+
 IMAGE_URI="${ARTIFACT_REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPO}/${IMAGE_NAME}:${TAG}"
 
 echo "[info] Service target: $SERVICE"
@@ -221,6 +235,9 @@ echo "[info] Project: $PROJECT_ID"
 echo "[info] Region: $REGION"
 echo "[info] Cloud Run service: $SERVICE_NAME"
 echo "[info] Env file: $ENV_FILE"
+if [[ "$ENV_FILE_FOR_DEPLOY" != "$ENV_FILE" ]]; then
+  echo "[info] Env file (converted): $ENV_FILE_FOR_DEPLOY"
+fi
 echo "[info] Image: $IMAGE_URI"
 
 gcloud config set project "$PROJECT_ID" >/dev/null
@@ -252,7 +269,7 @@ DEPLOY_ARGS=(
   "--image=$IMAGE_URI"
   "--region=$REGION"
   "--platform=managed"
-  "--env-vars-file=$ENV_FILE"
+  "--env-vars-file=$ENV_FILE_FOR_DEPLOY"
 )
 
 if [[ "$ALLOW_UNAUTHENTICATED" == "1" ]]; then
