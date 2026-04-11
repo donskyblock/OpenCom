@@ -107,7 +107,8 @@ const Env = z.object({
   ADMIN_PANEL_PASSWORD: z.string().min(8),
   ADMIN_2FA_ENCRYPTION_KEY: z.preprocess(emptyToUndefined, z.string().min(16).optional()),
   ADMIN_2FA_ISSUER: z.string().default("OpenCom Admin"),
-  REDIS_URL: z.string().url(),
+  REDIS_DISABLED: boolFlag.default(false),
+  REDIS_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
   CORE_NODE_SYNC_SECRET: z.preprocess(emptyToUndefined, z.string().min(16).optional()),
 
   // Profile image storage
@@ -208,6 +209,10 @@ if (env.STORAGE_PROVIDER === "s3") {
 
 if (env.STORAGE_PROVIDER === "gcs" && !env.CORE_STORAGE_BUCKET) {
   throw new Error("CORE_STORAGE_BUCKET (or CORE_GCS_BUCKET) is required when STORAGE_PROVIDER=gcs");
+}
+
+if (!env.REDIS_DISABLED && !env.REDIS_URL) {
+  throw new Error("REDIS_URL is required unless REDIS_DISABLED=1");
 }
 
 function normalizeHttpBaseUrl(value: string | null | undefined): string {

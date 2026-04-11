@@ -25,7 +25,7 @@ import { emoteRoutes } from "./routes/emotes.js";
 import { supportRoutes } from "./routes/support.js";
 import { OauthIntergrationRoutes } from "./routes/OauthIntergration.js";
 import { coreEnvFilePath, env } from "./env.js";
-import { makeRedis } from "./redis.js";
+import { makeLocalRedis, makeRedis, RedisLike } from "./redis.js";
 import { presenceUpsert } from "./presence.js";
 import { CallRoutes } from "./routes/PrivateCalls.js";
 import { PresenceUpdate } from "@ods/shared/events.js";
@@ -33,7 +33,7 @@ import { pool } from "./db.js";
 import { resolveSmtpConfig } from "./smtp.js";
 
 const app = buildHttp();
-let redis: Awaited<ReturnType<typeof makeRedis>> | null = null;
+let redis: RedisLike | null = null;
 let isShuttingDown = false;
 
 async function shutdown(reason: string, requestedExitCode = 0) {
@@ -122,9 +122,14 @@ async function start() {
   // attach helper to app
   (app as any).pgPresenceUpsert = presenceUpsert;
 
-  // Redis is required for cross-instance gateway fanout and presence signaling.
-  redis = await makeRedis(env.REDIS_URL);
-  await redis.start();
+  if (env.REDIS_DISABLED) {
+    app.log.warn("Redis disabled; running with in-memory gateway fanout only");
+    redis = makeLocalRedis();
+  } else {
+    // Redis is required for cross-instance gateway fanout and presence signaling.
+    redis = await makeRedis(env.REDIS_URL!);
+    await redis.start();
+  }
 
   const gw = attachCoreGateway(app, redis);
 
