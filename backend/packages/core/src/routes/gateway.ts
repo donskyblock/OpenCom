@@ -100,6 +100,7 @@ async function resolveVoiceProxyBaseUrl(
 
 export function attachCoreGateway(app: FastifyInstance, redis: { pub: any; sub: any }) {
   const wss = new WebSocketServer({ noServer: true });
+  const isCloudRun = Boolean(process.env.K_SERVICE || process.env.CLOUD_RUN_JOB || process.env.CLOUD_RUN_EXECUTION);
   const HEARTBEAT_TIMEOUT_MS = 90_000;
   const PRESENCE_PROBE_INTERVAL_MS = 60_000;
   const PRESENCE_PROBE_TIMEOUT_MS = 20_000;
@@ -220,29 +221,36 @@ export function attachCoreGateway(app: FastifyInstance, redis: { pub: any; sub: 
     };
   }
 
-  app.server.on("upgrade", handleUpgrade(false));
+  app.server.on("upgrade", handleUpgrade(isCloudRun));
 
-  // Gateway on its own host (0.0.0.0) and port so it's reachable externally and doesn't conflict with main API (CORE_HOST:CORE_PORT)
-  const gatewayHost = env.CORE_GATEWAY_HOST;
-  const gatewayPort = env.CORE_GATEWAY_PORT;
-  const tlsCertFile = env.CORE_GATEWAY_TLS_CERT_FILE;
-  const tlsKeyFile = env.CORE_GATEWAY_TLS_KEY_FILE;
+  if (isCloudRun) {
+    (app as any).log?.info?.(
+      { port: env.CORE_PORT, path: "/gateway" },
+      "Cloud Run detected; gateway reusing primary HTTP listener",
+    );
+  } else {
+    // Dedicated gateway listener for VM/nginx deployments that expose a separate WS host/port.
+    const gatewayHost = env.CORE_GATEWAY_HOST;
+    const gatewayPort = env.CORE_GATEWAY_PORT;
+    const tlsCertFile = env.CORE_GATEWAY_TLS_CERT_FILE;
+    const tlsKeyFile = env.CORE_GATEWAY_TLS_KEY_FILE;
 
-  if ((tlsCertFile && !tlsKeyFile) || (!tlsCertFile && tlsKeyFile)) {
-    throw new Error("CORE_GATEWAY_TLS_CERT_FILE and CORE_GATEWAY_TLS_KEY_FILE must be provided together");
+    if ((tlsCertFile && !tlsKeyFile) || (!tlsCertFile && tlsKeyFile)) {
+      throw new Error("CORE_GATEWAY_TLS_CERT_FILE and CORE_GATEWAY_TLS_KEY_FILE must be provided together");
+    }
+
+    const gatewayServer = (tlsCertFile && tlsKeyFile)
+      ? createTlsServer({
+          cert: readFileSync(tlsCertFile, "utf8"),
+          key: readFileSync(tlsKeyFile, "utf8")
+        })
+      : createServer();
+
+    gatewayServer.on("upgrade", handleUpgrade(true)); // accept / or /gateway on dedicated port
+    gatewayServer.listen(gatewayPort, gatewayHost, () => {
+      (app as any).log?.info?.({ host: gatewayHost, port: gatewayPort, tls: Boolean(tlsCertFile && tlsKeyFile) }, "Gateway listening (WS only)");
+    });
   }
-
-  const gatewayServer = (tlsCertFile && tlsKeyFile)
-    ? createTlsServer({
-        cert: readFileSync(tlsCertFile, "utf8"),
-        key: readFileSync(tlsKeyFile, "utf8")
-      })
-    : createServer();
-
-  gatewayServer.on("upgrade", handleUpgrade(true)); // accept / or /gateway on dedicated port
-  gatewayServer.listen(gatewayPort, gatewayHost, () => {
-    (app as any).log?.info?.({ host: gatewayHost, port: gatewayPort, tls: Boolean(tlsCertFile && tlsKeyFile) }, "Gateway listening (WS only)");
-  });
 
   wss.on("connection", (ws) => {
     let conn: Conn | null = null;
