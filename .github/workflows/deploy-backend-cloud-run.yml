@@ -104,8 +104,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve auth mode
+        id: auth-mode
+        shell: bash
+        env:
+          CREDENTIALS_JSON: ${{ secrets.credentials_json }}
+        run: |
+          if [[ -n "$CREDENTIALS_JSON" ]]; then
+            echo "mode=json" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=wif" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Authenticate with Workload Identity Federation
-        if: ${{ secrets.credentials_json == '' }}
+        if: ${{ steps.auth-mode.outputs.mode == 'wif' }}
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ inputs.project_id }}
@@ -113,7 +125,7 @@ jobs:
           service_account: ${{ secrets.service_account }}
 
       - name: Authenticate with service account JSON
-        if: ${{ secrets.credentials_json != '' }}
+        if: ${{ steps.auth-mode.outputs.mode == 'json' }}
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ inputs.project_id }}
